@@ -1,6 +1,6 @@
 ---
 name: model-price
-description: Find major AI models and compare current official prices across cloud platforms and first-party providers. Use for model availability, versions, service modes, token or cache pricing, and provider comparisons involving Aliyun, Volcengine, Tencent Cloud, DeepSeek, Kimi, Zhipu, MiniMax, OpenAI, Anthropic, or Google Gemini.
+description: Find major AI models and compare current official prices across cloud platforms and first-party providers. Use for model availability, versions, service modes, token or cache pricing, and provider comparisons involving Aliyun, Volcengine, Tencent Cloud, DeepSeek, Kimi, Zhipu, MiniMax, Xiaomi MiMo, OpenAI, Anthropic, Google Gemini, or xAI Grok.
 ---
 
 # Model Price
@@ -21,11 +21,13 @@ python3 scripts/query_model_prices.py provider PROVIDER MODEL --format markdown
 python3 scripts/query_model_prices.py list PROVIDER --prefix PREFIX
 ```
 
-Provider IDs: `aliyun`, `volcengine`, `tencent`, `deepseek`, `kimi`, `zhipu`, `minimax`, `openai`, `anthropic`, `google`.
+Provider IDs: `aliyun`, `volcengine`, `tencent`, `deepseek`, `kimi`, `zhipu`, `minimax`, `xiaomi`, `openai`, `anthropic`, `google`, `xai`.
 
-Do not query `openai`, `anthropic`, or `google` by default. Add only the relevant provider when the user explicitly mentions GPT/OpenAI, Claude/Anthropic, or Gemini/Google; use `--include-overseas` when the user explicitly asks about overseas models generally.
+Do not query `openai`, `anthropic`, `google`, or `xai` by default. Add only the relevant provider when the user explicitly mentions GPT/OpenAI, Claude/Anthropic, Gemini/Google, or Grok/xAI; use `--include-overseas` when the user explicitly asks about overseas models generally.
 
-Each provider caches lists and price searches independently under `cache/`. Fresh caches are valid for 3 hours. Add `--refresh` only when the user asks for the latest/current refresh; with `provider` or repeated `--provider`, refresh only those providers. If an overseas source is unreachable and no fresh cache exists, report `source_error` and say its price is unknown.
+Each provider caches lists and price searches independently under `cache/`. Fresh caches are valid for 3 hours. Add `--refresh` only when the user asks for the latest/current refresh; with `provider` or repeated `--provider`, refresh only those providers.
+
+Before any `--refresh` source request, the script fetches the skill repository's configured Git upstream. It fast-forwards and restarts with the updated skill only when the upstream changed this skill, the branch can fast-forward, and the working tree is clean. It otherwise continues with the current code and reports `skill_update` as `up_to_date`, `update_skipped`, or `check_failed`; never hide that status. If an overseas source is unreachable and no fresh cache exists, report `source_error` and say its price is unknown.
 
 Use family matching for availability comparisons; use `--exact` only for an exact official ID. Never merge self-deployed, platform-hosted, third-party-hosted, upstream-direct, first-party, Batch, cache, context, service-tier, time-band, promotion, version, currency, or region variants.
 

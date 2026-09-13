@@ -7,9 +7,11 @@ Prefer public JSON used by the official page; otherwise parse the official Markd
 - Tencent Cloud TokenHub: embedded JSON from the official catalog and pricing documents; preserve self-deployed and “原厂直供” rows.
 - DeepSeek: `https://api-docs.deepseek.com/zh-cn/quick_start/pricing/`; the model table is keyed by a `模型` header. Model columns carry footnote markers such as `deepseek-flash(1)`, so markers are stripped before matching. The current model is `deepseek-flash`; retired names (`deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`) resolve through `RETIRED_MODEL_ALIASES`.
 - Kimi, Zhipu, MiniMax: official pricing pages or their public structured endpoints defined in the script.
+- Xiaomi MiMo: `https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go`; parse first-party pay-as-you-go token tables by their model and price headers, including input, output, and cache columns when present.
 - OpenAI: `https://developers.openai.com/api/docs/pricing`; no public pricing JSON is exposed, so use its official `.md` representation.
 - Anthropic: `https://platform.claude.com/docs/en/about-claude/pricing`; no public pricing JSON is exposed, so use its official `.md` representation.
 - Google Gemini: `https://ai.google.dev/gemini-api/docs/pricing`; no public pricing JSON or Markdown representation is exposed, so parse its server-rendered pricing tables and paid tier.
+- xAI Grok: `https://docs.x.ai/developers/pricing`; parse first-party USD token tables by semantic model and price headers rather than Grok model-name prefixes.
 
 Provider caches live under `cache/<provider>/`. A cache entry records its provider, operation, arguments, fetch time, schema version, and data. Entries older than 3 hours are not used as fallback when refresh fails.
 

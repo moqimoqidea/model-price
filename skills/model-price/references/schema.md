@@ -18,3 +18,18 @@ Cached operations add:
 ```json
 {"cache": {"status": "hit|miss|refreshed|refresh_failed", "fetched_at": "ISO-8601"}}
 ```
+
+Explicit refreshes also add `skill_update` before querying official sources:
+
+```json
+{
+  "skill_update": {
+    "status": "updated|up_to_date|update_skipped|check_failed",
+    "checked_at": "ISO-8601",
+    "upstream": "origin/main",
+    "from_revision": "git commit",
+    "to_revision": "git commit",
+    "reason": "present for skipped or failed checks"
+  }
+}
+```

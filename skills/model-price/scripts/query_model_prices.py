@@ -14,6 +14,7 @@ import html
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import urllib.error
@@ -48,6 +49,8 @@ OPENAI_MARKDOWN_URL = f"{OPENAI_URL}.md"
 ANTHROPIC_URL = "https://platform.claude.com/docs/en/about-claude/pricing"
 ANTHROPIC_MARKDOWN_URL = f"{ANTHROPIC_URL}.md"
 GEMINI_URL = "https://ai.google.dev/gemini-api/docs/pricing"
+XAI_URL = "https://docs.x.ai/developers/pricing"
+XIAOMI_URL = "https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go"
 
 DOMESTIC_PROVIDER_IDS = (
     "aliyun",
@@ -57,11 +60,14 @@ DOMESTIC_PROVIDER_IDS = (
     "kimi",
     "zhipu",
     "minimax",
+    "xiaomi",
 )
-OVERSEAS_PROVIDER_IDS = ("openai", "anthropic", "google")
+OVERSEAS_PROVIDER_IDS = ("openai", "anthropic", "google", "xai")
 CACHE_TTL = timedelta(hours=3)
 CACHE_SCHEMA_VERSION = 1
 DEFAULT_CACHE_DIR = Path(__file__).resolve().parents[1] / "cache"
+SKILL_DIR = Path(__file__).resolve().parents[1]
+SELF_UPDATE_ENV = "MODEL_PRICE_SELF_UPDATE_RESULT"
 
 
 def now_iso() -> str:
@@ -223,6 +229,109 @@ def make_record(
 
 class SourceError(RuntimeError):
     pass
+
+
+class SkillUpdateError(RuntimeError):
+    pass
+
+
+class GitSkillUpdater:
+    """Fast-forward this skill from its configured Git upstream."""
+
+    def __init__(self, skill_dir: Path = SKILL_DIR, runner: Any = None) -> None:
+        self.skill_dir = skill_dir.resolve()
+        self.runner = runner or subprocess.run
+
+    def _git(self, *arguments: str, allowed_codes: tuple[int, ...] = (0,)) -> Any:
+        try:
+            result = self.runner(
+                ["git", *arguments],
+                cwd=self.skill_dir,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise SkillUpdateError(str(exc)) from exc
+        if result.returncode not in allowed_codes:
+            detail = clean_text(result.stderr or result.stdout) or "git command failed"
+            raise SkillUpdateError(detail)
+        return result
+
+    def update(self) -> dict[str, Any]:
+        checked_at = now_iso()
+        result: dict[str, Any] = {"status": "check_failed", "checked_at": checked_at}
+        try:
+            repository = Path(
+                self._git("rev-parse", "--show-toplevel").stdout.strip()
+            ).resolve()
+            skill_path = self.skill_dir.relative_to(repository).as_posix()
+            upstream = self._git(
+                "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"
+            ).stdout.strip()
+            result.update({"repository": str(repository), "upstream": upstream})
+
+            # Fetch before comparing trees so every explicit price refresh first
+            # checks the configured remote for a newer copy of this skill.
+            self._git("fetch", "--quiet")
+            before = self._git("rev-parse", "HEAD").stdout.strip()
+            after = self._git("rev-parse", "@{upstream}").stdout.strip()
+            result.update({"from_revision": before, "to_revision": after})
+
+            skill_changed = self._git(
+                "diff",
+                "--quiet",
+                f"{before}..{after}",
+                "--",
+                skill_path,
+                allowed_codes=(0, 1),
+            ).returncode == 1
+            if not skill_changed:
+                result["status"] = "up_to_date"
+                return result
+
+            can_fast_forward = self._git(
+                "merge-base", "--is-ancestor", before, after, allowed_codes=(0, 1)
+            ).returncode == 0
+            if not can_fast_forward:
+                result.update(
+                    status="update_skipped",
+                    reason="local branch and upstream have diverged",
+                )
+                return result
+
+            if self._git("status", "--porcelain").stdout.strip():
+                result.update(
+                    status="update_skipped",
+                    reason="working tree has local changes",
+                )
+                return result
+
+            self._git("merge", "--ff-only", upstream)
+            result["status"] = "updated"
+            return result
+        except (SkillUpdateError, ValueError) as exc:
+            result["reason"] = str(exc)
+            return result
+
+
+def update_skill_before_refresh(refresh: bool) -> dict[str, Any] | None:
+    """Update before source I/O and restart once when the skill changed."""
+    if not refresh:
+        return None
+    carried = os.environ.get(SELF_UPDATE_ENV)
+    if carried:
+        try:
+            return json.loads(carried)
+        except json.JSONDecodeError:
+            pass
+
+    result = GitSkillUpdater().update()
+    if result["status"] == "updated":
+        environment = os.environ.copy()
+        environment[SELF_UPDATE_ENV] = json.dumps(result, ensure_ascii=False)
+        os.execve(sys.executable, [sys.executable, *sys.argv], environment)
+    return result
 
 
 class HttpClient:
@@ -1044,12 +1153,19 @@ class TextTableParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.tables: list[list[list[str]]] = []
+        self.table_headings: list[str] = []
+        self.heading = ""
+        self.heading_tag: str | None = None
+        self.heading_text: list[str] = []
         self.table: list[list[str]] | None = None
         self.row: list[str] | None = None
         self.cell: list[str] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "table":
+        if tag in {"h1", "h2", "h3", "h4"} and self.table is None:
+            self.heading_tag = tag
+            self.heading_text = []
+        elif tag == "table":
             self.table = []
         elif self.table is not None and tag == "tr":
             self.row = []
@@ -1059,11 +1175,16 @@ class TextTableParser(HTMLParser):
             self.cell.append(" ")
 
     def handle_data(self, data: str) -> None:
+        if self.heading_tag:
+            self.heading_text.append(data)
         if self.cell is not None:
             self.cell.append(data)
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in ("td", "th") and self.cell is not None and self.row is not None:
+        if tag == self.heading_tag:
+            self.heading = clean_text(" ".join(self.heading_text))
+            self.heading_tag = None
+        elif tag in ("td", "th") and self.cell is not None and self.row is not None:
             self.row.append(re.sub(r"\s+", " ", "".join(self.cell)).strip())
             self.cell = None
         elif tag == "tr" and self.row is not None and self.table is not None:
@@ -1072,7 +1193,211 @@ class TextTableParser(HTMLParser):
             self.row = None
         elif tag == "table" and self.table is not None:
             self.tables.append(self.table)
+            self.table_headings.append(self.heading)
             self.table = None
+
+
+def headed_document_tables(document: str) -> list[tuple[str, list[list[str]]]]:
+    """Read pricing tables from either rendered HTML or official Markdown."""
+    parser = TextTableParser()
+    parser.feed(document.replace("\x00", ""))
+    if parser.tables:
+        return list(zip(parser.table_headings, parser.tables))
+    return markdown_tables(document)
+
+
+def document_tables(document: str) -> list[list[list[str]]]:
+    return [rows for _, rows in headed_document_tables(document)]
+
+
+def token_price_kind(header: str) -> str | None:
+    """Map English and Chinese token-price headers without model allowlists."""
+    value = clean_text(header).lower().replace("-", " ")
+    cached = "cache" in value or "缓存" in value
+    if cached and ("write" in value or "写入" in value or "创建" in value):
+        return "cache_write"
+    if cached and any(
+        label in value
+        for label in ("input", "read", "hit", "输入", "读取", "命中")
+    ):
+        return "cache_hit"
+    if "input" in value or "prompt" in value or "输入" in value:
+        return "input"
+    if "output" in value or "completion" in value or "输出" in value:
+        return "output"
+    return None
+
+
+def monetary_amount(value: str, header: str, currency: str) -> str | None:
+    """Extract a monetary amount only when the cell or header names currency."""
+    cell = clean_text(value).replace(",", "")
+    heading = clean_text(header).lower()
+    if re.search(r"\bfree\b", cell, re.I) or any(
+        label in cell for label in ("免费", "不收费")
+    ):
+        return None
+    if currency == "USD":
+        match = re.search(r"\$\s*(\d+(?:\.\d+)?)", cell)
+        if match:
+            return match.group(1)
+        currency_named = "usd" in cell.lower() or "usd" in heading
+    else:
+        match = re.search(r"(?:¥|￥)\s*(\d+(?:\.\d+)?)", cell)
+        if match:
+            return match.group(1)
+        match = re.search(r"(\d+(?:\.\d+)?)\s*元", cell)
+        if match:
+            return match.group(1)
+        currency_named = any(label in heading for label in ("元", "cny", "rmb"))
+    if currency_named:
+        values = numeric_values(cell)
+        return values[0] if values else None
+    return None
+
+
+class TabularTokenPricingAdapter(PriceSource):
+    """Shared parser for first-party pay-as-you-go token pricing tables."""
+
+    currency: str
+    region: str
+    offer_name = "pay_as_you_go"
+
+    def __init__(self, client: HttpClient) -> None:
+        super().__init__(client)
+        self._parsed_rows: list[dict[str, Any]] | None = None
+
+    @staticmethod
+    def _model_column(headers: list[str]) -> int | None:
+        for index, header in enumerate(headers):
+            value = clean_text(header).lower()
+            if value in {"model", "model name", "模型", "模型名称"}:
+                return index
+        return None
+
+    def _rows(self) -> list[dict[str, Any]]:
+        if self._parsed_rows is not None:
+            return self._parsed_rows
+        rows: list[dict[str, Any]] = []
+        for heading, table in headed_document_tables(
+            self.client.get_text(self.source_url)
+        ):
+            if len(table) < 2:
+                continue
+            headers = [clean_text(cell) for cell in table[0]]
+            model_index = self._model_column(headers)
+            price_columns = {
+                index: kind
+                for index, header in enumerate(headers)
+                if (kind := token_price_kind(header)) is not None
+            }
+            if model_index is None or not price_columns:
+                continue
+            for cells in table[1:]:
+                cells = [*cells, *([""] * (len(headers) - len(cells)))]
+                display_name = clean_text(cells[model_index])
+                if not display_name:
+                    continue
+                prices = []
+                for index, kind in price_columns.items():
+                    amount = monetary_amount(
+                        cells[index], headers[index], self.currency
+                    )
+                    if amount is not None:
+                        prices.append(
+                            price_item(
+                                kind,
+                                headers[index],
+                                amount,
+                                f"{self.currency}_per_million_tokens",
+                                display=clean_text(cells[index]),
+                            )
+                        )
+                if prices:
+                    model_id = normalize_model(
+                        re.sub(r"\s*[（(][^）)]*[)）]\s*$", "", display_name)
+                    )
+                    conditions = {
+                        headers[index]: clean_text(cells[index])
+                        for index in range(len(headers))
+                        if index != model_index
+                        and index not in price_columns
+                        and clean_text(cells[index])
+                    }
+                    conditions["billing_mode"] = "pay_as_you_go"
+                    if heading:
+                        conditions["source_section"] = heading
+                    rows.append(
+                        {
+                            "model_id": model_id,
+                            "display_name": display_name,
+                            "offer_name": normalize_model(heading) or self.offer_name,
+                            "conditions": conditions,
+                            "prices": prices,
+                        }
+                    )
+        if not rows:
+            raise SourceError("official token pricing table was not found")
+        self._parsed_rows = rows
+        return rows
+
+    def list_models(self, prefix: str = "") -> list[str]:
+        models = {row["model_id"] for row in self._rows()}
+        if prefix:
+            key = normalize_model(prefix)
+            models = {
+                model for model in models if normalize_model(model).startswith(key)
+            }
+        return sorted(models, key=str.lower)
+
+    def query(self, model: str) -> list[dict[str, Any]]:
+        matched = [
+            row
+            for row in self._rows()
+            if normalize_model(row["model_id"]) == normalize_model(model)
+        ]
+        if not matched:
+            return []
+        return [
+            make_record(
+                self.provider_id,
+                self.provider_name,
+                matched[0]["model_id"],
+                matched[0]["display_name"],
+                self.region,
+                [
+                    {
+                        "name": row["offer_name"],
+                        "conditions": row["conditions"],
+                        "prices": row["prices"],
+                    }
+                    for row in matched
+                ],
+                self.source_url,
+                self.source_kind,
+                now_iso(),
+                currency=self.currency,
+                delivery_mode="first_party",
+                model_family=model_family(matched[0]["model_id"]),
+            )
+        ]
+
+
+class XiaomiAdapter(TabularTokenPricingAdapter):
+    provider_id = "xiaomi"
+    provider_name = "小米 MiMo"
+    source_url = XIAOMI_URL
+    source_kind = "official_html"
+    currency = "CNY"
+    region = "中国区"
+
+
+class XAIAdapter(TabularTokenPricingAdapter):
+    provider_id = "xai"
+    provider_name = "xAI"
+    source_url = XAI_URL
+    source_kind = "official_html"
+    currency = "USD"
+    region = "全球"
 
 
 class DeepSeekAdapter(PriceSource):
@@ -1971,9 +2296,11 @@ def build_adapters(
         KimiAdapter(client),
         ZhipuAdapter(client),
         MiniMaxAdapter(client),
+        XiaomiAdapter(client),
         OpenAIAdapter(client),
         AnthropicAdapter(client),
         GeminiAdapter(client),
+        XAIAdapter(client),
     ]
     cache = CacheStore(cache_dir)
     return {
@@ -2018,6 +2345,8 @@ def inferred_overseas_providers(model: str) -> tuple[str, ...]:
         r"(?:^|-)(?:google|gemini|gemma|veo|lyria|imagen)(?:-|$)", key
     ):
         providers.append("google")
+    if re.search(r"(?:^|-)(?:xai|grok)(?:-|$)", key):
+        providers.append("xai")
     return tuple(providers)
 
 
@@ -2196,6 +2525,27 @@ def to_markdown(payload: dict[str, Any]) -> str:
             f"[{source['kind']}]({source['url']})；检查时间 {source['retrieved_at']}"
             f"{cache_text}{error}"
         )
+    skill_update = payload.get("skill_update")
+    if skill_update:
+        update_labels = {
+            "updated": "已快进到远端版本",
+            "up_to_date": "当前 skill 已是远端版本",
+            "update_skipped": "发现远端变化，但未自动更新",
+            "check_failed": "远端更新检查失败",
+        }
+        revision = skill_update.get("to_revision", "")[:12]
+        revision_text = f"；远端版本 `{revision}`" if revision else ""
+        reason_value = str(skill_update.get("reason", "")).replace("|", "\\|")
+        reason = f"；{reason_value}" if reason_value else ""
+        lines.extend(
+            [
+                "",
+                "## Skill 更新检查",
+                "",
+                f"- {update_labels.get(skill_update['status'], skill_update['status'])}"
+                f"；检查时间 {skill_update['checked_at']}{revision_text}{reason}",
+            ]
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -2234,7 +2584,7 @@ def main() -> int:
     compare.add_argument(
         "--include-overseas",
         action="store_true",
-        help="also query OpenAI, Anthropic, and Google",
+        help="also query OpenAI, Anthropic, Google, and xAI",
     )
     compare.add_argument(
         "--refresh",
@@ -2261,6 +2611,7 @@ def main() -> int:
     listing.add_argument("--format", choices=("json",), default="json")
 
     args = parser.parse_args()
+    skill_update = update_skill_before_refresh(args.refresh)
     adapters = build_adapters(
         HttpClient(args.timeout), cache_dir=args.cache_dir, refresh=args.refresh
     )
@@ -2285,11 +2636,10 @@ def main() -> int:
             requested=args.providers,
             include_overseas=args.include_overseas,
         )
-        emit(query_adapters(selected, args.model, exact=args.exact), args.format)
+        payload = query_adapters(selected, args.model, exact=args.exact)
     elif args.command == "provider":
-        emit(
-            query_adapters([adapters[args.provider]], args.model, exact=args.exact),
-            args.format,
+        payload = query_adapters(
+            [adapters[args.provider]], args.model, exact=args.exact
         )
     else:
         adapter = adapters[args.provider]
@@ -2315,7 +2665,9 @@ def main() -> int:
                 }
         except Exception as exc:
             payload = source_status(adapter, "source_error", checked_at, str(exc))
-        emit(payload, args.format)
+    if skill_update:
+        payload["skill_update"] = skill_update
+    emit(payload, args.format)
     return 0
 
 

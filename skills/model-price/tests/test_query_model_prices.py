@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "query_model_prices.py"
 SPEC = importlib.util.spec_from_file_location("query_model_prices", SCRIPT)
@@ -90,6 +91,49 @@ class CountingSource(MODULE.PriceSource):
 class FailingSource(CountingSource):
     def query(self, model):
         raise MODULE.SourceError("offline")
+
+
+class FakeGitRunner:
+    def __init__(self, responses):
+        self.responses = responses
+        self.commands = []
+
+    def __call__(self, command, **kwargs):
+        arguments = tuple(command[1:])
+        self.commands.append(arguments)
+        returncode, stdout, stderr = self.responses[arguments]
+        return SimpleNamespace(
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+
+def git_update_responses(status_output=""):
+    before = "a" * 40
+    after = "b" * 40
+    return {
+        ("rev-parse", "--show-toplevel"): (0, "/repo\n", ""),
+        (
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ): (0, "origin/main\n", ""),
+        ("fetch", "--quiet"): (0, "", ""),
+        ("rev-parse", "HEAD"): (0, f"{before}\n", ""),
+        ("rev-parse", "@{upstream}"): (0, f"{after}\n", ""),
+        (
+            "diff",
+            "--quiet",
+            f"{before}..{after}",
+            "--",
+            "skills/model-price",
+        ): (1, "", ""),
+        ("merge-base", "--is-ancestor", before, after): (0, "", ""),
+        ("status", "--porcelain"): (0, status_output, ""),
+        ("merge", "--ff-only", "origin/main"): (0, "", ""),
+    }
 
 
 class ModelMatchingTests(unittest.TestCase):
@@ -207,6 +251,44 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(adapter.cache_status, "refresh_failed")
 
 
+class SkillUpdateTests(unittest.TestCase):
+    def test_remote_skill_change_is_fetched_then_fast_forwarded(self):
+        runner = FakeGitRunner(git_update_responses())
+
+        result = MODULE.GitSkillUpdater(
+            Path("/repo/skills/model-price"), runner=runner
+        ).update()
+
+        self.assertEqual(result["status"], "updated")
+        self.assertLess(
+            runner.commands.index(("fetch", "--quiet")),
+            runner.commands.index(("merge", "--ff-only", "origin/main")),
+        )
+
+    def test_local_changes_prevent_automatic_update(self):
+        runner = FakeGitRunner(git_update_responses(" M local.txt\n"))
+
+        result = MODULE.GitSkillUpdater(
+            Path("/repo/skills/model-price"), runner=runner
+        ).update()
+
+        self.assertEqual(result["status"], "update_skipped")
+        self.assertNotIn(("merge", "--ff-only", "origin/main"), runner.commands)
+
+    def test_fetch_failure_is_reported_without_attempting_a_merge(self):
+        responses = git_update_responses()
+        responses[("fetch", "--quiet")] = (1, "", "network unavailable")
+        runner = FakeGitRunner(responses)
+
+        result = MODULE.GitSkillUpdater(
+            Path("/repo/skills/model-price"), runner=runner
+        ).update()
+
+        self.assertEqual(result["status"], "check_failed")
+        self.assertIn("network unavailable", result["reason"])
+        self.assertNotIn(("merge", "--ff-only", "origin/main"), runner.commands)
+
+
 class OverseasRoutingTests(unittest.TestCase):
     def test_domestic_query_does_not_select_overseas_sources(self):
         adapters = {
@@ -228,6 +310,7 @@ class OverseasRoutingTests(unittest.TestCase):
         self.assertEqual(
             MODULE.inferred_overseas_providers("gemini-2.5-pro"), ("google",)
         )
+        self.assertEqual(MODULE.inferred_overseas_providers("grok-4"), ("xai",))
 
     def test_unavailable_overseas_source_is_reported_as_source_error(self):
         adapter = MODULE.OpenAIAdapter(
@@ -275,6 +358,40 @@ class OverseasParserTests(unittest.TestCase):
         record = adapter.query("gemini-test")[0]
         self.assertEqual(record["offers"][0]["conditions"]["billing_tier"], "paid")
         self.assertEqual(record["offers"][0]["prices"][0]["amount"], "0.50")
+
+    def test_xai_html_parser_reads_token_prices_without_a_model_allowlist(self):
+        document = """<h2>Standard text models</h2><table>
+<tr><th>Model</th><th>Context window</th><th>Input ($ per million tokens)</th><th>Cached input ($ per million tokens)</th><th>Output ($ per million tokens)</th></tr>
+<tr><td>grok-test</td><td>128k</td><td>$1.25</td><td>$0.25</td><td>$5.00</td></tr>
+<tr><td>future-family-1</td><td>256k</td><td>$2.00</td><td>—</td><td>$8.00</td></tr>
+</table>"""
+        adapter = MODULE.XAIAdapter(MappingClient({MODULE.XAI_URL: document}))
+
+        self.assertIn("future-family-1", adapter.list_models())
+        record = adapter.query("grok-test")[0]
+        offer = record["offers"][0]
+        self.assertEqual(MODULE.price_lookup(offer, "input")["amount"], "1.25")
+        self.assertEqual(MODULE.price_lookup(offer, "cache_hit")["amount"], "0.25")
+        self.assertEqual(MODULE.price_lookup(offer, "output")["amount"], "5.00")
+        self.assertEqual(offer["conditions"]["Context window"], "128k")
+        self.assertEqual(offer["conditions"]["source_section"], "Standard text models")
+
+
+class DomesticParserTests(unittest.TestCase):
+    def test_xiaomi_html_parser_reads_yuan_prices_from_headers(self):
+        document = """<table>
+<tr><th>模型名称</th><th>输入价格（元/百万 tokens）</th><th>缓存命中价格（元/百万 tokens）</th><th>输出价格（元/百万 tokens）</th></tr>
+<tr><td>MiMo-Test-1</td><td>1.00</td><td>0.20</td><td>4.00</td></tr>
+</table>"""
+        adapter = MODULE.XiaomiAdapter(MappingClient({MODULE.XIAOMI_URL: document}))
+
+        record = adapter.query("mimo-test-1")[0]
+        offer = record["offers"][0]
+        self.assertEqual(record["source"]["url"], MODULE.XIAOMI_URL)
+        self.assertEqual(record["currency"], "CNY")
+        self.assertEqual(MODULE.price_lookup(offer, "input")["amount"], "1.00")
+        self.assertEqual(MODULE.price_lookup(offer, "cache_hit")["amount"], "0.20")
+        self.assertEqual(MODULE.price_lookup(offer, "output")["amount"], "4.00")
 
 
 DEEPSEEK_HTML = """
