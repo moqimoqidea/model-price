@@ -31,10 +31,12 @@ class OpenAIAdapter(PriceSource):
     def _rows(self) -> list[dict[str, Any]]:
         text = self.client.get_text(OPENAI_MARKDOWN_URL)
         rows: list[dict[str, Any]] = []
-        for heading, table in markdown_tables(text):
+        for headings, table in markdown_tables(text):
             # Any "<Tier> pricing data" heading is a service tier, so a new tier
             # name does not silently drop that tier's prices.
-            tier_match = re.fullmatch(r"([A-Za-z][A-Za-z-]*) pricing data", heading)
+            tier_match = re.fullmatch(
+                r"([A-Za-z][A-Za-z-]*) pricing data", headings[-1] if headings else ""
+            )
             if not tier_match or len(table) < 2:
                 continue
             headers = [clean_text(cell).lower() for cell in table[0]]

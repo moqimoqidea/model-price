@@ -11,7 +11,7 @@ from ..parsing import split_markdown_row
 from ..pricing import make_record, price_item
 from ..text import clean_text, numeric_values
 
-MINIMAX_URL = "https://platform.minimaxi.com/docs/guides/pricing-paygo.md"
+MINIMAX_URL = "https://platform.minimax.cn/docs/guides/pricing-paygo.md"
 
 
 class MiniMaxAdapter(PriceSource):

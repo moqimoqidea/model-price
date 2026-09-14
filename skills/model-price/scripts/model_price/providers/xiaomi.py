@@ -20,3 +20,11 @@ class XiaomiAdapter(TabularTokenPricingAdapter):
     source_kind = "official_html"
     currency = "CNY"
     region = "中国区"
+
+    def model_column(self, headers: list[str]) -> int | None:
+        # The table's first column is the product line ("MiMo-V2.5 系列") rather
+        # than a generic "Model" header, so it names the model unless it is itself
+        # a price column.
+        if headers and self.price_kind(headers[0]) is None:
+            return 0
+        return None

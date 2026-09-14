@@ -35,7 +35,7 @@ Model identity ignores documentation footnote markers (`deepseek-flash(1)` == `d
 
 Table-driven adapters keep cache-hit and cache-miss prices apart (`输入（未命中缓存）` is regular input pricing, not cached-input pricing), and ignore headers that bill a non-token unit such as audio duration. They read only amounts that name their own currency, so a page publishing both CNY and USD tables yields the CNY catalogue. Never relabel one currency as another.
 
-Prefer an official structured JSON response used by a documentation page. Fall back to official Markdown or HTML only when no public JSON source exists. Never use credentials or private console data.
+Prefer a representation the official page publishes for machines over scraping its rendered markup: the page's own Markdown copy when it publishes one with real Markdown tables, otherwise its public structured JSON. Parse rendered HTML only when the vendor publishes neither. Never use credentials or private console data.
 
 Code layout: `scripts/query_model_prices.py` is the stable CLI entry point; the implementation lives in `scripts/model_price/`, with one module per vendor under `providers/` and shared concerns split into `core` (HTTP + source contract), `parsing` (document readers), `pricing` (record shapes), `models` (identity), `caching`, `updating`, `reporting`, and `registry` (wiring). Add a provider by writing its module and listing it in `providers/__init__.py`.
 

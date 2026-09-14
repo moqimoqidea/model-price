@@ -8,24 +8,36 @@ from html.parser import HTMLParser
 
 from .text import clean_text, numeric_values
 
+HEADING_TAGS = ("h1", "h2", "h3", "h4")
+
+# Markdown escapes the punctuation it would otherwise interpret. Vendor cells keep
+# those backslashes in the source (``deepseek\-v4\-flash正式版``, ``输入长度 \[0, 32K)``),
+# so they have to be removed before a cell can be named or matched.
+MARKDOWN_ESCAPE_RE = re.compile(r"\\([\\`*_{}\[\]()#+.!|~>-])")
+
+
+def unescape_markdown(value: str) -> str:
+    """Drop the backslash escapes Markdown puts in front of punctuation."""
+    return MARKDOWN_ESCAPE_RE.sub(r"\1", value)
+
 
 class TextTableParser(HTMLParser):
-    """Collect HTML tables along with the nearest preceding heading."""
+    """Collect HTML tables along with the heading path that precedes them."""
 
     def __init__(self) -> None:
         super().__init__()
         self.tables: list[list[list[str]]] = []
-        self.table_headings: list[str] = []
-        self.heading = ""
-        self.heading_tag: str | None = None
+        self.table_headings: list[list[str]] = []
+        self.path: list[str] = []
+        self.heading_level: int | None = None
         self.heading_text: list[str] = []
         self.table: list[list[str]] | None = None
         self.row: list[str] | None = None
         self.cell: list[str] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in {"h1", "h2", "h3", "h4"} and self.table is None:
-            self.heading_tag = tag
+        if tag in HEADING_TAGS and self.table is None:
+            self.heading_level = int(tag[1])
             self.heading_text = []
         elif tag == "table":
             self.table = []
@@ -37,15 +49,19 @@ class TextTableParser(HTMLParser):
             self.cell.append(" ")
 
     def handle_data(self, data: str) -> None:
-        if self.heading_tag:
+        if self.heading_level is not None:
             self.heading_text.append(data)
         if self.cell is not None:
             self.cell.append(data)
 
     def handle_endtag(self, tag: str) -> None:
-        if tag == self.heading_tag:
-            self.heading = clean_text(" ".join(self.heading_text))
-            self.heading_tag = None
+        if tag in HEADING_TAGS and self.heading_level == int(tag[1]):
+            # A heading replaces everything from its own level down, so an h3
+            # keeps the h2 above it while an h2 starts a new top-level section.
+            self.path = self.path[: self.heading_level - 1] + [
+                clean_text(" ".join(self.heading_text))
+            ]
+            self.heading_level = None
         elif tag in ("td", "th") and self.cell is not None and self.row is not None:
             self.row.append(re.sub(r"\s+", " ", "".join(self.cell)).strip())
             self.cell = None
@@ -55,24 +71,32 @@ class TextTableParser(HTMLParser):
             self.row = None
         elif tag == "table" and self.table is not None:
             self.tables.append(self.table)
-            self.table_headings.append(self.heading)
+            self.table_headings.append(list(self.path))
             self.table = None
 
 
 def split_markdown_row(line: str) -> list[str]:
-    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+    """Split a table row, keeping empty cells such as a carried model name."""
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [unescape_markdown(cell.strip()) for cell in stripped.split("|")]
 
 
-def markdown_tables(text: str) -> list[tuple[str, list[list[str]]]]:
-    """Return Markdown tables with their nearest preceding heading."""
-    tables: list[tuple[str, list[list[str]]]] = []
-    heading = ""
+def markdown_tables(text: str) -> list[tuple[list[str], list[list[str]]]]:
+    """Return Markdown tables with the heading path that precedes them."""
+    tables: list[tuple[list[str], list[list[str]]]] = []
+    path: list[str] = []
     lines = text.splitlines()
     index = 0
     while index < len(lines):
         line = lines[index].strip()
         if line.startswith("#"):
-            heading = clean_text(line.lstrip("# "))
+            level = len(line) - len(line.lstrip("#"))
+            title = unescape_markdown(clean_text(line.lstrip("# ")))
+            path = path[: level - 1] + [title]
         if (
             line.startswith("|")
             and index + 1 < len(lines)
@@ -83,7 +107,7 @@ def markdown_tables(text: str) -> list[tuple[str, list[list[str]]]]:
             while index < len(lines) and lines[index].lstrip().startswith("|"):
                 rows.append(split_markdown_row(lines[index]))
                 index += 1
-            tables.append((heading, rows))
+            tables.append((list(path), rows))
             continue
         index += 1
     return tables
@@ -91,7 +115,8 @@ def markdown_tables(text: str) -> list[tuple[str, list[list[str]]]]:
 
 def markdown_link_text(value: str) -> str:
     """Flatten ``[label](url)`` into ``label``."""
-    return clean_text(re.sub(r"\[([^]]+)]\([^)]+\)", r"\1", value))
+    flattened = re.sub(r"\[([^]]+)]\([^)]+\)", r"\1", unescape_markdown(value))
+    return clean_text(flattened)
 
 
 def markdown_json_rows(document: str) -> list[list[str]]:
@@ -110,7 +135,7 @@ def markdown_json_rows(document: str) -> list[list[str]]:
     return rows
 
 
-def headed_document_tables(document: str) -> list[tuple[str, list[list[str]]]]:
+def headed_document_tables(document: str) -> list[tuple[list[str], list[list[str]]]]:
     """Read pricing tables from either rendered HTML or official Markdown."""
     parser = TextTableParser()
     parser.feed(document.replace("\x00", ""))
@@ -124,10 +149,19 @@ def headed_document_tables(document: str) -> list[tuple[str, list[list[str]]]]:
 # guard "输入音频时长" (input audio duration, billed per hour) looks like "input".
 NON_TOKEN_BILLING_MARKERS = ("时长", "小时", "秒", "字符", "千次", "万次", "/次")
 
+# Cache *storage* is billed per million tokens per hour, so it stays a token price
+# even though its header names an hour. Detecting it first keeps the guard above
+# from rejecting it along with genuine duration billing.
+CACHE_STORAGE_MARKERS = ("缓存存储", "缓存空间")
+
 
 def token_price_kind(header: str) -> str | None:
     """Map English and Chinese token-price headers without model allowlists."""
     value = clean_text(header).lower().replace("-", "").replace(" ", "")
+    if any(marker in value for marker in CACHE_STORAGE_MARKERS) or (
+        "cache" in value and "storage" in value
+    ):
+        return "cache_storage"
     if any(marker.replace(" ", "") in value for marker in NON_TOKEN_BILLING_MARKERS):
         return None
     cached = "cache" in value or "缓存" in value
@@ -138,8 +172,7 @@ def token_price_kind(header: str) -> str | None:
     if "未命中" in value or "不命中" in value or "miss" in value:
         return "input"
     if cached and any(
-        label in value
-        for label in ("input", "read", "hit", "输入", "读取", "命中")
+        label in value for label in ("input", "read", "hit", "输入", "读取", "命中")
     ):
         return "cache_hit"
     if "input" in value or "prompt" in value or "输入" in value:

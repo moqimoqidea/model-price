@@ -14,10 +14,14 @@ from model_price.caching import CacheStore, CachedPriceSource
 from model_price.core import PriceSource
 from model_price.errors import SourceError
 from model_price.models import model_matches, normalize_model, strip_footnote_markers
-from model_price.parsing import token_price_kind
+from model_price.parsing import markdown_tables, split_markdown_row, token_price_kind
 from model_price.providers.anthropic import ANTHROPIC_MARKDOWN_URL, AnthropicAdapter
 from model_price.providers.deepseek import DEEPSEEK_URL, DeepSeekAdapter
-from model_price.providers.google import GEMINI_URL, GeminiAdapter
+from model_price.providers.google import (
+    GEMINI_MARKDOWN_URL,
+    GEMINI_URL,
+    GeminiAdapter,
+)
 from model_price.providers.kimi import KIMI_INDEX_URL, KimiAdapter
 from model_price.providers.openai import OPENAI_MARKDOWN_URL, OpenAIAdapter
 from model_price.providers.tencent import expand_slate_table, tencent_delivery_mode
@@ -28,6 +32,7 @@ from model_price.providers.volcengine import (
 )
 from model_price.providers.xai import XAI_MARKDOWN_URL, XAI_URL, XAIAdapter
 from model_price.providers.xiaomi import XIAOMI_URL, XiaomiAdapter
+from model_price.providers.zhipu import ZHIPU_MARKDOWN_URL, ZHIPU_URL, ZhipuAdapter
 from model_price.registry import (
     DOMESTIC_PROVIDER_IDS,
     OVERSEAS_PROVIDER_IDS,
@@ -39,50 +44,41 @@ from model_price.reporting import price_lookup, to_markdown
 from model_price.updating import GitSkillUpdater
 
 
-def text_zone(value):
-    return {
-        "ops": [
-            {"insert": "*", "attributes": {"lineId": "marker"}},
-            {"insert": f"{value}\n"},
-        ]
-    }
+VOLC_MARKDOWN = """# 大语言模型
+
+## 在线推理（常规）
+
+|模型名称 |条件<br><br>千 token |输入(非音频)<br><br>元/百万token |缓存存储<br><br>元/百万token/小时 |缓存命中(非音频)<br><br>元/百万token |输出<br><br>元/百万token |
+|---|---|---|---|---|---|
+|doubao\\-seed\\-2.0\\-pro |输入长度 [0, 32] |3.2 |0.017 |0.64 |16.0 |
+||输入长度 (32, 128] |4.8 |0.017 |0.96 |24.0 |
+|deepseek\\-v4\\-flash正式版 |\\- |3.00 |0.017 |0.10 |9.00 |
+|deepseek\\-v4\\-flash正式版<br><br>> 调整前价格，2026\\-08\\-21 起不适用 |\\- |1.00 |0.017 |0.20 |2.00 |
+|deepseek\\-v4\\-pro预览版 |\\- |9.00 |0.017 |0.30 |27.00 |
+
+## 批量推理
+
+|模型名称 |输入(非音频)<br><br>元/百万token |输出<br><br>元/百万token |
+|---|---|---|
+|deepseek\\-v4\\-flash正式版 |1.50 |4.50 |
+
+## 价格示例
+
+|分辨率 |宽高比 |输入视频时长（秒） |输出视频时长（秒） |doubao\\-seedance 视频价格（元/个） |
+|---|---|---|---|---|
+|480p |16:9 |2~30 |5 |3.63 |
+"""
 
 
-def volc_payload():
-    rows = ["header", "model"]
-    columns = ["name", "input", "output"]
-    data = {
-        "0": {
-            "ops": [
-                {"insert": "*", "attributes": {"heading": "h1"}},
-                {"insert": "大语言模型\n"},
-                {"insert": "*", "attributes": {"heading": "h2"}},
-                {"insert": "在线推理（常规）\n"},
-                {"insert": "*", "attributes": {"aceTable": "rows columns"}},
-            ]
-        },
-        "rows": {"ops": [{"insert": {"id": row}} for row in rows]},
-        "columns": {"ops": [{"insert": {"id": column}} for column in columns]},
-    }
-    values = [
-        ["模型名称", "输入 元/百万token", "输出 元/百万token"],
-        ["deepseek-v4-pro正式版", "9.00", "27.00"],
-    ]
-    for row_id, row in zip(rows, values):
-        for column_id, value in zip(columns, row):
-            data[f"x{row_id}x{column_id}"] = text_zone(value)
+def volc_payload(markdown=VOLC_MARKDOWN):
     return {
         "Result": {
             "ContentType": "json",
-            "Content": json.dumps({"version": "test", "data": data}),
-            "UpdatedTime": "2026-09-09T00:00:00Z",
+            "Content": json.dumps({"version": "test", "data": {}}),
+            "MDContent": markdown,
+            "UpdatedTime": "2026-09-14T03:03:07Z",
         }
     }
-
-
-class FakeClient:
-    def get_text(self, url):
-        return json.dumps(volc_payload())
 
 
 class MappingClient:
@@ -162,6 +158,38 @@ def git_update_responses(status_output=""):
     }
 
 
+class MarkdownTableReaderTests(unittest.TestCase):
+    def test_an_empty_leading_cell_survives_so_rows_stay_aligned(self):
+        self.assertEqual(split_markdown_row("||输入长度 (32, 128] |4.8 |"), [
+            "",
+            "输入长度 (32, 128]",
+            "4.8",
+        ])
+        self.assertEqual(split_markdown_row("| a | b |"), ["a", "b"])
+
+    def test_vendor_escapes_are_removed_from_cells_and_headings(self):
+        markdown = """## deepseek\\-v4系列价格调整
+
+|模型名称 |输入<br><br>元/百万token |
+|---|---|
+|x |9.0 元 |
+"""
+        path, rows = markdown_tables(markdown)[0]
+        self.assertEqual(path, ["deepseek-v4系列价格调整"])
+        self.assertEqual(rows[0][0], "模型名称")
+
+    def test_a_table_keeps_the_whole_heading_path(self):
+        markdown = """# 大语言模型
+
+## 在线推理（常规）
+
+| a | b |
+|---|---|
+| 1 | 2 |
+"""
+        self.assertEqual(markdown_tables(markdown)[0][0], ["大语言模型", "在线推理（常规）"])
+
+
 class ModelMatchingTests(unittest.TestCase):
     def test_family_match_includes_versions_and_labels(self):
         self.assertTrue(model_matches("deepseek-v4-pro", "deepseek-v4-pro-0813"))
@@ -183,13 +211,55 @@ class ModelMatchingTests(unittest.TestCase):
 
 
 class StructuredDocumentTests(unittest.TestCase):
-    def test_volcengine_reads_catalog_and_prices_from_document_json(self):
-        records = VolcengineAdapter(FakeClient()).search("deepseek-v4-pro")
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["display_name"], "deepseek-v4-pro正式版")
-        self.assertEqual(records[0]["source"]["url"], VOLCENGINE_PAGE_URL)
-        self.assertEqual(records[0]["source_api"], VOLCENGINE_DOC_API)
-        self.assertEqual(records[0]["offers"][0]["prices"][0]["amount"], "9.00")
+    def adapter(self):
+        return VolcengineAdapter(
+            MappingClient({VOLCENGINE_DOC_API: json.dumps(volc_payload())})
+        )
+
+    def test_volcengine_reads_its_official_markdown(self):
+        record = self.adapter().query("deepseek-v4-flash正式版")[0]
+        self.assertEqual(record["display_name"], "deepseek-v4-flash正式版")
+        self.assertEqual(record["source"]["url"], VOLCENGINE_PAGE_URL)
+        self.assertEqual(record["source_api"], VOLCENGINE_DOC_API)
+        self.assertEqual(record["source_updated_at"], "2026-09-14T03:03:07Z")
+        self.assertEqual(record["delivery_mode"], "platform_hosted")
+        self.assertEqual(record["currency"], "CNY")
+        self.assertEqual(price_lookup(record["offers"][0], "input")["amount"], "3.00")
+
+    def test_cache_storage_is_billed_per_hour(self):
+        offer = self.adapter().query("deepseek-v4-flash正式版")[0]["offers"][0]
+        self.assertEqual(
+            price_lookup(offer, "cache_storage")["unit"],
+            "CNY_per_million_tokens_per_hour",
+        )
+
+    def test_a_model_is_carried_across_its_context_tier_rows(self):
+        record = self.adapter().query("doubao-seed-2.0-pro")[0]
+        self.assertEqual(
+            [offer["conditions"]["context_tier"] for offer in record["offers"]],
+            ["输入长度 [0, 32]", "输入长度 (32, 128]"],
+        )
+        self.assertEqual(price_lookup(record["offers"][1], "input")["amount"], "4.8")
+
+    def test_a_superseded_price_keeps_its_note(self):
+        offers = self.adapter().query("deepseek-v4-flash正式版")[0]["offers"]
+        self.assertEqual(offers[0]["conditions"].get("model_note"), None)
+        self.assertEqual(
+            offers[1]["conditions"]["model_note"], "调整前价格，2026-08-21 起不适用"
+        )
+
+    def test_a_batch_table_becomes_its_own_offer(self):
+        record = self.adapter().query("deepseek-v4-flash正式版")[0]
+        self.assertEqual([offer["name"] for offer in record["offers"]],
+                         ["online_standard", "online_standard", "batch"])
+
+    def test_a_preview_model_is_marked_as_such(self):
+        offer = self.adapter().query("deepseek-v4-pro预览版")[0]["offers"][0]
+        self.assertEqual(offer["conditions"]["release_stage"], "preview")
+
+    def test_a_table_without_a_model_column_is_not_a_catalogue(self):
+        self.assertNotIn("480p", self.adapter().list_models())
+        self.assertEqual(self.adapter().query("480p"), [])
 
     def test_tencent_rowspan_placeholders_keep_columns_aligned(self):
         def cell(value, row_span=None, col_span=None):
@@ -356,14 +426,8 @@ class OverseasParserTests(unittest.TestCase):
         record = adapter.query("claude-test-1")[0]
         self.assertEqual(record["offers"][0]["prices"][-1]["amount"], "10")
 
-    def test_gemini_html_parser_uses_paid_tier(self):
-        html = """<h2 id="gemini-test">Gemini Test</h2><code>gemini-test</code>
-<section><h3>Standard</h3><table class="pricing-table">
-<tr><th></th><th>Free Tier</th><th>Paid Tier, per 1M tokens in USD</th></tr>
-<tr><td>Input price</td><td>Free</td><td>$0.50</td></tr>
-<tr><td>Output price</td><td>Free</td><td>$2.00</td></tr>
-</table></section>"""
-        adapter = GeminiAdapter(MappingClient({GEMINI_URL: html}))
+    def test_gemini_markdown_parser_uses_paid_tier(self):
+        adapter = GeminiAdapter(MappingClient({GEMINI_MARKDOWN_URL: GEMINI_MARKDOWN}))
         record = adapter.query("gemini-test")[0]
         self.assertEqual(record["offers"][0]["conditions"]["billing_tier"], "paid")
         self.assertEqual(record["offers"][0]["prices"][0]["amount"], "0.50")
@@ -414,6 +478,118 @@ class XAIAdapterTests(unittest.TestCase):
         models = self.adapter().list_models()
         self.assertNotIn("grok-imagine-image", models)
         self.assertEqual(self.adapter().query("grok-imagine-image"), [])
+
+
+GEMINI_MARKDOWN = """### Free
+
+For developers and small projects getting started.
+
+## Gemini Test
+
+*[`gemini-test`](https://ai.google.dev/gemini-api/docs/models/gemini-test)*
+
+### Standard
+
+|   | Free Tier | Paid Tier, per 1M tokens in USD |
+|---|---|---|
+| Input price | Free of charge | $0.50 |
+| Output price (including thinking tokens) | Free of charge | $2.00 |
+| Context caching price | Free of charge | $0.25 |
+
+### Batch
+
+|   | Free Tier | Paid Tier, per 1M tokens in USD |
+|---|---|---|
+| Input price | Not available | $0.25 |
+
+## [Gemma Test](https://ai.google.dev/gemma/docs/core/model_card)
+
+|   | Free Tier | Paid Tier, per 1M tokens in USD |
+|---|---|---|
+| Input price | Free of charge | Not available |
+
+## Pricing for tools
+
+|   | Free Tier | Paid Tier, per 1M tokens in USD |
+|---|---|---|
+| Google Search | 500 RPD free | $9.99 |
+
+## Notes
+
+- Nothing here is priced per token.
+"""
+
+
+class GeminiAdapterTests(unittest.TestCase):
+    def adapter(self, markdown=GEMINI_MARKDOWN):
+        return GeminiAdapter(MappingClient({GEMINI_MARKDOWN_URL: markdown}))
+
+    def test_official_markdown_source_is_used(self):
+        self.assertEqual(GeminiAdapter.source_url, GEMINI_URL)
+        self.assertEqual(GeminiAdapter.source_kind, "official_markdown")
+        self.assertEqual(GEMINI_MARKDOWN_URL, f"{GEMINI_URL}.md.txt")
+
+    def test_paid_tier_is_read_and_the_free_tier_is_not(self):
+        record = self.adapter().query("gemini-test")[0]
+        self.assertEqual(record["currency"], "USD")
+        self.assertEqual(record["model_id"], "gemini-test")
+        self.assertEqual(record["region"], "全球")
+        standard = next(o for o in record["offers"] if o["name"] == "standard")
+        self.assertEqual(standard["conditions"]["billing_tier"], "paid")
+        self.assertEqual(price_lookup(standard, "input")["amount"], "0.50")
+        self.assertEqual(price_lookup(standard, "output")["amount"], "2.00")
+        self.assertEqual(price_lookup(standard, "cache_hit")["amount"], "0.25")
+
+    def test_each_tier_becomes_its_own_offer(self):
+        record = self.adapter().query("gemini-test")[0]
+        self.assertEqual([offer["name"] for offer in record["offers"]], ["standard", "batch"])
+        batch = next(o for o in record["offers"] if o["name"] == "batch")
+        self.assertEqual(price_lookup(batch, "input")["amount"], "0.25")
+        self.assertEqual(price_lookup(batch, "output"), None)
+
+    def test_cache_storage_stays_a_separate_price(self):
+        markdown = """## Gemini Cache Test
+
+*[`gemini-cache-test`](https://ai.google.dev/gemini-api/docs/models/gemini-cache-test)*
+
+### Standard
+
+|   | Free Tier | Paid Tier, per 1M tokens in USD |
+|---|---|---|
+| Context caching price | Free of charge | $0.075 $0.50 / 1,000,000 tokens per hour (storage price) |
+"""
+        offer = self.adapter(markdown).query("gemini-cache-test")[0]["offers"][0]
+        storage = price_lookup(offer, "cache_storage")
+        self.assertEqual(storage["amount"], "0.50")
+        self.assertEqual(storage["unit"], "USD_per_million_tokens_per_hour")
+
+    def test_model_ids_come_from_the_link_line_the_page_publishes(self):
+        markdown = """## Veo Test
+
+*[`veo-test-generate`](https://example.test/a), [`veo-test-fast-generate`](https://example.test/b)*
+
+|   | Free Tier | Paid Tier, per second in USD |
+|---|---|---|
+| Veo video price | Not available | $0.40 |
+"""
+        adapter = self.adapter(markdown)
+        self.assertEqual(
+            adapter.list_models(), ["veo-test-fast-generate", "veo-test-generate"]
+        )
+        records = adapter.search("veo-test")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["model_id"], "veo-test-generate")
+        self.assertEqual(
+            records[0]["model_aliases"],
+            ["veo-test-generate", "veo-test-fast-generate"],
+        )
+        self.assertEqual(records[0]["offers"], [])
+
+    def test_overview_sections_are_not_models(self):
+        adapter = self.adapter()
+        self.assertEqual(adapter.list_models(), ["gemini-test", "gemma-test"])
+        self.assertEqual(adapter.query("pricing-for-tools"), [])
+        self.assertEqual(adapter.query("notes"), [])
 
 
 XIAOMI_HTML = """<h2>模型国内定价</h2>
@@ -470,6 +646,75 @@ class XiaomiAdapterTests(unittest.TestCase):
         self.assertEqual(self.adapter().query("国内联网服务"), [])
 
 
+ZHIPU_MARKDOWN = """# API 定价
+
+## 旗舰模型
+
+| 模型名称 | 上下文 | 输入单价（元/百万 Tokens） | 输出单价（元/百万 Tokens） | 缓存存储（元/百万 Tokens/小时） | 缓存命中（元/百万 Tokens） | 输入模态 |
+| --- | --- | --- | --- | --- | --- | --- |
+| GLM-Test | 1M | 8 | 28 | 限时免费 | 2 | 文本 |
+| GLM-Test-Flash | 1M | 0.8 | 2.8 | 限时免费 | 0.23 | 图片、视频、文本 |
+
+## 模型推理
+
+### 文本模型
+
+| 模型名称 | 上下文 | 输入单价（元/百万 Tokens） | 输出单价（元/百万 Tokens） | 缓存存储（元/百万 Tokens/小时） | 缓存命中（元/百万 Tokens） |
+| --- | --- | --- | --- | --- | --- |
+| GLM-Tiered | 输入长度 \\[0, 32K) | 6 | 24 | 限时免费 | 1.3 |
+| GLM-Tiered | 输入长度 ≥32K | 8 | 28 | 限时免费 | 2 |
+| GLM-Free | 128K | 免费 | 免费 | 限时免费 | 不支持 |
+
+### 多模态生成
+
+| 模型名称 | 简介 | 规格 | 单价 | Batch API 定价 |
+| --- | --- | --- | --- | --- |
+| GLM-Image-Test | 图像生成 | 多分辨率 | 0.1 元/次 | 不支持 |
+"""
+
+
+class ZhipuAdapterTests(unittest.TestCase):
+    def adapter(self, markdown=ZHIPU_MARKDOWN):
+        return ZhipuAdapter(MappingClient({ZHIPU_MARKDOWN_URL: markdown}))
+
+    def test_official_markdown_source_is_used(self):
+        self.assertEqual(ZhipuAdapter.source_url, ZHIPU_URL)
+        self.assertEqual(ZhipuAdapter.source_kind, "official_markdown")
+        self.assertEqual(ZHIPU_MARKDOWN_URL, f"{ZHIPU_URL}.md")
+
+    def test_only_per_token_tables_are_read(self):
+        self.assertEqual(
+            self.adapter().list_models(),
+            ["glm-test", "glm-test-flash", "glm-tiered"],
+        )
+        self.assertEqual(self.adapter().query("glm-image-test"), [])
+
+    def test_each_column_maps_onto_its_schema_type(self):
+        offer = self.adapter().query("glm-test")[0]["offers"][0]
+        self.assertEqual(offer["name"], "pay_as_you_go")
+        self.assertEqual(price_lookup(offer, "input")["amount"], "8")
+        self.assertEqual(price_lookup(offer, "output")["amount"], "28")
+        self.assertEqual(price_lookup(offer, "cache_hit")["amount"], "2")
+        self.assertEqual(offer["conditions"]["context_tier"], "1M")
+        self.assertEqual(offer["conditions"]["输入模态"], "文本")
+        self.assertEqual(offer["conditions"]["source_section"], "旗舰模型")
+
+    def test_a_promotional_free_storage_cell_reports_no_price(self):
+        offer = self.adapter().query("glm-test")[0]["offers"][0]
+        self.assertIsNone(price_lookup(offer, "cache_storage"))
+
+    def test_a_free_model_produces_no_price_rows(self):
+        self.assertEqual(self.adapter().query("glm-free"), [])
+
+    def test_context_tiers_stay_separate_offers(self):
+        record = self.adapter().query("glm-tiered")[0]
+        self.assertEqual(
+            [offer["conditions"]["context_tier"] for offer in record["offers"]],
+            ["输入长度 [0, 32K)", "输入长度 ≥32K"],
+        )
+        self.assertEqual(price_lookup(record["offers"][1], "input")["amount"], "8")
+
+
 class TokenPriceHeaderTests(unittest.TestCase):
     def test_chinese_cache_hit_and_miss_are_distinct(self):
         self.assertEqual(token_price_kind("输入（命中缓存）"), "cache_hit")
@@ -480,6 +725,15 @@ class TokenPriceHeaderTests(unittest.TestCase):
         self.assertIsNone(token_price_kind("输入音频时长"))
         self.assertIsNone(token_price_kind("价格"))
         self.assertIsNone(token_price_kind("说明"))
+
+    def test_cache_storage_is_a_token_price_even_though_it_bills_an_hour(self):
+        self.assertEqual(token_price_kind("缓存存储"), "cache_storage")
+        self.assertEqual(
+            token_price_kind("缓存存储（元/百万 Tokens/小时）"), "cache_storage"
+        )
+        self.assertEqual(
+            token_price_kind("Cache storage, per 1M tokens / hour"), "cache_storage"
+        )
 
     def test_english_headers_still_map(self):
         self.assertEqual(token_price_kind("Input / 1M tokens"), "input")
@@ -592,22 +846,21 @@ class ModelNameCouplingTests(unittest.TestCase):
         record = adapter.query("anthropic-nova-1")[0]
         self.assertEqual(record["offers"][0]["prices"][0]["amount"], "3")
 
-    def test_gemini_keeps_other_google_families_and_drops_overview_sections(self):
-        html = """<h2 id="gemma-4">Gemma 4</h2>
-<section><h3>Standard</h3><table class="pricing-table">
-<tr><th></th><th>Free Tier</th><th>Paid Tier, per 1M tokens in USD</th></tr>
-<tr><td>Input price</td><td>Free</td><td>$0.10</td></tr>
-</table></section>
-<h2 id="pricing-for-tools">Pricing for tools</h2>
-<section><h3>Standard</h3><table class="pricing-table">
-<tr><th></th><th>Free Tier</th><th>Paid Tier, per 1M tokens in USD</th></tr>
-<tr><td>Input price</td><td>Free</td><td>$9.99</td></tr>
-</table></section>"""
-        adapter = GeminiAdapter(MappingClient({GEMINI_URL: html}))
-        self.assertEqual(adapter.list_models(), ["gemma-4"])
-        record = adapter.query("gemma-4")[0]
-        self.assertEqual(record["offers"][0]["prices"][0]["amount"], "0.10")
-        self.assertEqual(adapter.query("pricing-for-tools"), [])
+    def test_gemini_reads_any_google_family_without_a_name_allowlist(self):
+        markdown = """## Gemma Test
+
+*[`gemma-test`](https://example.test/gemma)*
+
+### Standard
+
+|   | Free Tier | Paid Tier, per 1M tokens in USD |
+|---|---|---|
+| Input price | Free of charge | $0.10 |
+"""
+        adapter = GeminiAdapter(MappingClient({GEMINI_MARKDOWN_URL: markdown}))
+        self.assertEqual(adapter.list_models(), ["gemma-test"])
+        record = adapter.query("gemma-test")[0]
+        self.assertEqual(price_lookup(record["offers"][0], "input")["amount"], "0.10")
 
     def test_google_family_names_route_to_the_google_source(self):
         self.assertEqual(inferred_overseas_providers("gemma-4"), ("google",))

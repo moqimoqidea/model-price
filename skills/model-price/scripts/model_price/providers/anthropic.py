@@ -44,7 +44,7 @@ class AnthropicAdapter(PriceSource):
         text = self.client.get_text(ANTHROPIC_MARKDOWN_URL)
         tables = markdown_tables(text)
         table = next(
-            (rows for heading, rows in tables if heading == "Model pricing"),
+            (rows for headings, rows in tables if headings[-1:] == ["Model pricing"]),
             [],
         )
         if len(table) < 2:
@@ -85,8 +85,8 @@ class AnthropicAdapter(PriceSource):
                     },
                 }
             )
-        for heading, price_table in tables:
-            service_tier = TIER_HEADINGS.get(heading)
+        for headings, price_table in tables:
+            service_tier = TIER_HEADINGS.get(headings[-1] if headings else "")
             if not service_tier:
                 continue
             for cells in price_table[1:]:
