@@ -1,16 +1,42 @@
-import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-SCRIPT = Path(__file__).parents[1] / "scripts" / "query_model_prices.py"
-SPEC = importlib.util.spec_from_file_location("query_model_prices", SCRIPT)
-MODULE = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader
-SPEC.loader.exec_module(MODULE)
+SCRIPTS = Path(__file__).parents[1] / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from model_price.caching import CacheStore, CachedPriceSource
+from model_price.core import PriceSource
+from model_price.errors import SourceError
+from model_price.models import model_matches, normalize_model, strip_footnote_markers
+from model_price.parsing import token_price_kind
+from model_price.providers.anthropic import ANTHROPIC_MARKDOWN_URL, AnthropicAdapter
+from model_price.providers.deepseek import DEEPSEEK_URL, DeepSeekAdapter
+from model_price.providers.google import GEMINI_URL, GeminiAdapter
+from model_price.providers.kimi import KIMI_INDEX_URL, KimiAdapter
+from model_price.providers.openai import OPENAI_MARKDOWN_URL, OpenAIAdapter
+from model_price.providers.tencent import expand_slate_table, tencent_delivery_mode
+from model_price.providers.volcengine import (
+    VOLCENGINE_DOC_API,
+    VOLCENGINE_PAGE_URL,
+    VolcengineAdapter,
+)
+from model_price.providers.xai import XAI_MARKDOWN_URL, XAI_URL, XAIAdapter
+from model_price.providers.xiaomi import XIAOMI_URL, XiaomiAdapter
+from model_price.registry import (
+    DOMESTIC_PROVIDER_IDS,
+    OVERSEAS_PROVIDER_IDS,
+    inferred_overseas_providers,
+    query_adapters,
+    select_compare_providers,
+)
+from model_price.reporting import price_lookup, to_markdown
+from model_price.updating import GitSkillUpdater
 
 
 def text_zone(value):
@@ -70,7 +96,7 @@ class MappingClient:
         return value
 
 
-class CountingSource(MODULE.PriceSource):
+class CountingSource(PriceSource):
     provider_id = "counting"
     provider_name = "Counting"
     source_url = "https://example.test/pricing"
@@ -90,7 +116,7 @@ class CountingSource(MODULE.PriceSource):
 
 class FailingSource(CountingSource):
     def query(self, model):
-        raise MODULE.SourceError("offline")
+        raise SourceError("offline")
 
 
 class FakeGitRunner:
@@ -138,37 +164,31 @@ def git_update_responses(status_output=""):
 
 class ModelMatchingTests(unittest.TestCase):
     def test_family_match_includes_versions_and_labels(self):
-        self.assertTrue(MODULE.model_matches("deepseek-v4-pro", "deepseek-v4-pro-0813"))
-        self.assertTrue(
-            MODULE.model_matches("deepseek-v4-pro", "deepseek-v4-pro正式版")
-        )
-        self.assertTrue(
-            MODULE.model_matches("deepseek-v4-pro", "vanchin/deepseek-v4-pro")
-        )
-        self.assertFalse(MODULE.model_matches("deepseek-v4-pro", "deepseek-v4-flash"))
+        self.assertTrue(model_matches("deepseek-v4-pro", "deepseek-v4-pro-0813"))
+        self.assertTrue(model_matches("deepseek-v4-pro", "deepseek-v4-pro正式版"))
+        self.assertTrue(model_matches("deepseek-v4-pro", "vanchin/deepseek-v4-pro"))
+        self.assertFalse(model_matches("deepseek-v4-pro", "deepseek-v4-flash"))
 
     def test_exact_match_does_not_expand_family(self):
         self.assertFalse(
-            MODULE.model_matches("deepseek-v4-pro", "deepseek-v4-pro-0813", exact=True)
+            model_matches("deepseek-v4-pro", "deepseek-v4-pro-0813", exact=True)
         )
 
     def test_tencent_delivery_modes_are_distinct(self):
         self.assertEqual(
-            MODULE.tencent_delivery_mode("DeepSeek-V4-Pro 原厂直供"),
+            tencent_delivery_mode("DeepSeek-V4-Pro 原厂直供"),
             "upstream_direct",
         )
-        self.assertEqual(
-            MODULE.tencent_delivery_mode("DeepSeek-V4-Pro"), "self_deployed"
-        )
+        self.assertEqual(tencent_delivery_mode("DeepSeek-V4-Pro"), "self_deployed")
 
 
 class StructuredDocumentTests(unittest.TestCase):
     def test_volcengine_reads_catalog_and_prices_from_document_json(self):
-        records = MODULE.VolcengineAdapter(FakeClient()).search("deepseek-v4-pro")
+        records = VolcengineAdapter(FakeClient()).search("deepseek-v4-pro")
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["display_name"], "deepseek-v4-pro正式版")
-        self.assertEqual(records[0]["source"]["url"], MODULE.VOLCENGINE_PAGE_URL)
-        self.assertEqual(records[0]["source_api"], MODULE.VOLCENGINE_DOC_API)
+        self.assertEqual(records[0]["source"]["url"], VOLCENGINE_PAGE_URL)
+        self.assertEqual(records[0]["source_api"], VOLCENGINE_DOC_API)
         self.assertEqual(records[0]["offers"][0]["prices"][0]["amount"], "9.00")
 
     def test_tencent_rowspan_placeholders_keep_columns_aligned(self):
@@ -194,7 +214,7 @@ class StructuredDocumentTests(unittest.TestCase):
             ]
         }
         self.assertEqual(
-            MODULE.expand_slate_table(table),
+            expand_slate_table(table),
             [
                 ["模型", "峰谷", "输入"],
                 ["model-a", "空闲", "1"],
@@ -207,9 +227,9 @@ class CacheTests(unittest.TestCase):
     def test_cache_is_provider_scoped_and_expires_after_three_hours(self):
         current = [datetime(2026, 9, 9, 0, 0, tzinfo=timezone.utc)]
         with tempfile.TemporaryDirectory() as directory:
-            cache = MODULE.CacheStore(Path(directory), clock=lambda: current[0])
+            cache = CacheStore(Path(directory), clock=lambda: current[0])
             source = CountingSource()
-            adapter = MODULE.CachedPriceSource(source, cache)
+            adapter = CachedPriceSource(source, cache)
 
             self.assertEqual(adapter.list_models(), ["model-a"])
             self.assertEqual(adapter.cache_status, "miss")
@@ -219,7 +239,7 @@ class CacheTests(unittest.TestCase):
 
             other_source = CountingSource()
             other_source.provider_id = "other"
-            other = MODULE.CachedPriceSource(other_source, cache)
+            other = CachedPriceSource(other_source, cache)
             self.assertEqual(other.list_models(), ["model-a"])
             self.assertEqual(other.cache_status, "miss")
             self.assertEqual(other_source.calls, 1)
@@ -231,10 +251,10 @@ class CacheTests(unittest.TestCase):
 
     def test_refresh_bypasses_a_fresh_cache(self):
         with tempfile.TemporaryDirectory() as directory:
-            cache = MODULE.CacheStore(Path(directory))
+            cache = CacheStore(Path(directory))
             source = CountingSource()
-            MODULE.CachedPriceSource(source, cache).query("model-a")
-            refreshed = MODULE.CachedPriceSource(source, cache, refresh=True)
+            CachedPriceSource(source, cache).query("model-a")
+            refreshed = CachedPriceSource(source, cache, refresh=True)
             refreshed.query("model-a")
             self.assertEqual(refreshed.cache_status, "refreshed")
             self.assertEqual(source.calls, 2)
@@ -242,11 +262,11 @@ class CacheTests(unittest.TestCase):
     def test_expired_cache_does_not_hide_a_refresh_failure(self):
         current = [datetime(2026, 9, 9, 0, 0, tzinfo=timezone.utc)]
         with tempfile.TemporaryDirectory() as directory:
-            cache = MODULE.CacheStore(Path(directory), clock=lambda: current[0])
-            MODULE.CachedPriceSource(CountingSource(), cache).query("model-a")
+            cache = CacheStore(Path(directory), clock=lambda: current[0])
+            CachedPriceSource(CountingSource(), cache).query("model-a")
             current[0] += timedelta(hours=3, seconds=1)
-            adapter = MODULE.CachedPriceSource(FailingSource(), cache)
-            with self.assertRaises(MODULE.SourceError):
+            adapter = CachedPriceSource(FailingSource(), cache)
+            with self.assertRaises(SourceError):
                 adapter.query("model-a")
             self.assertEqual(adapter.cache_status, "refresh_failed")
 
@@ -255,7 +275,7 @@ class SkillUpdateTests(unittest.TestCase):
     def test_remote_skill_change_is_fetched_then_fast_forwarded(self):
         runner = FakeGitRunner(git_update_responses())
 
-        result = MODULE.GitSkillUpdater(
+        result = GitSkillUpdater(
             Path("/repo/skills/model-price"), runner=runner
         ).update()
 
@@ -268,7 +288,7 @@ class SkillUpdateTests(unittest.TestCase):
     def test_local_changes_prevent_automatic_update(self):
         runner = FakeGitRunner(git_update_responses(" M local.txt\n"))
 
-        result = MODULE.GitSkillUpdater(
+        result = GitSkillUpdater(
             Path("/repo/skills/model-price"), runner=runner
         ).update()
 
@@ -280,7 +300,7 @@ class SkillUpdateTests(unittest.TestCase):
         responses[("fetch", "--quiet")] = (1, "", "network unavailable")
         runner = FakeGitRunner(responses)
 
-        result = MODULE.GitSkillUpdater(
+        result = GitSkillUpdater(
             Path("/repo/skills/model-price"), runner=runner
         ).update()
 
@@ -293,30 +313,23 @@ class OverseasRoutingTests(unittest.TestCase):
     def test_domestic_query_does_not_select_overseas_sources(self):
         adapters = {
             provider: object()
-            for provider in (
-                *MODULE.DOMESTIC_PROVIDER_IDS,
-                *MODULE.OVERSEAS_PROVIDER_IDS,
-            )
+            for provider in (*DOMESTIC_PROVIDER_IDS, *OVERSEAS_PROVIDER_IDS)
         }
-        selected = MODULE.select_compare_providers(adapters, "deepseek-v4-pro")
-        self.assertEqual(len(selected), len(MODULE.DOMESTIC_PROVIDER_IDS))
+        selected = select_compare_providers(adapters, "deepseek-v4-pro")
+        self.assertEqual(len(selected), len(DOMESTIC_PROVIDER_IDS))
         self.assertNotIn(adapters["openai"], selected)
 
     def test_model_name_selects_only_its_relevant_overseas_provider(self):
-        self.assertEqual(MODULE.inferred_overseas_providers("gpt-5"), ("openai",))
-        self.assertEqual(
-            MODULE.inferred_overseas_providers("claude-sonnet-5"), ("anthropic",)
-        )
-        self.assertEqual(
-            MODULE.inferred_overseas_providers("gemini-2.5-pro"), ("google",)
-        )
-        self.assertEqual(MODULE.inferred_overseas_providers("grok-4"), ("xai",))
+        self.assertEqual(inferred_overseas_providers("gpt-5"), ("openai",))
+        self.assertEqual(inferred_overseas_providers("claude-sonnet-5"), ("anthropic",))
+        self.assertEqual(inferred_overseas_providers("gemini-2.5-pro"), ("google",))
+        self.assertEqual(inferred_overseas_providers("grok-4"), ("xai",))
 
     def test_unavailable_overseas_source_is_reported_as_source_error(self):
-        adapter = MODULE.OpenAIAdapter(
-            MappingClient({MODULE.OPENAI_MARKDOWN_URL: MODULE.SourceError("blocked")})
+        adapter = OpenAIAdapter(
+            MappingClient({OPENAI_MARKDOWN_URL: SourceError("blocked")})
         )
-        payload = MODULE.query_adapters([adapter], "gpt-5")
+        payload = query_adapters([adapter], "gpt-5")
         self.assertEqual(payload["source_checks"][0]["status"], "source_error")
 
 
@@ -327,9 +340,7 @@ class OverseasParserTests(unittest.TestCase):
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | gpt-test | $1.00 | $0.10 | - | $4.00 | $2.00 | $0.20 | - | $6.00 |
 """
-        adapter = MODULE.OpenAIAdapter(
-            MappingClient({MODULE.OPENAI_MARKDOWN_URL: markdown})
-        )
+        adapter = OpenAIAdapter(MappingClient({OPENAI_MARKDOWN_URL: markdown}))
         record = adapter.query("gpt-test")[0]
         self.assertEqual(record["currency"], "USD")
         self.assertEqual(len(record["offers"]), 2)
@@ -341,9 +352,7 @@ class OverseasParserTests(unittest.TestCase):
 | --- | --- | --- | --- | --- | --- |
 | Claude Test 1 | $2 / MTok | $2.50 / MTok | $4 / MTok | $0.20 / MTok | $10 / MTok |
 """
-        adapter = MODULE.AnthropicAdapter(
-            MappingClient({MODULE.ANTHROPIC_MARKDOWN_URL: markdown})
-        )
+        adapter = AnthropicAdapter(MappingClient({ANTHROPIC_MARKDOWN_URL: markdown}))
         record = adapter.query("claude-test-1")[0]
         self.assertEqual(record["offers"][0]["prices"][-1]["amount"], "10")
 
@@ -354,44 +363,165 @@ class OverseasParserTests(unittest.TestCase):
 <tr><td>Input price</td><td>Free</td><td>$0.50</td></tr>
 <tr><td>Output price</td><td>Free</td><td>$2.00</td></tr>
 </table></section>"""
-        adapter = MODULE.GeminiAdapter(MappingClient({MODULE.GEMINI_URL: html}))
+        adapter = GeminiAdapter(MappingClient({GEMINI_URL: html}))
         record = adapter.query("gemini-test")[0]
         self.assertEqual(record["offers"][0]["conditions"]["billing_tier"], "paid")
         self.assertEqual(record["offers"][0]["prices"][0]["amount"], "0.50")
 
-    def test_xai_html_parser_reads_token_prices_without_a_model_allowlist(self):
-        document = """<h2>Standard text models</h2><table>
-<tr><th>Model</th><th>Context window</th><th>Input ($ per million tokens)</th><th>Cached input ($ per million tokens)</th><th>Output ($ per million tokens)</th></tr>
-<tr><td>grok-test</td><td>128k</td><td>$1.25</td><td>$0.25</td><td>$5.00</td></tr>
-<tr><td>future-family-1</td><td>256k</td><td>$2.00</td><td>—</td><td>$8.00</td></tr>
-</table>"""
-        adapter = MODULE.XAIAdapter(MappingClient({MODULE.XAI_URL: document}))
 
-        self.assertIn("future-family-1", adapter.list_models())
-        record = adapter.query("grok-test")[0]
-        offer = record["offers"][0]
-        self.assertEqual(MODULE.price_lookup(offer, "input")["amount"], "1.25")
-        self.assertEqual(MODULE.price_lookup(offer, "cache_hit")["amount"], "0.25")
-        self.assertEqual(MODULE.price_lookup(offer, "output")["amount"], "5.00")
-        self.assertEqual(offer["conditions"]["Context window"], "128k")
-        self.assertEqual(offer["conditions"]["source_section"], "Standard text models")
+XAI_MARKDOWN = """# Pricing
+
+### Text API Pricing
+
+| Model | Context | Input / 1M tokens | Cached input / 1M tokens | Output / 1M tokens |
+| --- | --- | --- | --- | --- |
+| grok-test (< 200k prompt tokens) | 500k | $2.00 | $0.50 | $6.00 |
+| grok-test (≥ 200k prompt tokens) | 500k | $4.00 | $1.00 | $12.00 |
+| future-family-1 | 256k | $1.25 | $0.20 | $2.50 |
+
+### Imagine Pricing
+
+| Model | Cost |
+| --- | --- |
+| grok-imagine-image | $0.02 / image |
+| grok-imagine-video | $0.050 / sec |
+"""
 
 
-class DomesticParserTests(unittest.TestCase):
-    def test_xiaomi_html_parser_reads_yuan_prices_from_headers(self):
-        document = """<table>
-<tr><th>模型名称</th><th>输入价格（元/百万 tokens）</th><th>缓存命中价格（元/百万 tokens）</th><th>输出价格（元/百万 tokens）</th></tr>
-<tr><td>MiMo-Test-1</td><td>1.00</td><td>0.20</td><td>4.00</td></tr>
-</table>"""
-        adapter = MODULE.XiaomiAdapter(MappingClient({MODULE.XIAOMI_URL: document}))
+class XAIAdapterTests(unittest.TestCase):
+    def adapter(self):
+        return XAIAdapter(MappingClient({XAI_MARKDOWN_URL: XAI_MARKDOWN}))
 
-        record = adapter.query("mimo-test-1")[0]
-        offer = record["offers"][0]
-        self.assertEqual(record["source"]["url"], MODULE.XIAOMI_URL)
+    def test_official_markdown_source_is_used(self):
+        self.assertEqual(XAIAdapter.source_url, XAI_MARKDOWN_URL)
+        self.assertEqual(XAIAdapter.source_kind, "official_markdown")
+        self.assertEqual(XAI_MARKDOWN_URL, f"{XAI_URL}.md")
+
+    def test_token_table_is_read_without_a_model_allowlist(self):
+        models = self.adapter().list_models()
+        self.assertEqual(models, ["future-family-1", "grok-test"])
+
+    def test_long_context_tier_is_kept_as_a_condition(self):
+        record = self.adapter().query("grok-test")[0]
+        tiers = [offer["conditions"]["context_tier"] for offer in record["offers"]]
+        self.assertEqual(tiers, ["< 200k prompt tokens", "≥ 200k prompt tokens"])
+        short, long = record["offers"]
+        self.assertEqual(price_lookup(short, "input")["amount"], "2.00")
+        self.assertEqual(price_lookup(long, "input")["amount"], "4.00")
+        self.assertEqual(record["currency"], "USD")
+
+    def test_non_token_tables_are_not_read_as_model_prices(self):
+        models = self.adapter().list_models()
+        self.assertNotIn("grok-imagine-image", models)
+        self.assertEqual(self.adapter().query("grok-imagine-image"), [])
+
+
+XIAOMI_HTML = """<h2>模型国内定价</h2>
+<table>
+<tr><th>MiMo-V2.5 系列</th><th>输入（命中缓存）</th><th>输入（未命中缓存）</th><th>输出</th></tr>
+<tr><td>mimo-v2.5-pro</td><td>¥0.025</td><td>¥3.00</td><td>¥6.00</td></tr>
+<tr><td>mimo-v2.5</td><td>¥0.02</td><td>¥1.00</td><td>¥2.00</td></tr>
+</table>
+<table>
+<tr><th>ASR 系列</th><th>输入音频时长</th></tr>
+<tr><td>mimo-v2.5-asr</td><td>¥0.5 /小时</td></tr>
+</table>
+<h2>模型海外定价</h2>
+<table>
+<tr><th>MiMo-V2.5 系列</th><th>输入（命中缓存）</th><th>输入（未命中缓存）</th><th>输出</th></tr>
+<tr><td>mimo-v2.5-pro</td><td>$0.0036</td><td>$0.435</td><td>$0.87</td></tr>
+<tr><td>mimo-v2.5</td><td>$0.0028</td><td>$0.14</td><td>$0.28</td></tr>
+</table>
+<h2>联网服务插件定价</h2>
+<table>
+<tr><th>服务项</th><th>价格</th><th>说明</th></tr>
+<tr><td>国内联网服务</td><td>¥16 /1000 次</td><td>包含网页搜索和网页解析</td></tr>
+</table>
+"""
+
+
+class XiaomiAdapterTests(unittest.TestCase):
+    def adapter(self):
+        return XiaomiAdapter(MappingClient({XIAOMI_URL: XIAOMI_HTML}))
+
+    def test_product_line_header_still_identifies_the_model_column(self):
+        self.assertEqual(self.adapter().list_models(), ["mimo-v2.5", "mimo-v2.5-pro"])
+
+    def test_cache_miss_maps_to_input_and_cache_hit_stays_separate(self):
+        offer = self.adapter().query("mimo-v2.5")[0]["offers"][0]
+        self.assertEqual(price_lookup(offer, "input")["amount"], "1.00")
+        self.assertEqual(price_lookup(offer, "cache_hit")["amount"], "0.02")
+        self.assertEqual(price_lookup(offer, "output")["amount"], "2.00")
+
+    def test_overseas_table_is_not_labelled_as_cny(self):
+        adapter = self.adapter()
+        record = adapter.query("mimo-v2.5-pro")[0]
         self.assertEqual(record["currency"], "CNY")
-        self.assertEqual(MODULE.price_lookup(offer, "input")["amount"], "1.00")
-        self.assertEqual(MODULE.price_lookup(offer, "cache_hit")["amount"], "0.20")
-        self.assertEqual(MODULE.price_lookup(offer, "output")["amount"], "4.00")
+        self.assertEqual(price_lookup(record["offers"][0], "input")["amount"], "3.00")
+        amounts = {
+            item["amount"] for offer in record["offers"] for item in offer["prices"]
+        }
+        self.assertNotIn("0.435", amounts)
+
+    def test_audio_duration_table_is_not_read_as_token_pricing(self):
+        self.assertEqual(self.adapter().query("mimo-v2.5-asr"), [])
+
+    def test_plugin_pricing_section_is_ignored(self):
+        self.assertEqual(self.adapter().query("国内联网服务"), [])
+
+
+class TokenPriceHeaderTests(unittest.TestCase):
+    def test_chinese_cache_hit_and_miss_are_distinct(self):
+        self.assertEqual(token_price_kind("输入（命中缓存）"), "cache_hit")
+        self.assertEqual(token_price_kind("输入（未命中缓存）"), "input")
+        self.assertEqual(token_price_kind("输出"), "output")
+
+    def test_non_token_units_are_rejected(self):
+        self.assertIsNone(token_price_kind("输入音频时长"))
+        self.assertIsNone(token_price_kind("价格"))
+        self.assertIsNone(token_price_kind("说明"))
+
+    def test_english_headers_still_map(self):
+        self.assertEqual(token_price_kind("Input / 1M tokens"), "input")
+        self.assertEqual(token_price_kind("Cached input / 1M tokens"), "cache_hit")
+        self.assertEqual(token_price_kind("Output / 1M tokens"), "output")
+        self.assertIsNone(token_price_kind("Context"))
+
+
+KIMI_INDEX = """# Kimi API 文档
+- [对话模型价格](https://platform.kimi.com/docs/pricing/chat.md)
+- [批量推理价格](https://platform.kimi.com/docs/pricing/batch.md)
+- [速率限制](https://platform.kimi.com/docs/pricing/limits.md)
+"""
+
+KIMI_CHAT = """# 对话模型价格
+
+["kimi-k3", "1M tokens", "¥2.00", "¥20.00", "¥100.00", "1,048,576 tokens"],
+["kimi-k3-mini", "1M tokens", "¥0.50", "¥5.00", "¥25.00", "262,144 tokens"],
+"""
+
+
+class KimiAdapterTests(unittest.TestCase):
+    def adapter(self):
+        # Only the chat document is mapped: any other URL would raise, so this
+        # also proves the sibling pricing documents are never fetched.
+        return KimiAdapter(
+            MappingClient(
+                {
+                    KIMI_INDEX_URL: KIMI_INDEX,
+                    "https://platform.kimi.com/docs/pricing/chat.md": KIMI_CHAT,
+                }
+            )
+        )
+
+    def test_chat_document_is_found_without_a_version_suffix(self):
+        self.assertEqual(self.adapter().list_models(), ["kimi-k3", "kimi-k3-mini"])
+
+    def test_row_layout_maps_cache_hit_input_and_output(self):
+        offer = self.adapter().query("kimi-k3")[0]["offers"][0]
+        self.assertEqual(price_lookup(offer, "cache_hit")["amount"], "2.00")
+        self.assertEqual(price_lookup(offer, "input")["amount"], "20.00")
+        self.assertEqual(price_lookup(offer, "output")["amount"], "100.00")
 
 
 DEEPSEEK_HTML = """
@@ -410,9 +540,7 @@ DEEPSEEK_HTML = """
 
 class DeepSeekAdapterTests(unittest.TestCase):
     def adapter(self):
-        return MODULE.DeepSeekAdapter(
-            MappingClient({MODULE.DEEPSEEK_URL: DEEPSEEK_HTML})
-        )
+        return DeepSeekAdapter(MappingClient({DEEPSEEK_URL: DEEPSEEK_HTML}))
 
     def test_footnote_markers_do_not_break_the_catalog(self):
         self.assertEqual(
@@ -423,13 +551,13 @@ class DeepSeekAdapterTests(unittest.TestCase):
         record = self.adapter().query("deepseek-flash")[0]
         self.assertEqual(record["model_id"], "deepseek-flash")
         self.assertEqual(len(record["offers"]), 2)
-        off_peak = MODULE.price_lookup(record["offers"][0], "input")
+        off_peak = price_lookup(record["offers"][0], "input")
         self.assertEqual(off_peak["amount"], "1")
         self.assertEqual(
-            MODULE.price_lookup(record["offers"][0], "cache_hit")["amount"], "0.02"
+            price_lookup(record["offers"][0], "cache_hit")["amount"], "0.02"
         )
         self.assertEqual(
-            MODULE.price_lookup(record["offers"][1], "output")["amount"], "8"
+            price_lookup(record["offers"][1], "output")["amount"], "8"
         )
 
     def test_retired_name_still_resolves_through_search(self):
@@ -440,20 +568,18 @@ class DeepSeekAdapterTests(unittest.TestCase):
 
 class ModelNameCouplingTests(unittest.TestCase):
     def test_footnote_markers_are_not_part_of_model_identity(self):
+        self.assertEqual(strip_footnote_markers("deepseek-flash(1)"), "deepseek-flash")
         self.assertEqual(
-            MODULE.strip_footnote_markers("deepseek-flash(1)"), "deepseek-flash"
+            strip_footnote_markers("deepseek-v4-pro（2）"), "deepseek-v4-pro"
         )
-        self.assertEqual(
-            MODULE.strip_footnote_markers("deepseek-v4-pro（2）"), "deepseek-v4-pro"
-        )
-        self.assertEqual(MODULE.normalize_model("deepseek-flash(1)"), "deepseek-flash")
+        self.assertEqual(normalize_model("deepseek-flash(1)"), "deepseek-flash")
 
     def test_retired_alias_adds_matches_without_losing_family_expansion(self):
-        self.assertTrue(MODULE.model_matches("deepseek-v4-flash", "deepseek-flash"))
+        self.assertTrue(model_matches("deepseek-v4-flash", "deepseek-flash"))
         self.assertTrue(
-            MODULE.model_matches("deepseek-v4-flash", "deepseek-v4-flash-0731")
+            model_matches("deepseek-v4-flash", "deepseek-v4-flash-0731")
         )
-        self.assertFalse(MODULE.model_matches("deepseek-v4-flash", "deepseek-v4-pro"))
+        self.assertFalse(model_matches("deepseek-v4-flash", "deepseek-v4-pro"))
 
     def test_anthropic_does_not_filter_rows_by_name_prefix(self):
         markdown = """## Model pricing
@@ -461,9 +587,7 @@ class ModelNameCouplingTests(unittest.TestCase):
 | --- | --- | --- | --- | --- | --- |
 | Anthropic Nova 1 | $3 / MTok | $3.75 / MTok | $6 / MTok | $0.30 / MTok | $15 / MTok |
 """
-        adapter = MODULE.AnthropicAdapter(
-            MappingClient({MODULE.ANTHROPIC_MARKDOWN_URL: markdown})
-        )
+        adapter = AnthropicAdapter(MappingClient({ANTHROPIC_MARKDOWN_URL: markdown}))
         self.assertEqual(adapter.list_models(), ["anthropic-nova-1"])
         record = adapter.query("anthropic-nova-1")[0]
         self.assertEqual(record["offers"][0]["prices"][0]["amount"], "3")
@@ -479,15 +603,15 @@ class ModelNameCouplingTests(unittest.TestCase):
 <tr><th></th><th>Free Tier</th><th>Paid Tier, per 1M tokens in USD</th></tr>
 <tr><td>Input price</td><td>Free</td><td>$9.99</td></tr>
 </table></section>"""
-        adapter = MODULE.GeminiAdapter(MappingClient({MODULE.GEMINI_URL: html}))
+        adapter = GeminiAdapter(MappingClient({GEMINI_URL: html}))
         self.assertEqual(adapter.list_models(), ["gemma-4"])
         record = adapter.query("gemma-4")[0]
         self.assertEqual(record["offers"][0]["prices"][0]["amount"], "0.10")
         self.assertEqual(adapter.query("pricing-for-tools"), [])
 
     def test_google_family_names_route_to_the_google_source(self):
-        self.assertEqual(MODULE.inferred_overseas_providers("gemma-4"), ("google",))
-        self.assertEqual(MODULE.inferred_overseas_providers("veo-3.1"), ("google",))
+        self.assertEqual(inferred_overseas_providers("gemma-4"), ("google",))
+        self.assertEqual(inferred_overseas_providers("veo-3.1"), ("google",))
 
     def test_openai_accepts_any_pricing_tier_heading(self):
         markdown = """### Priority pricing data
@@ -495,9 +619,7 @@ class ModelNameCouplingTests(unittest.TestCase):
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | gpt-test | $2.00 | $0.20 | - | $8.00 | $4.00 | $0.40 | - | $12.00 |
 """
-        adapter = MODULE.OpenAIAdapter(
-            MappingClient({MODULE.OPENAI_MARKDOWN_URL: markdown})
-        )
+        adapter = OpenAIAdapter(MappingClient({OPENAI_MARKDOWN_URL: markdown}))
         record = adapter.query("gpt-test")[0]
         self.assertEqual(record["offers"][0]["name"], "priority")
 
@@ -523,7 +645,7 @@ class MarkdownRenderingTests(unittest.TestCase):
             ],
             "source_checks": [],
         }
-        self.assertIn("未给出本工具可解析的价格", MODULE.to_markdown(payload))
+        self.assertIn("未给出本工具可解析的价格", to_markdown(payload))
 
 
 if __name__ == "__main__":
