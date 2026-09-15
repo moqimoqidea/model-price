@@ -48,10 +48,12 @@ VOLC_MARKDOWN = """# 大语言模型
 
 ## 在线推理（常规）
 
-|模型名称 |条件<br><br>千 token |输入(非音频)<br><br>元/百万token |缓存存储<br><br>元/百万token/小时 |缓存命中(非音频)<br><br>元/百万token |输出<br><br>元/百万token |
+|模型名称 |条件<br><br>输入长度：千 token |输入(非音频)<br><br>元/百万token |缓存存储<br><br>元/百万token/小时 |缓存命中(非音频)<br><br>元/百万token |输出<br><br>元/百万token |
 |---|---|---|---|---|---|
 |doubao\\-seed\\-2.0\\-pro |输入长度 [0, 32] |3.2 |0.017 |0.64 |16.0 |
 ||输入长度 (32, 128] |4.8 |0.017 |0.96 |24.0 |
+|deepseek\\-v4\\-1\\-flash |空闲时段 |1.00 |0.017 |0.02 |4.00 |
+||高峰时段 |2.00 |0.017 |0.04 |8.00 |
 |deepseek\\-v4\\-flash正式版 |\\- |3.00 |0.017 |0.10 |9.00 |
 |deepseek\\-v4\\-flash正式版<br><br>> 调整前价格，2026\\-08\\-21 起不适用 |\\- |1.00 |0.017 |0.20 |2.00 |
 |deepseek\\-v4\\-pro预览版 |\\- |9.00 |0.017 |0.30 |27.00 |
@@ -202,6 +204,24 @@ class ModelMatchingTests(unittest.TestCase):
             model_matches("deepseek-v4-pro", "deepseek-v4-pro-0813", exact=True)
         )
 
+    def test_a_live_model_is_found_under_every_vendor_label(self):
+        # DeepSeek serves the model as `deepseek-flash`; Aliyun and Ark file it
+        # under their own spelling of the same V4.1-Flash generation.
+        self.assertTrue(model_matches("deepseek-flash", "deepseek-v4.1-flash"))
+        self.assertTrue(model_matches("deepseek-flash", "deepseek-v4-1-flash"))
+        self.assertTrue(model_matches("deepseek-v4.1-flash", "deepseek-flash"))
+        self.assertFalse(
+            model_matches("deepseek-flash", "deepseek-v4.1-flash", exact=True)
+        )
+
+    def test_a_superseded_generation_is_not_pulled_into_a_live_comparison(self):
+        # `deepseek-v4-flash` is the retired name of the live model, so asking for
+        # it must still reach `deepseek-flash`; the reverse must not claim the
+        # older generation's price rows belong to the live model.
+        self.assertTrue(model_matches("deepseek-v4-flash", "deepseek-flash"))
+        self.assertFalse(model_matches("deepseek-flash", "deepseek-v4-flash"))
+        self.assertFalse(model_matches("deepseek-flash", "deepseek-v4-flash-0731"))
+
     def test_tencent_delivery_modes_are_distinct(self):
         self.assertEqual(
             tencent_delivery_mode("DeepSeek-V4-Pro 原厂直供"),
@@ -240,6 +260,17 @@ class StructuredDocumentTests(unittest.TestCase):
             ["输入长度 [0, 32]", "输入长度 (32, 128]"],
         )
         self.assertEqual(price_lookup(record["offers"][1], "input")["amount"], "4.8")
+
+    def test_a_time_band_cell_keeps_the_two_bands_apart(self):
+        offers = self.adapter().query("deepseek-v4-1-flash")[0]["offers"]
+        self.assertEqual(
+            [
+                (offer["conditions"]["time_band"], price_lookup(offer, "input")["amount"])
+                for offer in offers
+            ],
+            [("空闲时段", "1.00"), ("高峰时段", "2.00")],
+        )
+        self.assertEqual(price_lookup(offers[1], "output")["amount"], "8.00")
 
     def test_a_superseded_price_keeps_its_note(self):
         offers = self.adapter().query("deepseek-v4-flash正式版")[0]["offers"]
@@ -725,6 +756,14 @@ class TokenPriceHeaderTests(unittest.TestCase):
         self.assertIsNone(token_price_kind("输入音频时长"))
         self.assertIsNone(token_price_kind("价格"))
         self.assertIsNone(token_price_kind("说明"))
+
+    def test_a_condition_column_naming_a_length_is_not_a_price(self):
+        # Volcengine labels its condition column "条件 输入长度：千 token". Reading
+        # it as an input price column used to drop the time band and the length
+        # tier of every row in that table.
+        self.assertIsNone(token_price_kind("条件<br><br>输入长度：千 token"))
+        self.assertIsNone(token_price_kind("条件<br><br>Context length"))
+        self.assertEqual(token_price_kind("输入(非音频)<br><br>元/百万token"), "input")
 
     def test_cache_storage_is_a_token_price_even_though_it_bills_an_hour(self):
         self.assertEqual(token_price_kind("缓存存储"), "cache_storage")

@@ -17,6 +17,17 @@ RETIRED_MODEL_ALIASES = {
     "deepseek-v4-flash-vision-exp": "deepseek-flash",
 }
 
+# Labels a vendor files the *live* model under, spelled differently from the
+# first-party id ("DeepSeek-V4.1-Flash" is what Aliyun and Ark call the model
+# DeepSeek serves as ``deepseek-flash``). These are matched on both sides, so one
+# query reaches every platform serving that model. Unlike the retired names above
+# they do not stand for a superseded generation, so they must never be used to
+# pull an older model's prices into a live model's comparison.
+CURRENT_MODEL_ALIASES = {
+    "deepseek-v4.1-flash": "deepseek-flash",
+    "deepseek-v4-1-flash": "deepseek-flash",
+}
+
 
 def strip_footnote_markers(value: str) -> str:
     """Drop trailing citation markers such as ``deepseek-flash(1)``.
@@ -71,10 +82,20 @@ def _raw_model_matches(query: str, candidate: str, *, exact: bool = False) -> bo
 
 
 def model_matches(query: str, candidate: str, *, exact: bool = False) -> bool:
-    """Match a query against a candidate name, following retired-name aliases."""
+    """Match a query against a candidate name, following documented aliases."""
     if _raw_model_matches(query, candidate, exact=exact):
         return True
     alias = RETIRED_MODEL_ALIASES.get(normalize_model(query))
-    if not alias:
+    if alias and _raw_model_matches(alias, candidate, exact=exact):
+        return True
+    # Two ids that differ only by vendor spelling are the same model, so an
+    # ``--exact`` lookup keeps insisting on the official id it was given.
+    if exact:
         return False
-    return _raw_model_matches(alias, candidate, exact=exact)
+    current = CURRENT_MODEL_ALIASES.get(normalize_model(query))
+    if current and _raw_model_matches(current, candidate):
+        return True
+    candidate_current = CURRENT_MODEL_ALIASES.get(normalize_model(candidate))
+    if candidate_current and _raw_model_matches(query, candidate_current):
+        return True
+    return False

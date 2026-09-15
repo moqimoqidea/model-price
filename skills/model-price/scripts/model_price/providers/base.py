@@ -26,6 +26,16 @@ MODEL_CELL_NOTE_RE = re.compile(r"^[>\s]+")
 PLACEHOLDER_VALUES = {"", "-", "—", "–", "不适用"}
 # A table is only read when one of its columns is labelled as the model column.
 MODEL_HEADERS = {"model", "model name", "模型", "模型名称"}
+# Vendors file the peak/off-peak split in a generic condition column ("条件"), so
+# the cell value — not the heading — decides the key. Without this the two bands
+# land in the same condition bucket and become indistinguishable offers.
+TIME_BAND_VALUE_MARKERS = ("高峰时段", "空闲时段", "低峰时段", "低谷时段", "peak")
+
+
+def time_band_condition(value: str) -> str | None:
+    """Return the shared time-band key when a cell names one of the bands."""
+    lowered = value.lower()
+    return "time_band" if any(m in lowered for m in TIME_BAND_VALUE_MARKERS) else None
 
 
 class TabularTokenPricingAdapter(PriceSource):
@@ -158,7 +168,10 @@ class TabularTokenPricingAdapter(PriceSource):
                         continue
                     value = clean_text(cells[index])
                     if value and value not in PLACEHOLDER_VALUES:
-                        conditions[self.condition_name(raw_headers[index])] = value
+                        key = time_band_condition(value) or self.condition_name(
+                            raw_headers[index]
+                        )
+                        conditions[key] = value
                 # A trailing parenthetical often carries a real billing tier
                 # ("grok-4.6 (≥ 200k prompt tokens)"). It is dropped from the
                 # model id, so keep it as a condition instead of losing it.

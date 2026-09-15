@@ -154,6 +154,20 @@ NON_TOKEN_BILLING_MARKERS = ("时长", "小时", "秒", "字符", "千次", "万
 # from rejecting it along with genuine duration billing.
 CACHE_STORAGE_MARKERS = ("缓存存储", "缓存空间")
 
+# Headers that describe the *request* (how long it is, which context window it
+# falls in) rather than a price. Volcengine words its condition column
+# "条件 输入长度：千 token"; that still contains "输入", so without this guard the
+# whole column is read as an input price column instead of a condition, and the
+# time band and length tier of every row in the table are silently dropped.
+# Adapters that classify headers themselves must consult this too.
+NON_PRICE_HEADER_MARKERS = ("长度", "length")
+
+
+def describes_request_length(header: str) -> bool:
+    """Say whether a header names how long a request is, not what it costs."""
+    value = clean_text(header).lower().replace("-", "").replace(" ", "")
+    return any(marker in value for marker in NON_PRICE_HEADER_MARKERS)
+
 
 def token_price_kind(header: str) -> str | None:
     """Map English and Chinese token-price headers without model allowlists."""
@@ -163,6 +177,8 @@ def token_price_kind(header: str) -> str | None:
     ):
         return "cache_storage"
     if any(marker.replace(" ", "") in value for marker in NON_TOKEN_BILLING_MARKERS):
+        return None
+    if describes_request_length(header):
         return None
     cached = "cache" in value or "缓存" in value
     if cached and ("write" in value or "写入" in value or "创建" in value):

@@ -13,6 +13,7 @@ from typing import Any
 
 from .base import TabularTokenPricingAdapter
 from ..errors import SourceError
+from ..parsing import describes_request_length
 from ..text import clean_text, numeric_values
 
 VOLCENGINE_PAGE_URL = "https://docs.volcengine.com/docs/82379/1544106"
@@ -35,6 +36,10 @@ def volc_offer_name(headings: list[str]) -> str:
 
 def price_type_from_header(header: str) -> str:
     compact = clean_text(header).replace(" ", "")
+    # The condition column is headed "条件 输入长度：千 token", so it mentions 输入
+    # without being an input price. Length bands are conditions, never prices.
+    if describes_request_length(header):
+        return "other"
     if "缓存存储" in compact:
         return "cache_storage"
     if "缓存命中" in compact and "音频" in compact and "非音频" not in compact:

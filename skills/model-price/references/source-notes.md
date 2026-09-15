@@ -12,12 +12,16 @@ neither.
 - Volcengine Ark: the page's `getDocDetail` JSON, reading `Result.MDContent` — the
   Markdown its "复制markdown" button produces. `Result.Content` is the same
   document as Slate JSON and is no longer parsed. Markdown table headings keep the
-  whole path (`大语言模型 / 在线推理（常规）`), which names the offer.
+  whole path (`大语言模型 / 在线推理（常规）`), which names the offer. Its condition
+  column is headed `条件 输入长度：千 token`, so it mentions 输入 without being a
+  price: it carries the length tier (`输入长度 [0, 32]`) and, for
+  `deepseek-v4-1-flash`, the peak/off-peak band (`空闲时段` / `高峰时段`). Reading it
+  as an input price column loses both, so it must be classified as a condition.
 - Tencent Cloud TokenHub: embedded Slate JSON from the official catalog and pricing
   documents; preserve self-deployed and “原厂直供” rows. There is no Markdown
   endpoint: the "MD" button converts this same Slate data in the browser with
   remark, so reading the Slate is reading the button's own source.
-- DeepSeek: `https://api-docs.deepseek.com/zh-cn/quick_start/pricing/`; the model table is keyed by a `模型` header. Model columns carry footnote markers such as `deepseek-flash(1)`, so markers are stripped before matching. The current model is `deepseek-flash`; retired names (`deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`) resolve through `RETIRED_MODEL_ALIASES`.
+- DeepSeek: `https://api-docs.deepseek.com/zh-cn/quick_start/pricing/`; the model table is keyed by a `模型` header. Model columns carry footnote markers such as `deepseek-flash(1)`, so markers are stripped before matching. The current model is `deepseek-flash`; retired names (`deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`) resolve through `RETIRED_MODEL_ALIASES`. Aliyun files the same live generation as `deepseek-v4.1-flash` and Ark as `deepseek-v4-1-flash`, so those go in `CURRENT_MODEL_ALIASES`, which is matched in both directions — a live-model label must never pull a superseded generation's price rows into the comparison, and `--exact` ignores it.
 - Kimi: `https://platform.kimi.com/docs/llms.txt` indexes the chat pricing document as `pricing/chat.md`; dated variants such as `chat-k3.md` have also been served, so the whole `chat*` family is matched. Rows are JSON arrays shaped `[model, unit, cache hit, cache miss, output, context]`. The sibling documents (`batch`, `tools`, `limits`) are not per-model token tables and must stay out of the catalogue.
 - Zhipu BigModel: `https://docs.bigmodel.cn/cn/guide/start/pricing.md`. The anonymous
   config API that used to be read only publishes the five promoted flagship cards,
@@ -46,6 +50,7 @@ Two conventions apply to every table-driven adapter:
 
 - Keep cache-hit and cache-miss prices apart. A cache miss is billed at the regular input rate, so `输入（未命中缓存）` must not be classified as cached input. Cache *storage* is the exception that still counts as a token price even though it bills an hour.
 - Read only amounts that name the adapter's own currency (`CNY` tables emit CNY, `USD` tables emit USD) and ignore headers that bill a non-token unit such as audio duration (`输入音频时长`, per hour) or per-request pricing. Never relabel one currency as another.
+- A header that describes the *request* instead of a price is a condition, not a price column. Length bands are the trap: `条件 输入长度：千 token` contains 输入, so an input-price rule would swallow the column and silently drop the tier that separates otherwise identical rows (see `NON_PRICE_HEADER_MARKERS`, and any adapter that classifies headers itself must consult it). The cell value, not the heading, decides a time-band key, because vendors file the peak/off-peak split in the same generic 条件 column.
 
 Two conventions come with the Markdown reader:
 
