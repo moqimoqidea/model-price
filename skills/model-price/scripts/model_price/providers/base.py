@@ -8,7 +8,12 @@ from typing import Any
 from ..core import HttpClient, PriceSource, now_iso
 from ..errors import SourceError
 from ..models import model_family, normalize_model
-from ..parsing import headed_document_tables, monetary_amount, token_price_kind
+from ..parsing import (
+    headed_document_tables,
+    monetary_amount,
+    time_bands_for,
+    token_price_kind,
+)
 from ..pricing import make_record, price_item
 from ..text import clean_text
 
@@ -55,6 +60,10 @@ class TabularTokenPricingAdapter(PriceSource):
     # Some vendors leave the model cell empty on a continuation row, so that row
     # inherits the model above it while still carrying its own conditions.
     carry_forward_model = False
+    # Vendors that bill by time of day explain the window in prose beside the
+    # table. Only they get a schedule read out of the document — a platform that
+    # never mentions one must not be handed another platform's window.
+    publishes_time_bands = False
 
     def __init__(self, client: HttpClient) -> None:
         super().__init__(client)
@@ -82,6 +91,19 @@ class TabularTokenPricingAdapter(PriceSource):
 
     def record_extras(self) -> dict[str, Any]:
         return {}
+
+    def model_extras(self, model_id: str, display_name: str) -> dict[str, Any]:
+        """Extras that need the row's identity, such as its peak/off-peak window."""
+        if not self.publishes_time_bands:
+            return {}
+        return {
+            "time_bands": time_bands_for(
+                self.document_text(),
+                model_id=model_id,
+                display_name=display_name,
+                source_url=self.source_url,
+            )
+        }
 
     # --- parsing ----------------------------------------------------------
 
@@ -237,6 +259,7 @@ class TabularTokenPricingAdapter(PriceSource):
                 currency=self.currency,
                 delivery_mode=self.delivery_mode,
                 model_family=model_family(matched[0]["model_id"]),
+                **self.model_extras(matched[0]["model_id"], matched[0]["display_name"]),
                 **self.record_extras(),
             )
         ]

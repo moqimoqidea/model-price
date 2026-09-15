@@ -13,6 +13,20 @@ Price fields are `type`, `label`, `amount`, `unit`, and optional `display`, `lis
 
 `delivery_mode` is `self_deployed`, `platform_hosted`, `third_party_hosted`, `upstream_direct`, or `first_party`. Source status is `available`, `not_found`, or `source_error`; the last means availability and price are unknown.
 
+When a vendor bills by time of day the result also carries `time_bands`:
+
+```json
+{
+  "time_bands": {
+    "window": "周一至周五 09:00–12:00、14:00–18:00；其余均为空闲时段",
+    "statements": ["the vendor's own sentence, quoted verbatim"],
+    "source_url": "https://…"
+  }
+}
+```
+
+`window` is the compact form repeated on every peak/off-peak row, `statements` are the vendor's own sentences, and an empty object (`{}`) means the vendor publishes no window. The window is read from that vendor's own document and is never inferred from another vendor's schedule.
+
 Cached operations add:
 
 ```json

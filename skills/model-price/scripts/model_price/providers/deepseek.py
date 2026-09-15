@@ -13,7 +13,7 @@ from ..models import (
     normalize_model,
     strip_footnote_markers,
 )
-from ..parsing import TextTableParser
+from ..parsing import TextTableParser, time_bands_for
 from ..pricing import make_record, price_item
 
 DEEPSEEK_URL = "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/"
@@ -26,9 +26,19 @@ class DeepSeekAdapter(PriceSource):
     source_kind = "official_document"
     model_header_prefix = "模型"
 
+    def __init__(self, client: Any) -> None:
+        super().__init__(client)
+        self._document: str | None = None
+
+    def document_text(self) -> str:
+        """Return the pricing page once, so the table and its footnote agree."""
+        if self._document is None:
+            self._document = self.client.get_text(DEEPSEEK_URL).replace("\x00", "")
+        return self._document
+
     def _table(self) -> list[list[str]]:
         parser = TextTableParser()
-        parser.feed(self.client.get_text(DEEPSEEK_URL).replace("\x00", ""))
+        parser.feed(self.document_text())
         table = next(
             (
                 candidate
@@ -95,13 +105,7 @@ class DeepSeekAdapter(PriceSource):
                 band,
                 {
                     "name": "off_peak" if band == "空闲时段" else "peak",
-                    "conditions": {
-                        "time_band": band,
-                        "definition": (
-                            "高峰：北京时间周一至周五 9:00–12:00、14:00–18:00；"
-                            "其余为空闲时段"
-                        ),
-                    },
+                    "conditions": {"time_band": band},
                     "prices": [],
                 },
             )
@@ -126,5 +130,11 @@ class DeepSeekAdapter(PriceSource):
                 now_iso(),
                 delivery_mode="first_party",
                 model_family=model_family(models[model_index]),
+                time_bands=time_bands_for(
+                    self.document_text(),
+                    model_id=models[model_index],
+                    display_name=models[model_index],
+                    source_url=self.source_url,
+                ),
             )
         ]

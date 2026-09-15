@@ -73,23 +73,29 @@ class VolcengineAdapter(TabularTokenPricingAdapter):
     delivery_mode = "platform_hosted"
     # Context tiers repeat a model across rows with the model cell left empty.
     carry_forward_model = True
+    # The Ark document states the peak/off-peak window for its Flash model in a
+    # note above the table, naming the model in the note itself.
+    publishes_time_bands = True
 
     def __init__(self, client: Any) -> None:
         super().__init__(client)
         self.source_updated_at: str | None = None
+        self._document: str | None = None
 
     def document_text(self) -> str:
-        payload = json.loads(self.client.get_text(VOLCENGINE_DOC_API))
-        try:
-            result = payload["Result"]
-            document = result["MDContent"]
-            updated_at = result.get("UpdatedTime")
-        except (KeyError, TypeError) as exc:
-            raise SourceError("unexpected Volcengine document response") from exc
-        if not document.strip():
-            raise SourceError("Volcengine document published no Markdown")
-        self.source_updated_at = updated_at
-        return document
+        if self._document is None:
+            payload = json.loads(self.client.get_text(VOLCENGINE_DOC_API))
+            try:
+                result = payload["Result"]
+                document = result["MDContent"]
+                updated_at = result.get("UpdatedTime")
+            except (KeyError, TypeError) as exc:
+                raise SourceError("unexpected Volcengine document response") from exc
+            if not document.strip():
+                raise SourceError("Volcengine document published no Markdown")
+            self.source_updated_at = updated_at
+            self._document = document
+        return self._document
 
     def price_kind(self, header: str) -> str | None:
         kind = price_type_from_header(header)

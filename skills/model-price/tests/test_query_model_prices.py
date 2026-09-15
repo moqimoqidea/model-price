@@ -14,7 +14,14 @@ from model_price.caching import CacheStore, CachedPriceSource
 from model_price.core import PriceSource
 from model_price.errors import SourceError
 from model_price.models import model_matches, normalize_model, strip_footnote_markers
-from model_price.parsing import markdown_tables, split_markdown_row, token_price_kind
+from model_price.parsing import (
+    markdown_tables,
+    select_time_band_rules,
+    split_markdown_row,
+    time_band_rules,
+    time_bands_for,
+    token_price_kind,
+)
 from model_price.providers.anthropic import ANTHROPIC_MARKDOWN_URL, AnthropicAdapter
 from model_price.providers.deepseek import DEEPSEEK_URL, DeepSeekAdapter
 from model_price.providers.google import (
@@ -40,7 +47,12 @@ from model_price.registry import (
     query_adapters,
     select_compare_providers,
 )
-from model_price.reporting import price_lookup, to_markdown
+from model_price.reporting import (
+    offer_condition_text,
+    price_lookup,
+    time_band_sections,
+    to_markdown,
+)
 from model_price.updating import GitSkillUpdater
 
 
@@ -938,6 +950,148 @@ class MarkdownRenderingTests(unittest.TestCase):
             "source_checks": [],
         }
         self.assertIn("未给出本工具可解析的价格", to_markdown(payload))
+
+
+class TimeBandWindowTests(unittest.TestCase):
+    """Every platform draws the peak window differently, and each is quoted as written."""
+
+    VOLCENGINE_NOTE = """* deepseek\\-v4.1\\-flash 模型高峰、空闲时段如下：
+
+   * 高峰时段：**北京时间周一至周五 09:00–12:00、14:00–18:00**。
+   * 空闲时段：除上述高峰时段外，其余均为空闲时段。
+"""
+
+    DEEPSEEK_NOTE = (
+        "(3) 空闲时段价格为高峰时段价格的一半。高峰时段为北京时间"
+        "周一至周五 9:00 - 12:00、14:00 - 18:00（其余为空闲时段）。"
+    )
+
+    TENCENT_NOTE = (
+        "注意：DeepSeek V4【原厂直供】所有模型将跟随原厂调整峰谷计费规则："
+        "工作日（周一至周五）继续执行原有峰谷计费（高峰时段为北京时间 "
+        "9:00–12:00、14:00–18:00，其余为空闲时段）；"
+        "周末（周六、周日）全天不再区分峰谷时段，统一按空闲时段价格计费。"
+        "DeepSeek-V4-Flash 0731 正式版模型峰谷计费规则维持不变："
+        "高峰时段仍为北京时间周一至周日 9:00–12:00、14:00–18:00（其余为空闲时段）。"
+    )
+
+    ALIYUN_NOTE = (
+        "部分模型享有限时分时折扣（详见价格旁标签），错峰时段为东八区 "
+        "22:00 至次日 8:00，其余时段为忙时，以账单时间为准。"
+    )
+
+    def window(self, document, **kwargs):
+        return time_bands_for(document, **kwargs).get("window", "")
+
+    def test_the_volcengine_window_is_read_and_its_escaped_name_unescaped(self):
+        self.assertEqual(
+            self.window(self.VOLCENGINE_NOTE, display_name="deepseek-v4.1-flash"),
+            "周一至周五 09:00–12:00、14:00–18:00；其余均为空闲时段",
+        )
+
+    def test_a_footnote_window_without_a_model_name_still_applies(self):
+        """DeepSeek states one window in a footnote, for every model it lists."""
+        self.assertEqual(
+            self.window(self.DEEPSEEK_NOTE, model_id="deepseek-flash"),
+            "周一至周五 9:00-12:00、14:00-18:00、其余为空闲时段",
+        )
+
+    def test_a_platform_can_bill_two_generations_on_different_calendars(self):
+        direct = self.window(
+            self.TENCENT_NOTE,
+            model_id="deepseek/deepseek-flash",
+            display_name="DeepSeek-V4.1-Flash 原厂直供",
+            labels=("原厂直供",),
+        )
+        self.assertIn("周一至周五 9:00–12:00、14:00–18:00", direct)
+        self.assertIn("周末", direct)
+        kept = self.window(
+            self.TENCENT_NOTE,
+            model_id="deepseek-v4-flash-0731",
+            display_name="DeepSeek-V4-Flash 0731 正式版",
+        )
+        self.assertIn("周一至周日", kept)
+        self.assertNotIn("周末", kept)
+
+    def test_an_overnight_off_peak_window_is_read(self):
+        self.assertEqual(
+            self.window(self.ALIYUN_NOTE, model_id="deepseek-v4.1-flash"),
+            "22:00至次日8:00、其余时段为忙时",
+        )
+
+    def test_a_platform_publishing_no_window_gets_none_invented(self):
+        self.assertEqual(time_bands_for("本页只列出每百万 tokens 单价。"), {})
+        self.assertEqual(time_bands_for("|模型|输入|输出|", model_id="anything"), {})
+
+    def test_the_vendor_sentence_is_kept_verbatim(self):
+        statements = time_bands_for(self.DEEPSEEK_NOTE, model_id="deepseek-flash")[
+            "statements"
+        ]
+        self.assertTrue(
+            any("空闲时段价格为高峰时段价格的一半" in text for text in statements)
+        )
+
+
+class TimeBandRenderingTests(unittest.TestCase):
+    def record(self, window=""):
+        return {
+            "provider": {"id": "tencent", "name": "腾讯云 TokenHub"},
+            "model_id": "deepseek/deepseek-flash",
+            "display_name": "DeepSeek-V4.1-Flash 原厂直供",
+            "region": "中国区（广州）",
+            "time_bands": {
+                "window": window,
+                "statements": ["工作日（周一至周五）……其余为空闲时段。"],
+                "source_url": "https://example.test/pricing",
+            },
+        }
+
+    def test_a_banded_row_carries_the_hours_it_covers(self):
+        offer = {
+            "name": "online_conditional",
+            "conditions": {"time_band": "空闲时段"},
+            "prices": [],
+        }
+        text = offer_condition_text(offer, self.record("周一至周五 9:00–12:00"))
+        self.assertIn("time_band=空闲时段", text)
+        self.assertIn("时段规则=周一至周五 9:00–12:00", text)
+
+    def test_a_row_without_a_time_band_gets_no_window(self):
+        """A model billed the same all day must not inherit a neighbour's schedule."""
+        offer = {"name": "online_standard", "conditions": {}, "prices": []}
+        text = offer_condition_text(offer, self.record("周一至周五 9:00–12:00"))
+        self.assertNotIn("时段规则", text)
+
+    def test_the_report_quotes_each_platforms_own_words(self):
+        payload = {
+            "query": "deepseek-flash",
+            "retrieved_at": "2026-09-15T00:00:00+08:00",
+            "results": [
+                {
+                    **self.record("周一至周五 9:00–12:00"),
+                    "offers": [
+                        {
+                            "name": "online_conditional",
+                            "conditions": {"time_band": "空闲时段"},
+                            "prices": [],
+                        }
+                    ],
+                    "source": {
+                        "url": "https://example.test/pricing",
+                        "kind": "official_document",
+                        "retrieved_at": "2026-09-15T00:00:00+08:00",
+                    },
+                }
+            ],
+            "source_checks": [],
+        }
+        report = to_markdown(payload)
+        self.assertIn("## 峰谷时段", report)
+        self.assertIn("腾讯云 TokenHub", report)
+        self.assertIn("工作日（周一至周五）……其余为空闲时段。", report)
+
+    def test_a_comparison_without_time_bands_has_no_window_section(self):
+        self.assertEqual(time_band_sections([{"offers": [{"conditions": {}}]}]), [])
 
 
 if __name__ == "__main__":

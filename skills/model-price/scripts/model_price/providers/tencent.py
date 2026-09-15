@@ -9,11 +9,17 @@ from typing import Any, Iterable
 from ..core import PriceSource, now_iso
 from ..errors import SourceError
 from ..models import model_family, model_matches, normalize_model
+from ..parsing import time_bands_for
 from ..pricing import make_record, price_item
 from ..text import clean_text
 
 TENCENT_LIST_URL = "https://cloud.tencent.com/document/product/1823/130051"
 TENCENT_PRICE_URL = "https://cloud.tencent.com/document/product/1823/130055"
+# Two generations on this page are billed on different calendars: the 原厂直供
+# series follows the first party (weekends are off-peak), while the 0731/0813
+# builds it hosts itself stay on peak at weekends. The delivery label is what
+# tells them apart, so it is used to pick the rule when no model name matches.
+TENCENT_BAND_LABELS = ("原厂直供",)
 
 
 def extract_tencent_slate(page: str) -> list[dict[str, Any]]:
@@ -127,6 +133,25 @@ class TencentAdapter(PriceSource):
     source_kind = "official_document"
     catalog_url = TENCENT_LIST_URL
 
+    def __init__(self, client: Any) -> None:
+        super().__init__(client)
+        self._slate: list[dict[str, Any]] | None = None
+        self._band_text: str | None = None
+
+    def _price_slate(self) -> list[dict[str, Any]]:
+        """Return the price page's slate once, for both tables and prose."""
+        if self._slate is None:
+            self._slate = extract_tencent_slate(
+                self.client.get_text(TENCENT_PRICE_URL)
+            )
+        return self._slate
+
+    def _band_document(self) -> str:
+        """Return the page's prose, where the peak/off-peak window is written."""
+        if self._band_text is None:
+            self._band_text = object_text(self._price_slate())
+        return self._band_text
+
     def _catalog(self) -> list[dict[str, str]]:
         slate = extract_tencent_slate(self.client.get_text(TENCENT_LIST_URL))
         entries: list[dict[str, str]] = []
@@ -175,7 +200,7 @@ class TencentAdapter(PriceSource):
         return sorted(models, key=str.lower)
 
     def _price_offers(self) -> dict[str, list[dict[str, Any]]]:
-        slate = extract_tencent_slate(self.client.get_text(TENCENT_PRICE_URL))
+        slate = self._price_slate()
         offers_by_name: dict[str, list[dict[str, Any]]] = {}
         # Prefer the 广州 region tab, but fall back to any tab that carries price
         # tables so a renamed or added region tab does not blank the provider.
@@ -267,6 +292,7 @@ class TencentAdapter(PriceSource):
                 key=lambda value: (len(value), value),
             )
             display_name = entries[0]["display_name"]
+            delivery_mode = entries[0]["delivery_mode"]
             records.append(
                 make_record(
                     self.provider_id,
@@ -280,8 +306,19 @@ class TencentAdapter(PriceSource):
                     retrieved_at,
                     catalog_url=TENCENT_LIST_URL,
                     model_aliases=aliases,
-                    delivery_mode=entries[0]["delivery_mode"],
+                    delivery_mode=delivery_mode,
                     model_family=model_family(display_name),
+                    time_bands=time_bands_for(
+                        self._band_document(),
+                        model_id=aliases[0],
+                        display_name=display_name,
+                        labels=(
+                            TENCENT_BAND_LABELS
+                            if delivery_mode == "upstream_direct"
+                            else ()
+                        ),
+                        source_url=self.source_url,
+                    ),
                 )
             )
         return records

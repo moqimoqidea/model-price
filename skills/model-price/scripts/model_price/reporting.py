@@ -39,6 +39,51 @@ SKILL_UPDATE_LABELS = {
 CORE_PRICE_TYPES = {"input", "output", "cache_hit", "cache_write", "cache_storage"}
 
 
+def offer_condition_text(offer: dict[str, Any], record: dict[str, Any]) -> str:
+    """Describe an offer's billing conditions, always with its time window.
+
+    A peak/off-peak row is meaningless without the hours it covers, and every
+    platform draws those hours differently, so the window the vendor published is
+    repeated on the row rather than left to a footnote. The band itself is quoted
+    in the vendor's own words (高峰时段 or 忙时) — the adapters translate their
+    enum, this layer never guesses what an English key meant.
+    """
+    conditions = offer.get("conditions", {})
+    details = [str(offer.get("name", "标准"))]
+    details.extend(f"{key}={value}" for key, value in conditions.items())
+    window = (record.get("time_bands") or {}).get("window")
+    if window and "time_band" in conditions:
+        details.append(f"时段规则={window}")
+    return "；".join(filter(None, details))
+
+
+def time_band_sections(results: list[dict[str, Any]]) -> list[str]:
+    """List every platform's peak/off-peak window, quoted from its own document."""
+    billed = [
+        record
+        for record in results
+        if any(
+            "time_band" in offer.get("conditions", {})
+            for offer in record.get("offers", [])
+        )
+    ]
+    if not billed:
+        return []
+    lines = ["", "## 峰谷时段（各平台规则不同，按官方原文）", ""]
+    for record in billed:
+        bands = record.get("time_bands") or {}
+        name = record.get("display_name", record["model_id"])
+        lines.append(
+            f"- **{record['provider']['name']}**（{name}）："
+            f"{bands.get('window') or '官方文档未公布具体时段'}"
+        )
+        for statement in bands.get("statements", []):
+            lines.append(f"  - 官方原文：{statement}")
+        if bands.get("source_url"):
+            lines.append(f"  - 时段来源：{bands['source_url']}")
+    return lines
+
+
 def price_lookup(offer: dict[str, Any], kind: str) -> dict[str, Any] | None:
     return next(
         (item for item in offer.get("prices", []) if item.get("type") == kind), None
@@ -96,10 +141,7 @@ def to_markdown(payload: dict[str, Any]) -> str:
         rows_written = 0
         for record in results:
             for offer in record.get("offers", []):
-                conditions = offer.get("conditions", {})
-                details = [offer.get("name", "标准")]
-                details.extend(f"{k}={v}" for k, v in conditions.items())
-                condition_text = "；".join(filter(None, details))
+                condition_text = offer_condition_text(offer, record)
                 lines.append(
                     "| {provider} | {model} | {delivery} | {region} | {conditions} | {input} | {output} | {cache} | {storage} | {other} | [官方来源]({source}) |".format(
                         provider=record["provider"]["name"],
@@ -129,6 +171,7 @@ def to_markdown(payload: dict[str, Any]) -> str:
             )
     else:
         lines.append("没有来源确认提供匹配的模型或版本。")
+    lines.extend(time_band_sections(results))
     lines.extend(["", "## 来源检查", ""])
     for check in payload.get("source_checks", []):
         source = check["source"]

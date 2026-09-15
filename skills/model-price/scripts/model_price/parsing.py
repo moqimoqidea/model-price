@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import re
 from html.parser import HTMLParser
+from typing import Any, NamedTuple
 
-from .text import clean_text, numeric_values
+from .models import model_family, normalize_model
+from .text import clean_text, numeric_values, unescape_markdown
 
 HEADING_TAGS = ("h1", "h2", "h3", "h4")
 
@@ -196,6 +198,216 @@ def token_price_kind(header: str) -> str | None:
     if "output" in value or "completion" in value or "输出" in value:
         return "output"
     return None
+
+
+# --- peak / off-peak windows ------------------------------------------------
+#
+# A time band is only ever explained in the vendor's own words: the window differs
+# per platform, and on the same platform it can differ per model (Tencent bills
+# deepseek-flash on weekdays only, while its 0731 generation still treats weekends
+# as peak). Nothing here may therefore be inferred from another provider's schedule,
+# and a platform that publishes no window must be reported as such.
+CLOCK_RANGE_RE = re.compile(
+    r"\d{1,2}:\d{2}(?:\s*(?:[-–—~～]|至|到)\s*(?:次日\s*)?\d{1,2}:\d{2})"
+)
+# A bullet or numbered item survives the Markdown reader as text; it is layout,
+# not part of the rule, so it comes off before the window is quoted.
+LIST_MARKER_RE = re.compile(r"^\s*(?:[*\-+•]|\d+[.、)])\s*")
+TIME_BAND_WORDS = ("高峰", "空闲", "闲时", "忙时", "峰时", "谷时", "峰谷", "peak")
+TIME_BAND_SCHEDULE_WORDS = ("工作日", "周末", "每天", "每日", "全天", "其余", "周一", "周二")
+# Most specific first, so "工作日（周一至周五）" is quoted as 周一至周五.
+WEEKDAY_QUALIFIERS = (
+    "周一至周五",
+    "周一至周六",
+    "周一至周日",
+    "工作日",
+    "每天",
+    "每日",
+    "周末",
+)
+MAX_TIME_BAND_STATEMENT = 400
+
+
+class TimeBandRule(NamedTuple):
+    """A vendor's own sentence about a time band, plus the scope it was written for.
+
+    ``scope`` is the lead-in the document put in front of the sentence (for example
+    ``deepseek-v4.1-flash 模型高峰、空闲时段如下：``), which is often the only
+    place the rule says which model it is about.
+    """
+
+    scope: str
+    statement: str
+
+
+def _band_scope_key(value: str) -> str:
+    """Normalise a name for matching inside vendor prose.
+
+    Markdown escapes the model name it quotes (``deepseek\\-v4.1\\-flash``), and one
+    document spells the same generation both ``v4.1`` and ``v4-1``, so the escapes
+    come off and the two separators are treated alike.
+    """
+    return normalize_model(unescape_markdown(value)).replace(".", "-")
+
+
+def _strip_list_marker(value: str) -> str:
+    """Drop the Markdown bullet or numbering a rule was published under."""
+    return LIST_MARKER_RE.sub("", value.strip())
+
+
+def time_band_rules(document: str) -> list[TimeBandRule]:
+    """Return the vendor's own sentences explaining a peak/off-peak window.
+
+    Sentences are quoted verbatim: the wording carries what decides the bill
+    (weekday-only or all week, the clock ranges, the time zone) and every vendor
+    words it differently, so paraphrasing here would invent a rule.
+    """
+    rules: list[TimeBandRule] = []
+    scope = ""
+    for line in document.splitlines() or [document]:
+        # Split on sentence-final punctuation only. A "；" joins clauses of one
+        # rule (Tencent states the weekday window and the weekend exemption in a
+        # single sentence), so cutting there would divorce a rule from its scope.
+        for sentence in re.split(r"(?<=[。！？!?])", clean_text(line)):
+            candidate = _strip_list_marker(sentence.strip())
+            if not candidate or len(candidate) > MAX_TIME_BAND_STATEMENT:
+                continue
+            if not any(word in candidate.lower() for word in TIME_BAND_WORDS):
+                continue
+            if CLOCK_RANGE_RE.search(candidate) or any(
+                word in candidate for word in TIME_BAND_SCHEDULE_WORDS
+            ):
+                rule = TimeBandRule(scope=scope, statement=candidate)
+                if rule not in rules:
+                    rules.append(rule)
+            else:
+                # A band lead-in with no window of its own: it names the model the
+                # sentences after it are about.
+                scope = candidate
+    return rules
+
+
+def select_time_band_rules(
+    rules: list[TimeBandRule],
+    *,
+    model_id: str = "",
+    display_name: str = "",
+    labels: tuple[str, ...] = (),
+) -> list[TimeBandRule]:
+    """Pick the rules that govern a model, or the ones naming its service mode.
+
+    A document can state several rules for one band, so every matching sentence is
+    kept. The rule naming this model wins; rules naming only the delivery mode
+    ("原厂直供") are used as a fallback, because one page can bill two generations
+    on different schedules and must not have them merged.
+    """
+    names = [
+        name
+        for name in (
+            _band_scope_key(model_id),
+            _band_scope_key(display_name),
+            # A rule names the model, not the row: strip the 原厂直供/正式版 suffix
+            # the vendor puts on a display name before giving up on the name match.
+            _band_scope_key(model_family(display_name)) if display_name else "",
+        )
+        if name
+    ]
+    named = [
+        rule
+        for rule in rules
+        if any(name in _band_scope_key(f"{rule.scope} {rule.statement}") for name in names)
+    ]
+    if named:
+        return named
+    for label in labels:
+        if not label:
+            continue
+        labelled = [
+            rule for rule in rules if label in f"{rule.scope} {rule.statement}"
+        ]
+        if labelled:
+            return labelled
+    # A document that states one window without naming any model (DeepSeek puts its
+    # schedule in a footnote) is stating it for every model it lists, so keep it
+    # rather than reporting that the platform publishes no window.
+    return rules
+
+
+def format_time_band_window(rules: list[TimeBandRule]) -> str:
+    """Render the rules governing a model as the compact window shown in the table."""
+    windows = [compact_time_band_window(rule.statement) for rule in rules]
+    return "；".join(dict.fromkeys(window for window in windows if window))
+
+
+def time_bands_for(
+    document: str,
+    *,
+    model_id: str = "",
+    display_name: str = "",
+    labels: tuple[str, ...] = (),
+    source_url: str = "",
+) -> dict[str, Any]:
+    """Summarise the peak/off-peak window a vendor publishes for one model.
+
+    Returns ``{}`` when the vendor publishes no window, so a provider that never
+    splits its price by time is not given an invented schedule. When a window is
+    found the vendor's own sentences are kept alongside the compact form, because
+    the wording is what settles the bill.
+    """
+    rules = select_time_band_rules(
+        time_band_rules(document),
+        model_id=model_id,
+        display_name=display_name,
+        labels=labels,
+    )
+    if not rules:
+        return {}
+    statements = list(
+        dict.fromkeys(
+            " ".join(part for part in (rule.scope, rule.statement) if part).strip()
+            for rule in rules
+        )
+    )
+    result: dict[str, Any] = {"statements": statements}
+    window = format_time_band_window(rules)
+    if window:
+        result["window"] = window
+    if source_url:
+        result["source_url"] = source_url
+    return result
+
+
+def compact_time_band_window(statement: str) -> str:
+    """Reduce a statement to its clock ranges, each carrying its weekday scope.
+
+    The comparison table quotes this; :func:`time_band_rules` keeps the full
+    sentence for the 时段规则 section, so the vendor's wording is never lost.
+    """
+    parts: list[str] = []
+    statement = _strip_list_marker(clean_text(statement))
+    qualifier = ""
+    for match in CLOCK_RANGE_RE.finditer(statement):
+        scope = next(
+            (
+                word
+                for word in WEEKDAY_QUALIFIERS
+                if word in statement[max(0, match.start() - 60) : match.start()]
+            ),
+            "",
+        )
+        value = re.sub(r"\s+", "", match.group(0))
+        parts.append(value if scope == qualifier else f"{scope} {value}".strip())
+        qualifier = scope
+    # The weekend exemption is stated as a clause of its own and is the part that
+    # differs most between platforms, so it is kept whole rather than truncated.
+    weekend = re.search(r"周末[^。；;]*", statement)
+    if weekend and any(word in weekend.group(0) for word in ("全天", "不区分")):
+        parts.append(_strip_list_marker(weekend.group(0)))
+    # "其余" closes the rule: it says what the band that was *not* named costs.
+    rest = re.search(r"其余[^，,。；;）)]*", statement)
+    if rest:
+        parts.append(_strip_list_marker(rest.group(0)))
+    return "、".join(dict.fromkeys(part for part in parts if part))
 
 
 def monetary_amount(value: str, header: str, currency: str) -> str | None:
