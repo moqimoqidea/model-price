@@ -226,6 +226,11 @@ WEEKDAY_QUALIFIERS = (
     "周末",
 )
 MAX_TIME_BAND_STATEMENT = 400
+# A rendered page can glue a price table and the note that follows it into one line,
+# so the "sentence" arrives carrying unit prices. A vendor explaining when a window
+# applies does not quote amounts in the same breath, and keeping such a row would
+# repeat a price table in the report's prose section.
+PRICE_IN_STATEMENT_RE = re.compile(r"[$¥￥]\s*\d|\d[\d.]*\s*元")
 
 
 class TimeBandRule(NamedTuple):
@@ -271,6 +276,8 @@ def time_band_rules(document: str) -> list[TimeBandRule]:
         for sentence in re.split(r"(?<=[。！？!?])", clean_text(line)):
             candidate = _strip_list_marker(sentence.strip())
             if not candidate or len(candidate) > MAX_TIME_BAND_STATEMENT:
+                continue
+            if PRICE_IN_STATEMENT_RE.search(candidate):
                 continue
             if not any(word in candidate.lower() for word in TIME_BAND_WORDS):
                 continue

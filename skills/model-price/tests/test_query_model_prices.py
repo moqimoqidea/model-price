@@ -22,6 +22,11 @@ from model_price.parsing import (
     time_bands_for,
     token_price_kind,
 )
+from model_price.providers.aliyun import (
+    ALIYUN_BAND_DOC_URL,
+    AliyunAdapter,
+    time_band_label,
+)
 from model_price.providers.anthropic import ANTHROPIC_MARKDOWN_URL, AnthropicAdapter
 from model_price.providers.deepseek import DEEPSEEK_URL, DeepSeekAdapter
 from model_price.providers.google import (
@@ -952,6 +957,31 @@ class MarkdownRenderingTests(unittest.TestCase):
         self.assertIn("未给出本工具可解析的价格", to_markdown(payload))
 
 
+class AliyunAdapterTests(unittest.TestCase):
+    """Bailian keys its bands in English but publishes the window only in prose."""
+
+    def test_the_api_key_is_reported_in_the_pages_own_words(self):
+        self.assertEqual(time_band_label("offpeak"), "闲时")
+        self.assertEqual(time_band_label("peak"), "忙时")
+        self.assertEqual(time_band_label("standard"), "standard")
+
+    def test_the_window_comes_from_the_pricing_page(self):
+        page = "错峰时段为东八区 22:00 至次日 8:00，其余时段为忙时，以账单时间为准。"
+        self.assertEqual(
+            time_bands_for(
+                page, model_id="deepseek-v4.1-flash", source_url=ALIYUN_BAND_DOC_URL
+            )["window"],
+            "22:00至次日8:00、其余时段为忙时",
+        )
+
+    def test_an_unreachable_page_leaves_the_window_empty(self):
+        class UnreachableClient:
+            def get_text(self, url):
+                raise SourceError("request failed")
+
+        self.assertEqual(AliyunAdapter(UnreachableClient())._band_text(), "")
+
+
 class TimeBandWindowTests(unittest.TestCase):
     """Every platform draws the peak window differently, and each is quoted as written."""
 
@@ -1029,6 +1059,18 @@ class TimeBandWindowTests(unittest.TestCase):
         ]
         self.assertTrue(
             any("空闲时段价格为高峰时段价格的一半" in text for text in statements)
+        )
+
+    def test_a_price_row_glued_to_the_rule_is_not_a_rule(self):
+        """A rendered page can merge a price table into the note that follows it."""
+        page = (
+            "原价$0.276 （限时错峰4折）忙时8折 错峰时段为东八区"
+            " 22:00 至次日 8:00，其余时段为忙时。\n"
+            "错峰时段为东八区 22:00 至次日 8:00，其余时段为忙时。"
+        )
+        self.assertEqual(
+            time_bands_for(page, model_id="deepseek-v4.1-flash")["statements"],
+            ["错峰时段为东八区 22:00 至次日 8:00，其余时段为忙时。"],
         )
 
 

@@ -8,6 +8,7 @@ from typing import Any
 from ..core import PriceSource, now_iso
 from ..errors import SourceError
 from ..models import model_family, normalize_model
+from ..parsing import time_bands_for
 from ..pricing import make_record, price_item, unit_code
 
 ALIYUN_API_NAME = (
@@ -32,12 +33,46 @@ ALIYUN_PRICE_TYPES = {
     "output_token_batch_chat": "batch_chat_output",
 }
 
+# The catalogue keys its bands in English while the Model Studio pricing page calls
+# them 忙时/闲时. The vendor's own wording is what a reader can match against the
+# page, so the record carries that instead of the API enum.
+ALIYUN_TIME_BANDS = {"peak": "忙时", "offpeak": "闲时"}
+
+# The JSON carries no window — it only says a band exists. Bailian states the hours
+# only in prose on the Model Studio pricing page ("错峰时段为东八区 22:00 至次日
+# 8:00，其余时段为忙时"), and the same rule is repeated in its announcement
+# (https://www.aliyun.com/notice/118555, "空闲时段为北京时间 22:00 - 8:00､其余为
+# 高峰时段"). The window is read from there; prices still come from the JSON.
+ALIYUN_BAND_DOC_URL = "https://www.alibabacloud.com/help/zh/model-studio/model-pricing"
+
+
+def time_band_label(value: str) -> str:
+    """Return Bailian's own wording for an API band key."""
+    return ALIYUN_TIME_BANDS.get(value.lower(), value)
+
 
 class AliyunAdapter(PriceSource):
     provider_id = "aliyun"
     provider_name = "阿里云百炼"
     source_url = ALIYUN_URL
     source_kind = "anonymous_api"
+
+    def __init__(self, client: Any) -> None:
+        super().__init__(client)
+        self._band_document: str | None = None
+
+    def _band_text(self) -> str:
+        """Return the pricing page's prose, which is where the window is written.
+
+        Fetched lazily and only once per run; a page that cannot be read leaves the
+        record's window empty rather than failing an otherwise good price query.
+        """
+        if self._band_document is None:
+            try:
+                self._band_document = self.client.get_text(ALIYUN_BAND_DOC_URL)
+            except SourceError:
+                self._band_document = ""
+        return self._band_document
 
     def _request(self, input_data: dict[str, Any]) -> dict[str, Any]:
         params = {
@@ -98,9 +133,10 @@ class AliyunAdapter(PriceSource):
                 )
             offers = []
             for band, prices in grouped_prices.items():
-                conditions = {} if band == "standard" else {"time_band": band}
+                label = time_band_label(band)
+                conditions = {} if band == "standard" else {"time_band": label}
                 offers.append(
-                    {"name": band, "conditions": conditions, "prices": prices}
+                    {"name": label, "conditions": conditions, "prices": prices}
                 )
             result.append(
                 make_record(
@@ -123,6 +159,12 @@ class AliyunAdapter(PriceSource):
                     inference_provider=item.get("inferenceProvider"),
                     access_scope=item.get("scope"),
                     model_family=model_family(item["model"]),
+                    time_bands=time_bands_for(
+                        self._band_text(),
+                        model_id=item["model"],
+                        display_name=item.get("name", item["model"]),
+                        source_url=ALIYUN_BAND_DOC_URL,
+                    ),
                 )
             )
         return result
