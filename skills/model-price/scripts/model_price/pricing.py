@@ -7,9 +7,18 @@ across regions, time bands, context tiers, or promotions.
 from __future__ import annotations
 
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .text import clean_text
+
+MILLION = 1_000_000
+
+# Vendors quote a price per thousand, per ten thousand, or per million tokens;
+# every report compares one unit, so an amount is rescaled rather than left for
+# the reader to convert. The scale is named in the vendor's own label
+# ("元/千tokens"), tested most specific first so 百万 is not read as 万.
+TOKEN_UNIT_SCALES = (("百万", MILLION), ("万", 10_000), ("千", 1_000))
 
 
 def unit_code(label: str) -> str:
@@ -80,6 +89,32 @@ def make_record(
     }
     record.update(extra)
     return record
+
+
+def tokens_per_price_unit(label: str) -> int | None:
+    """Return how many tokens a vendor's price unit covers.
+
+    ``None`` says the label does not price tokens at all, so a charge per page or
+    per call ("元/页", "元/次") is never rescaled as if it were per token.
+    """
+    compact = clean_text(label).lower().replace(" ", "")
+    if "token" not in compact:
+        return None
+    return next((count for word, count in TOKEN_UNIT_SCALES if word in compact), None)
+
+
+def per_million_tokens(amount: str, tokens_per_unit: int) -> str:
+    """Rescale an amount quoted per ``tokens_per_unit`` onto one million tokens.
+
+    Decimal keeps the vendor's figure exact: a per-thousand rate of 0.00005 is
+    0.05 per million, not the 0.05000000000000001 a binary float would carry into
+    every comparison the report prints.
+    """
+    try:
+        scaled = Decimal(amount) * MILLION / tokens_per_unit
+    except (InvalidOperation, ZeroDivisionError):
+        return amount
+    return format(scaled.normalize(), "f")
 
 
 def usd_amount(value: str) -> str | None:

@@ -15,6 +15,7 @@ from model_price.core import PriceSource
 from model_price.errors import SourceError
 from model_price.models import model_matches, normalize_model, strip_footnote_markers
 from model_price.parsing import (
+    headed_document_tables,
     markdown_tables,
     select_time_band_rules,
     split_markdown_row,
@@ -22,10 +23,16 @@ from model_price.parsing import (
     time_bands_for,
     token_price_kind,
 )
+from model_price.pricing import per_million_tokens, tokens_per_price_unit
 from model_price.providers.aliyun import (
     ALIYUN_BAND_DOC_URL,
     AliyunAdapter,
     time_band_label,
+)
+from model_price.providers.baidu import (
+    BAIDU_PAGE_URL,
+    BaiduAdapter,
+    price_data_url,
 )
 from model_price.providers.anthropic import ANTHROPIC_MARKDOWN_URL, AnthropicAdapter
 from model_price.providers.deepseek import DEEPSEEK_URL, DeepSeekAdapter
@@ -207,6 +214,80 @@ class MarkdownTableReaderTests(unittest.TestCase):
 | 1 | 2 |
 """
         self.assertEqual(markdown_tables(markdown)[0][0], ["大语言模型", "在线推理（常规）"])
+
+
+class HtmlTableReaderTests(unittest.TestCase):
+    """The grid a vendor's cells have to be laid onto before any row is read."""
+
+    def grid(self, table):
+        return headed_document_tables(table)[0][1]
+
+    def test_a_cell_spanning_rows_is_repeated_down_every_row_it_covers(self):
+        self.assertEqual(
+            self.grid(
+                "<table>"
+                "<tr><th>模型</th><th>峰谷</th><th>价格</th></tr>"
+                '<tr><td rowspan="2">model-a</td><td>空闲</td><td>1</td></tr>'
+                "<tr><td>高峰</td><td>2</td></tr>"
+                "</table>"
+            ),
+            [
+                ["模型", "峰谷", "价格"],
+                ["model-a", "空闲", "1"],
+                ["model-a", "高峰", "2"],
+            ],
+        )
+
+    def test_a_heading_spanning_columns_is_not_repeated_into_them(self):
+        # A colspan is how a vendor lays a row heading across the columns beside
+        # it. Repeating it would fill the header row — the row that says which
+        # columns are prices — with copies of the heading.
+        self.assertEqual(
+            self.grid(
+                "<table>"
+                '<tr><td colspan="2">模型</td><td>价格</td></tr>'
+                "<tr><td>model-a</td><td>1</td></tr>"
+                "</table>"
+            ),
+            [["模型", "价格"], ["model-a", "1"]],
+        )
+
+    def test_a_row_whose_tr_is_missing_is_still_read(self):
+        # Baidu's own table drops the opening tag of one row; the cells below it
+        # belong to that row, not to the one above.
+        self.assertEqual(
+            self.grid(
+                "<table>"
+                "<tr><th>模型</th><th>价格</th></tr>"
+                "<tr><td>model-a</td><td>1</td></tr>"
+                "<td>model-a</td><td>2</td></tr>"
+                "</table>"
+            ),
+            [["模型", "价格"], ["model-a", "1"], ["model-a", "2"]],
+        )
+
+    def test_a_span_attribute_carrying_a_stray_quote_is_still_read(self):
+        self.assertEqual(
+            self.grid(
+                "<table>"
+                "<tr><th>模型</th><th>价格</th></tr>"
+                '<tr><td rowspan=2">model-a</td><td>1</td></tr>'
+                "<tr><td>2</td></tr>"
+                "</table>"
+            ),
+            [["模型", "价格"], ["model-a", "1"], ["model-a", "2"]],
+        )
+
+    def test_a_cell_break_is_kept_so_stacked_values_stay_separable(self):
+        self.assertEqual(
+            self.grid(
+                "<table>"
+                "<tr><th>模型</th><th>价格</th></tr>"
+                "<tr><td>model-a<br>model-a-air</td><td>1</td></tr>"
+                "</table>"
+            )[1][0],
+            "model-a<br>model-a-air",
+        )
 
 
 class ModelMatchingTests(unittest.TestCase):
@@ -692,6 +773,156 @@ class XiaomiAdapterTests(unittest.TestCase):
 
     def test_plugin_pricing_section_is_ignored(self):
         self.assertEqual(self.adapter().query("国内联网服务"), [])
+
+
+class PriceUnitTests(unittest.TestCase):
+    def test_a_rate_per_thousand_tokens_is_restated_per_million(self):
+        self.assertEqual(per_million_tokens("0.003", 1_000), "3")
+        self.assertEqual(per_million_tokens("0.00005", 1_000), "0.05")
+
+    def test_a_unit_that_does_not_price_tokens_is_rejected(self):
+        self.assertIsNone(tokens_per_price_unit("元/页"))
+        self.assertIsNone(tokens_per_price_unit("元/次"))
+
+    def test_each_token_scale_is_read_as_its_own_multiple(self):
+        self.assertEqual(tokens_per_price_unit("元/千tokens"), 1_000)
+        self.assertEqual(tokens_per_price_unit("元/百万 tokens"), 1_000_000)
+
+
+# Baidu prices one billing item per serving channel, keeps the peak/off-peak
+# window inside the item's own text, and writes the fourth row below without its
+# opening <tr> — the fixture reproduces all three.
+BAIDU_HTML = """<h2>模型价格</h2>
+
+<h3>文本生成</h3>
+
+<table>
+<tr><th>模型名称</th><th>版本名称</th><th>服务内容</th><th>子项</th><th>在线推理</th><th>批量推理 （原价）</th><th>批量推理 （2月活动价）</th><th>单位</th></tr>
+<tr>
+<td rowspan="4">Flash-Test（空闲时段为限时活动，8月25日0点起生效）</td>
+<td rowspan="4">Flash-Test-0731<br>Flash-Test-0731-Air</td>
+<td rowspan="4">推理服务</td>
+<td>输入（高峰时段：8:00-22:00）</td>
+<td>0.003</td><td>0.0015</td><td>0.001</td><td>元/千tokens</td>
+</tr>
+<tr>
+<td>命中缓存（高峰时段：8:00-22:00，9月9日起生效）</td>
+<td>0.0001</td><td>-</td><td>-</td><td>元/千tokens</td>
+</tr>
+<td>输出（空闲时段：22:00-次日8:00）</td>
+<td>0.0045</td><td>-</td><td>-</td><td>元/千tokens</td>
+</tr>
+<tr>
+<td>输入（空闲时段：22:00-次日8:00）</td>
+<td>0.0015</td><td>-</td><td>-</td><td>元/千tokens</td>
+</tr>
+</table>
+
+<h3>按TPM付费</h3>
+
+<table>
+<tr><th>模型名称</th><th>版本名称</th><th>子项</th><th>单位规格</th><th>预付费价格（单位：元/个/月）</th></tr>
+<tr><td>Flash-Test</td><td>Flash-Test-0731</td><td>输入</td><td>10</td><td>100</td></tr>
+</table>
+
+<h3>OCR</h3>
+
+<table>
+<tr><th>模型名称</th><th>版本名称</th><th>服务内容</th><th>子项</th><th>在线推理</th><th>单位</th></tr>
+<tr><td>OCR-Test</td><td>OCR-Test-0.9B</td><td>推理服务</td><td>输入</td><td>0.09</td><td>元/页</td></tr>
+</table>
+"""
+
+
+BAIDU_PAGE = (
+    '<link rel="preload" as="fetch" '
+    'href="/doc/qianfan/s/page-data/wsv6ya/page-data.json"/>'
+)
+
+
+class BaiduAdapterTests(unittest.TestCase):
+    def adapter(self, body=BAIDU_HTML, page=BAIDU_PAGE):
+        payload = json.dumps({"result": {"data": {"markdownRemark": {"html": body}}}})
+        return BaiduAdapter(
+            MappingClient({BAIDU_PAGE_URL: page, price_data_url(BAIDU_PAGE): payload})
+        )
+
+    def record(self):
+        return self.adapter().query("flash-test-0731")[0]
+
+    def test_the_article_body_is_read_from_the_pages_own_data_file(self):
+        self.assertEqual(BaiduAdapter.source_kind, "official_json")
+        self.assertEqual(self.adapter().list_models(), ["flash-test-0731"])
+
+    def test_a_price_per_thousand_tokens_is_restated_per_million(self):
+        peak = self.record()["offers"][0]
+        item = price_lookup(peak, "input")
+        self.assertEqual(item["amount"], "3")
+        self.assertEqual(item["unit"], "CNY_per_million_tokens")
+        # The figure Baidu published stays beside it, so the report can be
+        # checked against the page without converting anything by hand.
+        self.assertEqual(item["display"], "0.003 元/千tokens")
+
+    def test_the_item_names_the_charge_and_the_column_names_the_channel(self):
+        batch = next(
+            offer for offer in self.record()["offers"] if offer["name"] == "批量推理"
+        )
+        self.assertEqual(price_lookup(batch, "input")["amount"], "1.5")
+
+    def test_a_promotional_batch_column_is_not_quoted_as_the_price(self):
+        batch = next(
+            offer for offer in self.record()["offers"] if offer["name"] == "批量推理"
+        )
+        self.assertEqual([item["amount"] for item in batch["prices"]], ["1.5"])
+
+    def test_the_two_bands_stay_apart_and_carry_the_vendors_window(self):
+        record = self.record()
+        self.assertEqual(
+            {offer["conditions"]["time_band"] for offer in record["offers"]},
+            {"高峰时段", "空闲时段"},
+        )
+        self.assertEqual(
+            record["time_bands"]["window"],
+            "高峰时段 8:00-22:00；空闲时段 22:00-次日8:00",
+        )
+        self.assertEqual(
+            record["time_bands"]["statements"],
+            ["输入（高峰时段：8:00-22:00）", "输出（空闲时段：22:00-次日8:00）"],
+        )
+
+    def test_a_price_settling_on_a_later_day_keeps_its_own_offer(self):
+        deferred = [
+            offer
+            for offer in self.record()["offers"]
+            if offer["conditions"].get("effective_from") == "9月9日起生效"
+        ]
+        self.assertEqual(len(deferred), 1)
+        self.assertEqual(price_lookup(deferred[0], "cache_hit")["amount"], "0.1")
+
+    def test_the_settlement_named_in_the_model_cell_stays_its_own_offer(self):
+        self.assertEqual(
+            {offer["conditions"]["model_note"] for offer in self.record()["offers"]},
+            {"空闲时段为限时活动，8月25日0点起生效"},
+        )
+
+    def test_a_prepaid_rate_is_not_read_as_a_token_price(self):
+        amounts = {
+            item["amount"]
+            for offer in self.record()["offers"]
+            for item in offer["prices"]
+        }
+        self.assertNotIn("100", amounts)
+
+    def test_a_table_billed_per_page_is_not_token_pricing(self):
+        self.assertEqual(self.adapter().query("ocr-test-0.9b"), [])
+
+    def test_a_page_without_a_data_link_is_reported_as_a_broken_source(self):
+        with self.assertRaises(SourceError):
+            self.adapter(page="<html><body>no link here</body></html>").list_models()
+
+    def test_an_article_without_a_pricing_table_is_reported_as_a_broken_source(self):
+        with self.assertRaises(SourceError):
+            self.adapter(body="<p>本页无价格表</p>").list_models()
 
 
 ZHIPU_MARKDOWN = """# API 定价

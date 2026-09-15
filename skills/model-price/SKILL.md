@@ -1,6 +1,6 @@
 ---
 name: model-price
-description: Find major AI models and compare current official prices across cloud platforms and first-party providers. Use for model availability, versions, service modes, token or cache pricing, and provider comparisons involving Aliyun, Volcengine, Tencent Cloud, DeepSeek, Kimi, Zhipu, MiniMax, Xiaomi MiMo, OpenAI, Anthropic, Google Gemini, or xAI Grok.
+description: Find major AI models and compare current official prices across cloud platforms and first-party providers. Use for model availability, versions, service modes, token or cache pricing, and provider comparisons involving Aliyun, Volcengine, Tencent Cloud, Baidu Qianfan, DeepSeek, Kimi, Zhipu, MiniMax, Xiaomi MiMo, OpenAI, Anthropic, Google Gemini, or xAI Grok.
 ---
 
 # Model Price
@@ -21,7 +21,7 @@ python3 scripts/query_model_prices.py provider PROVIDER MODEL --format markdown
 python3 scripts/query_model_prices.py list PROVIDER --prefix PREFIX
 ```
 
-Provider IDs: `aliyun`, `volcengine`, `tencent`, `deepseek`, `kimi`, `zhipu`, `minimax`, `xiaomi`, `openai`, `anthropic`, `google`, `xai`.
+Provider IDs: `aliyun`, `volcengine`, `tencent`, `baidu`, `deepseek`, `kimi`, `zhipu`, `minimax`, `xiaomi`, `openai`, `anthropic`, `google`, `xai`.
 
 Do not query `openai`, `anthropic`, `google`, or `xai` by default. Add only the relevant provider when the user explicitly mentions GPT/OpenAI, Claude/Anthropic, Gemini/Google, or Grok/xAI; use `--include-overseas` when the user explicitly asks about overseas models generally.
 

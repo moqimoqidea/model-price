@@ -43,6 +43,22 @@ def strip_footnote_markers(value: str) -> str:
         result = stripped
 
 
+# Vendors annotate a label with something that is not part of the model's
+# identity: a context tier, a retirement notice, the date a price applies from.
+# Keeping the two halves apart lets the note survive as a condition instead of
+# leaking into the model id, where it would stop the model being findable.
+TRAILING_PARENTHETICAL_RE = re.compile(r"[（(]([^（()）]*)[）)]\s*$")
+
+
+def split_trailing_parenthetical(value: str) -> tuple[str, str]:
+    """Separate a label's trailing parenthetical from the name it annotates."""
+    text = clean_text(value)
+    match = TRAILING_PARENTHETICAL_RE.search(text)
+    if not match:
+        return text, ""
+    return text[: match.start()].strip(), clean_text(match.group(1))
+
+
 def normalize_model(value: str) -> str:
     value = strip_footnote_markers(html.unescape(value))
     value = value.strip().lower().replace("_", "-")

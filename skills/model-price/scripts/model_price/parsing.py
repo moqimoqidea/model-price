@@ -23,6 +23,81 @@ def unescape_markdown(value: str) -> str:
     return MARKDOWN_ESCAPE_RE.sub(r"\1", value)
 
 
+class SpanGrid:
+    """A table grid built from cells that cover several rows or columns.
+
+    A vendor writes a cell spanning four rows once, but every row it covers still
+    needs that value in its own column: without it the columns below shift left
+    and a price ends up under the wrong heading. The grid remembers what is
+    carried over and refills it as each row is walked.
+    """
+
+    def __init__(self) -> None:
+        self.rows: list[list[str]] = []
+        self._spans: dict[int, tuple[int, str]] = {}
+        self._carried: dict[int, str] = {}
+        self._row: list[str | None] = []
+        self._column = 0
+
+    def start_row(self) -> None:
+        self._row = []
+        self._column = 0
+        self._carried = {column: value for column, (_, value) in self._spans.items()}
+
+    def add(self, value: str, *, rowspan: int = 1, colspan: int = 1) -> None:
+        """Place a cell, skipping any column a carried span already occupies."""
+        column = self._next_column()
+        for offset in range(colspan):
+            self._place(column + offset, value)
+            if rowspan > 1:
+                self._spans[column + offset] = (rowspan, value)
+        self._column = column + colspan
+
+    def skip(self) -> None:
+        """Give the next column to a span that already covers it."""
+        column = self._column
+        self._place(column, self._carried.pop(column, ""))
+        self._column = column + 1
+
+    def end_row(self) -> None:
+        """Close the row and retire the spans it consumed."""
+        while self._column in self._carried:
+            self._place(self._column, self._carried.pop(self._column))
+            self._column += 1
+        for column, (remaining, value) in list(self._spans.items()):
+            if remaining <= 1:
+                del self._spans[column]
+            else:
+                self._spans[column] = (remaining - 1, value)
+        if any(self._row):
+            self.rows.append(["" if cell is None else cell for cell in self._row])
+
+    def _place(self, column: int, value: str) -> None:
+        while len(self._row) <= column:
+            self._row.append(None)
+        self._row[column] = value
+
+    def _next_column(self) -> int:
+        """Return the next column a fresh cell may take."""
+        while self._column in self._carried:
+            self._place(self._column, self._carried.pop(self._column))
+            self._column += 1
+        return self._column
+
+
+def _span_size(attrs: list[tuple[str, str | None]], name: str) -> int:
+    """Read a rowspan or colspan, tolerating the malformed values vendors ship.
+
+    Baidu's table publishes a ``rowspan=3"`` with the quote inside the value, so
+    the digits are read out rather than the value being trusted to be a number.
+    """
+    for key, value in attrs:
+        if key == name:
+            digits = re.sub(r"\D", "", value or "")
+            return int(digits) if digits else 1
+    return 1
+
+
 class TextTableParser(HTMLParser):
     """Collect HTML tables along with the heading path that precedes them."""
 
@@ -33,22 +108,38 @@ class TextTableParser(HTMLParser):
         self.path: list[str] = []
         self.heading_level: int | None = None
         self.heading_text: list[str] = []
-        self.table: list[list[str]] | None = None
-        self.row: list[str] | None = None
+        self.grid: SpanGrid | None = None
+        self.row_open = False
+        self.rowspan = 1
         self.cell: list[str] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in HEADING_TAGS and self.table is None:
+        if tag in HEADING_TAGS and self.grid is None:
             self.heading_level = int(tag[1])
             self.heading_text = []
         elif tag == "table":
-            self.table = []
-        elif self.table is not None and tag == "tr":
-            self.row = []
-        elif self.row is not None and tag in ("td", "th"):
+            self.grid = SpanGrid()
+            self.row_open = False
+        elif self.grid is not None and tag == "tr":
+            self.grid.start_row()
+            self.row_open = True
+        elif self.grid is not None and self.cell is None and tag in ("td", "th"):
+            # A vendor that drops a <tr> leaves its cells orphaned. Opening the
+            # row here keeps them rather than silently discarding the whole row.
+            if not self.row_open:
+                self.grid.start_row()
+                self.row_open = True
             self.cell = []
+            # Only a row span is expanded. A column span is how a vendor writes a
+            # row heading across several columns; repeating the heading into each
+            # column it covers would invent cells inside the header row, which is
+            # where every reader here looks for its price columns.
+            self.rowspan = _span_size(attrs, "rowspan")
         elif self.cell is not None and tag == "br":
-            self.cell.append(" ")
+            # A vendor stacks several values in one cell, one per line. The break
+            # is kept rather than flattened so the values stay separable: the
+            # first is the model, the rest are variants the same price covers.
+            self.cell.append("<br>")
 
     def handle_data(self, data: str) -> None:
         if self.heading_level is not None:
@@ -64,17 +155,20 @@ class TextTableParser(HTMLParser):
                 clean_text(" ".join(self.heading_text))
             ]
             self.heading_level = None
-        elif tag in ("td", "th") and self.cell is not None and self.row is not None:
-            self.row.append(re.sub(r"\s+", " ", "".join(self.cell)).strip())
+        elif tag in ("td", "th") and self.cell is not None and self.grid is not None:
+            self.grid.add(
+                re.sub(r"\s+", " ", "".join(self.cell)).strip(),
+                rowspan=self.rowspan,
+            )
             self.cell = None
-        elif tag == "tr" and self.row is not None and self.table is not None:
-            if self.row:
-                self.table.append(self.row)
-            self.row = None
-        elif tag == "table" and self.table is not None:
-            self.tables.append(self.table)
+        elif tag == "tr" and self.grid is not None and self.row_open:
+            self.grid.end_row()
+            self.row_open = False
+        elif tag == "table" and self.grid is not None:
+            self.tables.append(self.grid.rows)
             self.table_headings.append(list(self.path))
-            self.table = None
+            self.grid = None
+            self.row_open = False
 
 
 def split_markdown_row(line: str) -> list[str]:
@@ -215,6 +309,11 @@ CLOCK_RANGE_RE = re.compile(
 LIST_MARKER_RE = re.compile(r"^\s*(?:[*\-+•]|\d+[.、)])\s*")
 TIME_BAND_WORDS = ("高峰", "空闲", "闲时", "忙时", "峰时", "谷时", "峰谷", "peak")
 TIME_BAND_SCHEDULE_WORDS = ("工作日", "周末", "每天", "每日", "全天", "其余", "周一", "周二")
+# A band is filed in a free-form condition column — "条件" on Volcengine, "子项" on
+# Baidu, a column the vendor also uses for length tiers — so the cell *value*, not
+# the heading, is what says a row is banded. Without this both bands land in one
+# bucket and become indistinguishable offers.
+TIME_BAND_CELL_MARKERS = ("高峰时段", "空闲时段", "低峰时段", "低谷时段", "peak")
 # Most specific first, so "工作日（周一至周五）" is quoted as 周一至周五.
 WEEKDAY_QUALIFIERS = (
     "周一至周五",
@@ -243,6 +342,14 @@ class TimeBandRule(NamedTuple):
 
     scope: str
     statement: str
+
+
+def time_band_label(value: str) -> str | None:
+    """Return the band a cell names, in the vendor's own wording."""
+    lowered = clean_text(value).lower()
+    return next(
+        (marker for marker in TIME_BAND_CELL_MARKERS if marker in lowered), None
+    )
 
 
 def _band_scope_key(value: str) -> str:

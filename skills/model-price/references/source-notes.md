@@ -21,6 +21,24 @@ neither.
   documents; preserve self-deployed and “原厂直供” rows. There is no Markdown
   endpoint: the "MD" button converts this same Slate data in the browser with
   remark, so reading the Slate is reading the button's own source.
+- Baidu Qianfan: the pricing page is a Gatsby document. Its own HTML is the whole
+  portal, and the Markdown behind its "查看 MD" button is assembled in the browser
+  (it opens as a `blob:` URL) rather than published as a file — so the article body
+  is read from the `page-data.json` the page itself pre-fetches, which is both an
+  official structured source and far narrower than the rendered page. Its address
+  is read out of that preload link instead of being hard-coded, because the CDN path
+  carries the build's asset prefix. A row is priced along three axes at once: the
+  billing item is named inside the row (`子项`: 输入 / 命中缓存 / 输出), the serving
+  channel is a column (`在线推理` / `批量推理`), and the peak/off-peak window is
+  written into the item's own text (`输入（高峰时段：8:00-22:00）`). Only
+  `批量推理 （原价）` is read — the `2月活动价` / `3月活动价` columns are promotions
+  that expire. Prices are quoted per thousand tokens and restated per million. The
+  same page also prices token packages, TPM reservations, OCR pages, images, video,
+  compute units and fine-tuning, none of which are token tables. Qianfan serves
+  ERNIE alongside third-party families (DeepSeek, GLM, Qwen, Kimi); it does **not**
+  serve DeepSeek-V4.1-Flash, only the superseded `DeepSeek-V4-Flash-0731`, which is
+  filed as a model of its own and must never be merged into a `deepseek-flash`
+  comparison.
 - DeepSeek: `https://api-docs.deepseek.com/zh-cn/quick_start/pricing/`; the model table is keyed by a `模型` header. Model columns carry footnote markers such as `deepseek-flash(1)`, so markers are stripped before matching. The current model is `deepseek-flash`; retired names (`deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`) resolve through `RETIRED_MODEL_ALIASES`. Aliyun files the same live generation as `deepseek-v4.1-flash` and Ark as `deepseek-v4-1-flash`, so those go in `CURRENT_MODEL_ALIASES`, which is matched in both directions — a live-model label must never pull a superseded generation's price rows into the comparison, and `--exact` ignores it.
 - Kimi: `https://platform.kimi.com/docs/llms.txt` indexes the chat pricing document as `pricing/chat.md`; dated variants such as `chat-k3.md` have also been served, so the whole `chat*` family is matched. Rows are JSON arrays shaped `[model, unit, cache hit, cache miss, output, context]`. The sibling documents (`batch`, `tools`, `limits`) are not per-model token tables and must stay out of the catalogue.
 - Zhipu BigModel: `https://docs.bigmodel.cn/cn/guide/start/pricing.md`. The anonymous
@@ -44,7 +62,7 @@ Provider caches live under `cache/<provider>/`. A cache entry records its provid
 
 ## Time bands
 
-A vendor that bills by time of day states the window in prose, never in a column, and every platform words it differently — so the hours are read per vendor and never carried across. `time_band_rules()` collects those sentences, `select_time_band_rules()` keeps the ones governing a model (matched by model name first, then by a delivery label such as `原厂直供`), and `compact_time_band_window()` reduces a sentence to the window repeated on each peak/off-peak row. The vendor's own sentences stay on the record as `time_bands.statements`, because the wording is what settles the bill.
+A vendor that bills by time of day states the window somewhere other than a price column, and every platform words it differently — so the hours are read per vendor and never carried across. Most state it in prose beside the table: `time_band_rules()` collects those sentences, `select_time_band_rules()` keeps the ones governing a model (matched by model name first, then by a delivery label such as `原厂直供`), and `compact_time_band_window()` reduces a sentence to the window repeated on each peak/off-peak row. Baidu instead writes the window into the billed item's own text, so `baidu.py` reads it off the rows. Either way the vendor's own wording stays on the record as `time_bands.statements`, because the wording is what settles the bill.
 
 For `deepseek-flash` the platforms currently disagree:
 
@@ -55,8 +73,9 @@ For `deepseek-flash` the platforms currently disagree:
 | Tencent (原厂直供) | 工作日 9:00–12:00、14:00–18:00 | 其余（含周末全天） |
 | Tencent (0731/0813 self-hosted) | 周一至周日 9:00–12:00、14:00–18:00 | 其余 |
 | Aliyun Bailian | 08:00–22:00（其余时段为忙时） | 22:00–次日 08:00 |
+| Baidu Qianfan (`DeepSeek-V4-Flash-0731`, not `deepseek-flash`) | 08:00–22:00 | 22:00–次日 08:00 |
 
-The first three therefore agree, and Aliyun is the outlier: its cheap window is overnight only, so midday (12:00–14:00), evening (18:00–22:00) and the whole weekend cost double there but are off-peak everywhere else.
+The first three therefore agree, and Aliyun is the outlier: its cheap window is overnight only, so midday (12:00–14:00), evening (18:00–22:00) and the whole weekend cost double there but are off-peak everywhere else. Baidu happens to draw the same window as Aliyun, on a different generation of the model — the two are independent statements that happen to coincide, never a rule to apply to one another.
 
 Three traps: a `；` joins clauses of one rule (Tencent states the weekday window and the weekend exemption in a single sentence), so sentences are split on `。` only; a rule quoted from a footnote without naming any model applies to everything the document lists; and a window stated in prose does not move a price — the band a row belongs to still comes from the cell, as described above.
 
@@ -70,7 +89,10 @@ Two conventions apply to every table-driven adapter:
 - Read only amounts that name the adapter's own currency (`CNY` tables emit CNY, `USD` tables emit USD) and ignore headers that bill a non-token unit such as audio duration (`输入音频时长`, per hour) or per-request pricing. Never relabel one currency as another.
 - A header that describes the *request* instead of a price is a condition, not a price column. Length bands are the trap: `条件 输入长度：千 token` contains 输入, so an input-price rule would swallow the column and silently drop the tier that separates otherwise identical rows (see `NON_PRICE_HEADER_MARKERS`, and any adapter that classifies headers itself must consult it). The cell value, not the heading, decides a time-band key, because vendors file the peak/off-peak split in the same generic 条件 column.
 
-Two conventions come with the Markdown reader:
+Conventions that come with the document readers:
 
 - Vendor Markdown is escaped (`deepseek\-v4\-flash正式版`, `输入长度 \[0, 32K)`). The reader removes those escapes before a cell is named, matched, or compared, and a row keeps its empty leading cells so a table with a carried model name stays column-aligned.
-- A table is read with the whole heading path that precedes it, so a `h2` model (`Gemini 3.8 Flash`) and the `h3` tier under it (`Standard`) stay distinguishable. Inside a cell, `<br>` separates the model name from a note such as `调整前价格，2026-08-21 起不适用`; the note is preserved as a `model_note` condition instead of being dropped, because the price on that row no longer applies.
+- A table is read with the whole heading path that precedes it, so a `h2` model (`Gemini 3.8 Flash`) and the `h3` tier under it (`Standard`) stay distinguishable.
+- A cell break (`<br>`) survives both readers as written, so the values a vendor stacks in one cell stay separable: the first is the model, the rest are variants the same price covers (`ERNIE-5.0<br>ERNIE-5.0-Thinking-Preview`). A note stacked under a model name (`调整前价格，2026-08-21 起不适用`) is preserved as a `model_note` condition instead of being dropped, because the price on that row no longer applies.
+- Cells are laid onto a real grid, repeating a value across every row a *row span* covers — a vendor writes such a cell once, and without the repeat the columns below it shift left and a price lands under the wrong heading. A *column span* is deliberately not repeated: it is how a vendor lays a row heading across the columns beside it, and expanding it would fill the header row — the row that says which columns are prices — with copies of the heading. A cell arriving with no open row starts one, because Baidu's own table drops one `<tr>` and those cells belong to that row, not to the one above.
+- A vendor that quotes a rate per thousand or per ten thousand tokens is restated per million (`tokens_per_price_unit` / `per_million_tokens`), so one report compares one unit. The figure the vendor published stays in the price's `display` text. A label that does not price tokens at all (`元/页`, `元/次`) is rejected rather than rescaled.

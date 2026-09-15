@@ -9,7 +9,7 @@ from typing import Any, Iterable
 from ..core import PriceSource, now_iso
 from ..errors import SourceError
 from ..models import model_family, model_matches, normalize_model
-from ..parsing import time_bands_for
+from ..parsing import SpanGrid, time_bands_for
 from ..pricing import make_record, price_item
 from ..text import clean_text
 
@@ -76,50 +76,25 @@ def walk_objects(node: Any) -> Iterable[dict[str, Any]]:
 
 def expand_slate_table(table: dict[str, Any]) -> list[list[str]]:
     """Flatten a slate table, repeating values across row and column spans."""
-    grid: list[list[str]] = []
-    spans: dict[int, list[Any]] = {}
+    grid = SpanGrid()
     for raw_row in table.get("children", []):
         if raw_row.get("type") != "row":
             continue
-        row: list[str | None] = []
-
-        def consume_span(column: int) -> None:
-            while len(row) <= column:
-                row.append(None)
-            if column in spans and row[column] is None:
-                remaining, value = spans[column]
-                row[column] = value
-                if remaining <= 1:
-                    del spans[column]
-                else:
-                    spans[column] = (remaining - 1, value)
-
-        column = 0
-        cells = [c for c in raw_row.get("children", []) if c.get("type") == "cell"]
-        for cell in cells:
-            is_placeholder = cell.get("rowSpan") == 0 and cell.get("colSpan") == 0
-            if is_placeholder:
-                consume_span(column)
-                column += 1
+        grid.start_row()
+        for cell in raw_row.get("children", []):
+            if cell.get("type") != "cell":
                 continue
-            while column in spans:
-                consume_span(column)
-                column += 1
-            value = cell_text(cell)
-            colspan = max(1, int(cell.get("colSpan", 1)))
-            rowspan = max(1, int(cell.get("rowSpan", 1)))
-            for offset in range(colspan):
-                while len(row) <= column + offset:
-                    row.append(None)
-                row[column + offset] = value
-                if rowspan > 1:
-                    spans[column + offset] = [rowspan - 1, value]
-            column += colspan
-        for position in sorted(list(spans)):
-            if position >= column:
-                consume_span(position)
-        grid.append([value or "" for value in row])
-    return grid
+            # Slate spells a cell covered by the span above it as 0/0.
+            if cell.get("rowSpan") == 0 and cell.get("colSpan") == 0:
+                grid.skip()
+                continue
+            grid.add(
+                cell_text(cell),
+                rowspan=max(1, int(cell.get("rowSpan", 1))),
+                colspan=max(1, int(cell.get("colSpan", 1))),
+            )
+        grid.end_row()
+    return grid.rows
 
 
 def tencent_delivery_mode(display_name: str) -> str:

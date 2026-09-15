@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .aliyun import AliyunAdapter
 from .anthropic import AnthropicAdapter
+from .baidu import BaiduAdapter
 from .deepseek import DeepSeekAdapter
 from .google import GeminiAdapter
 from .kimi import KimiAdapter
@@ -20,6 +21,7 @@ DOMESTIC_PROVIDERS = (
     AliyunAdapter,
     VolcengineAdapter,
     TencentAdapter,
+    BaiduAdapter,
     DeepSeekAdapter,
     KimiAdapter,
     ZhipuAdapter,

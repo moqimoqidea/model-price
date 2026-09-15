@@ -7,15 +7,16 @@ from typing import Any
 
 from ..core import HttpClient, PriceSource, now_iso
 from ..errors import SourceError
-from ..models import model_family, normalize_model
+from ..models import model_family, normalize_model, split_trailing_parenthetical
 from ..parsing import (
     headed_document_tables,
     monetary_amount,
+    time_band_label,
     time_bands_for,
     token_price_kind,
 )
 from ..pricing import make_record, price_item
-from ..text import clean_text
+from ..text import CELL_BREAK_RE, clean_text
 
 # Condition columns whose vendor wording maps onto a shared schema concept.
 CONDITION_ALIASES = {
@@ -23,24 +24,14 @@ CONDITION_ALIASES = {
     "上下文": "context_tier",
 }
 
-# A model cell may carry a second segment after ``<br>`` ("deepseek-v4-flash正式版
-# <br>调整前价格，2026-08-21 起不适用"). Only the first segment names the model.
-MODEL_CELL_BREAK_RE = re.compile(r"<br\s*/?>")
+# A model cell may carry a note in a second segment ("正式版<br>> 调整前价格");
+# only the first segment names the model. The break itself is split by
+# ``text.CELL_BREAK_RE``.
 MODEL_CELL_NOTE_RE = re.compile(r"^[>\s]+")
 # Cells that stand for "not applicable" rather than carrying a value.
 PLACEHOLDER_VALUES = {"", "-", "—", "–", "不适用"}
 # A table is only read when one of its columns is labelled as the model column.
 MODEL_HEADERS = {"model", "model name", "模型", "模型名称"}
-# Vendors file the peak/off-peak split in a generic condition column ("条件"), so
-# the cell value — not the heading — decides the key. Without this the two bands
-# land in the same condition bucket and become indistinguishable offers.
-TIME_BAND_VALUE_MARKERS = ("高峰时段", "空闲时段", "低峰时段", "低谷时段", "peak")
-
-
-def time_band_condition(value: str) -> str | None:
-    """Return the shared time-band key when a cell names one of the bands."""
-    lowered = value.lower()
-    return "time_band" if any(m in lowered for m in TIME_BAND_VALUE_MARKERS) else None
 
 
 class TabularTokenPricingAdapter(PriceSource):
@@ -114,7 +105,7 @@ class TabularTokenPricingAdapter(PriceSource):
 
     @staticmethod
     def condition_name(header: str) -> str:
-        name = clean_text(MODEL_CELL_BREAK_RE.split(header, maxsplit=1)[0])
+        name = clean_text(CELL_BREAK_RE.split(header, maxsplit=1)[0])
         return CONDITION_ALIASES.get(name, name)
 
     def model_column(self, headers: list[str]) -> int | None:
@@ -134,8 +125,12 @@ class TabularTokenPricingAdapter(PriceSource):
 
     @staticmethod
     def _model_cell(raw: str) -> tuple[str, str]:
-        """Split a model cell into its display name and an explanatory note."""
-        segments = MODEL_CELL_BREAK_RE.split(raw)
+        """Split a model cell into its display name and an explanatory note.
+
+        A cell may carry a second segment after the break ("deepseek-v4-flash
+        正式版<br>调整前价格，2026-08-21 起不适用"); only the first names the model.
+        """
+        segments = CELL_BREAK_RE.split(raw)
         display_name = clean_text(segments[0])
         if display_name in PLACEHOLDER_VALUES:
             display_name = ""
@@ -190,16 +185,20 @@ class TabularTokenPricingAdapter(PriceSource):
                         continue
                     value = clean_text(cells[index])
                     if value and value not in PLACEHOLDER_VALUES:
-                        key = time_band_condition(value) or self.condition_name(
-                            raw_headers[index]
+                        # A band is filed in whichever condition column the vendor
+                        # keeps, so the cell value decides that key.
+                        key = (
+                            "time_band"
+                            if time_band_label(value)
+                            else self.condition_name(raw_headers[index])
                         )
                         conditions[key] = value
                 # A trailing parenthetical often carries a real billing tier
                 # ("grok-4.6 (≥ 200k prompt tokens)"). It is dropped from the
                 # model id, so keep it as a condition instead of losing it.
-                tier = re.search(r"[（(]([^）)]*)[）)]\s*$", display_name)
-                if tier and clean_text(tier.group(1)):
-                    conditions["context_tier"] = clean_text(tier.group(1))
+                name_without_tier, tier = split_trailing_parenthetical(display_name)
+                if tier:
+                    conditions["context_tier"] = tier
                 if note:
                     conditions["model_note"] = note
                 conditions["billing_mode"] = "pay_as_you_go"
@@ -207,9 +206,7 @@ class TabularTokenPricingAdapter(PriceSource):
                     conditions["source_section"] = headings[-1]
                 rows.append(
                     {
-                        "model_id": normalize_model(
-                            re.sub(r"\s*[（(][^）)]*[）)]\s*$", "", display_name)
-                        ),
+                        "model_id": normalize_model(name_without_tier),
                         "display_name": display_name,
                         "offer_name": self.offer_name(headings),
                         "conditions": conditions,
