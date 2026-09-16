@@ -11,12 +11,15 @@ BASELINE_CREATED = "baseline_created"
 UNCHANGED = "unchanged"
 CHANGED = "changed"
 
+# The one change a report lays out as a table; the rest read as bullet lists.
+PRICE_CHANGE_FIELD = "price_changes"
+
 CHANGE_FIELDS = (
     "models_added",
     "models_removed",
     "offers_added",
     "offers_removed",
-    "price_changes",
+    PRICE_CHANGE_FIELD,
 )
 
 

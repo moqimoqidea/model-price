@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import random
+import time
 from typing import Any, Iterator
 
 from ..core import PriceSource, now_iso
@@ -51,10 +53,23 @@ ALIYUN_BAND_DOC_URL = "https://www.alibabacloud.com/help/zh/model-studio/model-p
 CATALOG_PAGE_SIZE = 50
 CATALOG_PAGE_LIMIT = 100
 
+# Bailian's gateway throttles a burst of paged requests, and a whole scan is many
+# pages — hundreds of models at fifty a page. Every request after the first waits
+# a random pause: long enough to stay under the limit, and jittered so the walk
+# never settles into a fixed rhythm a throttle could lock onto.
+CATALOG_PAGE_PAUSE_SECONDS = (1.0, 3.0)
+
 
 def time_band_label(value: str) -> str:
     """Return Bailian's own wording for an API band key."""
     return ALIYUN_TIME_BANDS.get(value.lower(), value)
+
+
+def pause_before_next_page() -> float:
+    """Wait a random pause between two catalogue pages, and report how long."""
+    seconds = random.uniform(*CATALOG_PAGE_PAUSE_SECONDS)
+    time.sleep(seconds)
+    return seconds
 
 
 class AliyunAdapter(PriceSource):
@@ -124,10 +139,17 @@ class AliyunAdapter(PriceSource):
     # --- catalogue paging -------------------------------------------------
 
     def _catalogue(self, *, query_price: bool = False) -> Iterator[dict[str, Any]]:
-        """Walk the catalogue page by page, yielding one model at a time."""
+        """Walk the catalogue page by page, yielding one model at a time.
+
+        Consecutive pages are spaced by a random pause (see
+        ``CATALOG_PAGE_PAUSE_SECONDS``). The first request is never delayed: a
+        catalogue that fits in one page should not pay for paging.
+        """
         request: dict[str, Any] = {"queryPrice": True} if query_price else {}
         page = 1
         while True:
+            if page > 1:
+                pause_before_next_page()
             data = self._request(
                 {**request, "pageNo": page, "pageSize": CATALOG_PAGE_SIZE}
             )

@@ -112,6 +112,10 @@ knows how to answer a single model scans correctly without changes. Aliyun is th
 one adapter whose `query` is itself an HTTP request, so it overrides `catalog_records`
 to page its catalogue instead — asking that endpoint for a page of models with
 `queryPrice` returns each model with its prices, turning 511 requests into 11.
+Bailian's gateway throttles a burst of those pages, so every page after the first
+waits a random pause of 1–3 seconds (`CATALOG_PAGE_PAUSE_SECONDS`); the jitter keeps
+the walk off a fixed rhythm a throttle could lock onto. That pause is why a full
+scan takes tens of seconds, and it is deliberate rather than a stall.
 `CachedPriceSource` caches a scan as a single `catalog` entry, not one per model.
 
 Two conventions apply to every table-driven adapter:

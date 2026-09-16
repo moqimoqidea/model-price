@@ -5,6 +5,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 SCRIPTS = Path(__file__).parents[1] / "scripts"
 if str(SCRIPTS) not in sys.path:
@@ -39,6 +40,7 @@ from model_price.pricing import (
 from model_price.providers.aliyun import (
     ALIYUN_BAND_DOC_URL,
     AliyunAdapter,
+    pause_before_next_page,
     time_band_label,
 )
 from model_price.providers.baidu import (
@@ -73,6 +75,7 @@ from model_price.registry import (
 )
 from model_price.reporting import (
     delta_to_markdown,
+    format_moment,
     offer_condition_text,
     offering_text,
     price_lookup,
@@ -1232,6 +1235,65 @@ class AliyunAdapterTests(unittest.TestCase):
         self.assertEqual(AliyunAdapter(UnreachableClient())._band_text(), "")
 
 
+class BailianPagingClient:
+    """A catalogue API that answers one page per request, recording each ask."""
+
+    def __init__(self, pages):
+        self.pages = list(pages)
+        self.requests = []
+
+    def get_text(self, url):
+        return ""
+
+    def post_form(self, url, fields):
+        self.requests.append(json.loads(fields["params"])["Data"]["input"])
+        page = self.pages[min(len(self.requests) - 1, len(self.pages) - 1)]
+        return {"data": {"DataV2": {"data": {"code": "200", "data": page}}}}
+
+
+def bailian_page(models, total):
+    return {
+        "list": [{"items": [{"model": model}]} for model in models],
+        "total": total,
+    }
+
+
+class AliyunPagingPauseTests(unittest.TestCase):
+    """Bailian throttles a burst of paged requests, so a scan is spaced out."""
+
+    def test_a_pause_is_a_random_wait_between_one_and_three_seconds(self):
+        with mock.patch("model_price.providers.aliyun.time.sleep") as sleep:
+            waited = pause_before_next_page()
+        self.assertGreaterEqual(waited, 1.0)
+        self.assertLessEqual(waited, 3.0)
+        sleep.assert_called_once_with(waited)
+
+    def test_the_first_request_is_not_delayed_and_the_rest_are(self):
+        client = BailianPagingClient(
+            [
+                bailian_page(["m1"], 150),
+                bailian_page(["m2"], 150),
+                bailian_page(["m3"], 150),
+            ]
+        )
+        with mock.patch("model_price.providers.aliyun.time.sleep") as sleep, mock.patch(
+            "model_price.providers.aliyun.random.uniform", return_value=2.0
+        ) as uniform:
+            models = AliyunAdapter(client).list_models()
+        self.assertEqual(models, ["m1", "m2", "m3"])
+        self.assertEqual([ask["pageNo"] for ask in client.requests], [1, 2, 3])
+        self.assertEqual(sleep.call_count, 2)
+        sleep.assert_called_with(2.0)
+        uniform.assert_called_with(1.0, 3.0)
+
+    def test_a_catalogue_that_fits_in_one_page_never_waits(self):
+        client = BailianPagingClient([bailian_page(["m1"], 1)])
+        with mock.patch("model_price.providers.aliyun.time.sleep") as sleep:
+            models = AliyunAdapter(client).list_models()
+        self.assertEqual(models, ["m1"])
+        sleep.assert_not_called()
+
+
 class TimeBandWindowTests(unittest.TestCase):
     """Every platform draws the peak window differently, and each is quoted as written."""
 
@@ -1473,6 +1535,13 @@ class ScannedProvider:
 
 def snapshot_of(records, captured_at="2026-09-16T10:00:00+08:00"):
     return build_snapshot(ScannedProvider(records), records, captured_at)
+
+
+def render_scan(store, providers, captured_at):
+    """Scan these providers against the store, then render the report they make."""
+    return delta_to_markdown(
+        scan_providers(list(providers), store, captured_at=captured_at)
+    )
 
 
 class SnapshotTests(unittest.TestCase):
@@ -1772,39 +1841,34 @@ class DeltaRenderingTests(unittest.TestCase):
             "online_standard；context_tier=输入长度 [0, 32]",
         )
 
-    def render(self, store, provider, captured_at):
-        return delta_to_markdown(
-            scan_providers([provider], store, captured_at=captured_at)
-        )
-
     def test_an_unchanged_channel_is_named_as_unchanged_on_the_vendors_own_word(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
             provider = ScannedProvider(
                 [scanned_record("m1", "M1", "2", "8", updated_at="2026-09-14T03:03:07Z")]
             )
-            self.render(store, provider, "2026-09-15T10:00:00+08:00")
-            report = self.render(store, provider, "2026-09-16T10:00:00+08:00")
-            self.assertIn("模型无变化", report)
-            self.assertIn("共 1 个模型", report)
-            self.assertIn("官方标注更新时间 2026-09-14T03:03:07Z", report)
+            render_scan(store, [provider], "2026-09-15T10:00:00+08:00")
+            report = render_scan(store, [provider], "2026-09-16T10:00:00+08:00")
+            self.assertIn("| 假渠道 | 1 | 无变化 | — | 2026-09-14 03:03（UTC+0） |", report)
 
     def test_a_channel_that_moved_lists_what_moved(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
-            self.render(
+            render_scan(
                 store,
-                ScannedProvider([scanned_record("m1", "M1", "2", "8")]),
+                [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
                 "2026-09-15T10:00:00+08:00",
             )
-            report = self.render(
+            report = render_scan(
                 store,
-                ScannedProvider(
-                    [
-                        scanned_record("m1", "M1", "1", "8"),
-                        scanned_record("m2", "M2", "3", "12"),
-                    ]
-                ),
+                [
+                    ScannedProvider(
+                        [
+                            scanned_record("m1", "M1", "1", "8"),
+                            scanned_record("m2", "M2", "3", "12"),
+                        ]
+                    )
+                ],
                 "2026-09-16T10:00:00+08:00",
             )
             self.assertIn("新增模型（1）", report)
@@ -1818,29 +1882,196 @@ class DeltaRenderingTests(unittest.TestCase):
                 "broken",
                 snapshot_of([scanned_record("m1", "M1", "2", "8")], "2026-09-15T10:00:00+08:00"),
             )
-            report = self.render(
+            report = render_scan(
                 store,
-                ScannedProvider(
-                    error=SourceError("official document changed shape"),
-                    provider_id="broken",
-                    provider_name="坏渠道",
-                ),
+                [
+                    ScannedProvider(
+                        error=SourceError("official document changed shape"),
+                        provider_id="broken",
+                        provider_name="坏渠道",
+                    )
+                ],
                 "2026-09-16T10:00:00+08:00",
             )
             self.assertIn("坏渠道", report)
             self.assertIn("来源解析失败", report)
             self.assertIn("official document changed shape", report)
-            self.assertIn("上次基线 2026-09-15T10:00:00+08:00 保留", report)
+            self.assertIn("上次基线 2026-09-15 10:00（UTC+8） 保留", report)
 
     def test_a_baseline_run_says_how_many_models_it_recorded(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
-            report = self.render(
+            report = render_scan(
                 store,
-                ScannedProvider([scanned_record("m1", "M1", "2", "8")]),
+                [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
                 "2026-09-16T10:00:00+08:00",
             )
-            self.assertIn("已记录 1 个模型，下次扫描起参与对比", report)
+            self.assertIn("记录 1 个模型，下次扫描起参与对比", report)
+
+
+class MomentFormattingTests(unittest.TestCase):
+    def test_an_offset_is_written_the_way_a_person_says_it(self):
+        self.assertEqual(
+            format_moment("2026-09-16T13:37:04+08:00"), "2026-09-16 13:37（UTC+8）"
+        )
+
+    def test_a_zulu_stamp_keeps_the_moment_it_names(self):
+        self.assertEqual(
+            format_moment("2026-09-14T18:48:39Z"), "2026-09-14 18:48（UTC+0）"
+        )
+
+    def test_a_half_hour_offset_keeps_its_minutes(self):
+        self.assertEqual(
+            format_moment("2026-09-16T13:37:00+05:30"), "2026-09-16 13:37（UTC+5:30）"
+        )
+
+    def test_a_stamp_this_parser_cannot_read_is_passed_through(self):
+        self.assertEqual(format_moment("2026年9月16日更新"), "2026年9月16日更新")
+
+    def test_an_absent_stamp_reads_as_unknown(self):
+        self.assertEqual(format_moment(None), "未知")
+
+
+class DetectionReportTests(unittest.TestCase):
+    """What the scan report says, and in what order it says it."""
+
+    def test_the_report_opens_with_its_title_and_the_time_it_scanned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = render_scan(
+                SnapshotStore(Path(directory)),
+                [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
+                "2026-09-16T13:37:00+08:00",
+            )
+            self.assertTrue(report.startswith("# 模型价格自动检测\n"))
+            self.assertIn("扫描时间：2026-09-16 13:37（UTC+8）", report)
+
+    def test_one_line_states_the_scan_before_the_table_is_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            moved = ScannedProvider(
+                [scanned_record("m1", "M1", "2", "8")],
+                provider_id="moved",
+                provider_name="动了的渠道",
+            )
+            quiet = ScannedProvider(
+                [scanned_record("m1", "M1", "2", "8")],
+                provider_id="quiet",
+                provider_name="没动的渠道",
+            )
+            render_scan(store, [moved, quiet], "2026-09-15T10:00:00+08:00")
+            report = render_scan(
+                store,
+                [
+                    ScannedProvider(
+                        [scanned_record("m1", "M1", "1", "8")],
+                        provider_id="moved",
+                        provider_name="动了的渠道",
+                    ),
+                    quiet,
+                ],
+                "2026-09-16T10:00:00+08:00",
+            )
+            self.assertIn(
+                "**本次结论**：2 个渠道共 2 个模型：1 个有变化，1 个无变化，0 个未能完成。",
+                report,
+            )
+            self.assertLess(report.index("**本次结论**"), report.index("## 各渠道模型数量"))
+
+    def test_every_scanned_channel_gets_a_row_even_when_it_failed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            working = ScannedProvider(
+                [scanned_record("m1", "M1", "2", "8")], provider_id="ok", provider_name="好渠道"
+            )
+            render_scan(store, [working], "2026-09-15T10:00:00+08:00")
+            report = render_scan(
+                store,
+                [
+                    working,
+                    ScannedProvider(
+                        error=SourceError("offline"),
+                        provider_id="bad",
+                        provider_name="坏渠道",
+                    ),
+                ],
+                "2026-09-16T10:00:00+08:00",
+            )
+            self.assertIn("| 好渠道 | 1 | 无变化 | — | — |", report)
+            self.assertIn("| 坏渠道 | — | 来源解析失败 | offline | — |", report)
+
+    def test_a_channel_that_moved_is_listed_before_the_quiet_ones(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            moved = ScannedProvider(
+                [scanned_record("m1", "M1", "2", "8")],
+                provider_id="moved",
+                provider_name="动了的渠道",
+            )
+            quiet = ScannedProvider(
+                [scanned_record("m1", "M1", "2", "8")],
+                provider_id="quiet",
+                provider_name="没动的渠道",
+            )
+            render_scan(store, [quiet, moved], "2026-09-15T10:00:00+08:00")
+            report = render_scan(
+                store,
+                [
+                    quiet,
+                    ScannedProvider(
+                        [scanned_record("m1", "M1", "1", "8")],
+                        provider_id="moved",
+                        provider_name="动了的渠道",
+                    ),
+                ],
+                "2026-09-16T10:00:00+08:00",
+            )
+            self.assertLess(report.index("| 动了的渠道 |"), report.index("| 没动的渠道 |"))
+
+    def test_a_channel_that_held_still_is_a_row_rather_than_a_section(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            provider = ScannedProvider([scanned_record("m1", "M1", "2", "8")])
+            render_scan(store, [provider], "2026-09-15T10:00:00+08:00")
+            report = render_scan(store, [provider], "2026-09-16T10:00:00+08:00")
+            self.assertNotIn("## 无变化的渠道", report)
+            self.assertNotIn("## 变化详情", report)
+
+    def test_a_cell_says_what_moved_rather_than_only_that_something_did(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            render_scan(
+                store,
+                [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
+                "2026-09-15T10:00:00+08:00",
+            )
+            report = render_scan(
+                store,
+                [
+                    ScannedProvider(
+                        [
+                            scanned_record("m1", "M1", "1", "8"),
+                            scanned_record("m2", "M2", "3", "12"),
+                        ]
+                    )
+                ],
+                "2026-09-16T10:00:00+08:00",
+            )
+            self.assertIn("| 假渠道 | 2 | 有变化 | 新增模型 1；价格变化 1 | — |", report)
+
+    def test_the_scan_reports_its_own_skill_update_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload = scan_providers(
+                [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
+                SnapshotStore(Path(directory)),
+                captured_at="2026-09-16T13:37:00+08:00",
+            )
+            payload["skill_update"] = {
+                "status": "up_to_date",
+                "checked_at": "2026-09-16T13:37:00+08:00",
+            }
+            report = delta_to_markdown(payload)
+            self.assertIn("## Skill 更新检查", report)
+            self.assertIn("当前 skill 已是远端版本；检查时间 2026-09-16 13:37（UTC+8）", report)
 
 
 if __name__ == "__main__":

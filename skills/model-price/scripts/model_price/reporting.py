@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from typing import Any
 
 from .delta import EMPTY_SCAN, SOURCE_ERROR
-from .diffing import BASELINE_CREATED, CHANGED, UNCHANGED
+from .diffing import (
+    BASELINE_CREATED,
+    CHANGE_FIELDS,
+    CHANGED,
+    PRICE_CHANGE_FIELD,
+    UNCHANGED,
+)
 
 DELIVERY_LABELS = {
     "platform_hosted": "平台托管",
@@ -40,6 +47,66 @@ SKILL_UPDATE_LABELS = {
 }
 
 CORE_PRICE_TYPES = {"input", "output", "cache_hit", "cache_write", "cache_storage"}
+
+# What a cell says when the source published nothing to put there.
+NO_CHANGE = "—"
+UNKNOWN = "未知"
+UNSTATED = "未说明原因"
+
+
+def format_moment(value: Any) -> str:
+    """Render a timestamp the way a person reads it, offset included.
+
+    The offset is spelled out because one instant is 13:37 in one region and
+    05:37 in another, and this report is skimmed by eye long before it is ever
+    parsed. A stamp this parser cannot read is passed through in the vendor's
+    own wording rather than dropped, so nothing silently disappears.
+    """
+    text = str(value or "")
+    if not text:
+        return UNKNOWN
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text
+    stamp = f"{moment:%Y-%m-%d %H:%M}"
+    offset = moment.utcoffset()
+    if offset is None:
+        return stamp
+    total_minutes = int(offset.total_seconds() // 60)
+    sign = "-" if total_minutes < 0 else "+"
+    hours, remainder = divmod(abs(total_minutes), 60)
+    zone = f"UTC{sign}{hours}" + (f":{remainder:02d}" if remainder else "")
+    return f"{stamp}（{zone}）"
+
+
+def moment_cell(value: Any) -> str:
+    """Render a timestamp inside a table, where an absent one is a dash."""
+    return format_moment(value) if value else NO_CHANGE
+
+
+def skill_update_section(payload: dict[str, Any]) -> list[str]:
+    """Report the skill's own update check, on either kind of run.
+
+    A scan fast-forwards the skill as part of refreshing, so the outcome of
+    that check belongs in the scan report too: a run on stale code is a fact
+    the reader needs, and hiding it would make the two reports disagree.
+    """
+    skill_update = payload.get("skill_update")
+    if not skill_update:
+        return []
+    revision = (skill_update.get("to_revision") or "")[:12]
+    revision_text = f"；远端版本 `{revision}`" if revision else ""
+    reason_value = str(skill_update.get("reason", "")).replace("|", "\\|")
+    reason = f"；{reason_value}" if reason_value else ""
+    status = SKILL_UPDATE_LABELS.get(skill_update["status"], skill_update["status"])
+    return [
+        "",
+        "## Skill 更新检查",
+        "",
+        f"- {status}；检查时间 {format_moment(skill_update.get('checked_at'))}"
+        f"{revision_text}{reason}",
+    ]
 
 
 def condition_text(name: str, conditions: dict[str, Any], window: str = "") -> str:
@@ -101,7 +168,7 @@ def price_lookup(offer: dict[str, Any], kind: str) -> dict[str, Any] | None:
 
 def format_price(item: dict[str, Any] | None) -> str:
     if not item:
-        return "—"
+        return NO_CHANGE
     display = item.get("display")
     amount = item.get("amount")
     unit = item.get("unit")
@@ -112,7 +179,7 @@ def format_price(item: dict[str, Any] | None) -> str:
     ):
         return display
     if amount is None:
-        return display or "—"
+        return display or NO_CHANGE
     current = f"{amount} {UNIT_LABELS.get(unit, unit)}"
     if item.get("list_amount") is not None:
         current += f"（原价 {item['list_amount']}）"
@@ -129,14 +196,14 @@ def format_other_prices(offer: dict[str, Any]) -> str:
             f"，discount={item['discount']}" if item.get("discount") is not None else ""
         )
         items.append(f"{item.get('label', item.get('type', '价格'))}: {value}{discount}")
-    return "；".join(items) or "—"
+    return "；".join(items) or NO_CHANGE
 
 
 def to_markdown(payload: dict[str, Any]) -> str:
     lines = [
         f"# 模型价格查询：`{payload.get('query', '')}`",
         "",
-        f"抓取时间：{payload.get('retrieved_at', '')}",
+        f"抓取时间：{format_moment(payload.get('retrieved_at'))}",
         "",
     ]
     results = payload.get("results", [])
@@ -187,53 +254,57 @@ def to_markdown(payload: dict[str, Any]) -> str:
         error = f"；{check['error']}" if check.get("error") else ""
         cache = check.get("cache")
         cache_text = (
-            f"；缓存 {cache['status']}，最后拉取 {cache.get('fetched_at') or '未知'}"
+            f"；缓存 {cache['status']}，最后拉取 "
+            f"{format_moment(cache.get('fetched_at'))}"
             if cache
             else ""
         )
         lines.append(
             f"- {check['provider']['name']}：{SOURCE_STATUS_LABELS.get(check['status'], check['status'])}；"
-            f"[{source['kind']}]({source['url']})；检查时间 {source['retrieved_at']}"
+            f"[{source['kind']}]({source['url']})；"
+            f"检查时间 {format_moment(source['retrieved_at'])}"
             f"{cache_text}{error}"
         )
-    skill_update = payload.get("skill_update")
-    if skill_update:
-        revision = skill_update.get("to_revision", "")[:12]
-        revision_text = f"；远端版本 `{revision}`" if revision else ""
-        reason_value = str(skill_update.get("reason", "")).replace("|", "\\|")
-        reason = f"；{reason_value}" if reason_value else ""
-        lines.extend(
-            [
-                "",
-                "## Skill 更新检查",
-                "",
-                f"- {SKILL_UPDATE_LABELS.get(skill_update['status'], skill_update['status'])}"
-                f"；检查时间 {skill_update['checked_at']}{revision_text}{reason}",
-            ]
-        )
+    lines.extend(skill_update_section(payload))
     return "\n".join(lines) + "\n"
 
 
+DELTA_TITLE = "模型价格自动检测"
+
 DELTA_STATUS_LABELS = {
-    "changed": "有变化",
-    "unchanged": "无变化",
-    "baseline_created": "首次建立基线",
-    "empty_scan": "未取到任何模型",
-    "source_error": "来源解析失败",
+    CHANGED: "有变化",
+    UNCHANGED: "无变化",
+    BASELINE_CREATED: "首次建立基线",
+    EMPTY_SCAN: "未取到任何模型",
+    SOURCE_ERROR: "来源解析失败",
 }
 
-CHANGE_HEADINGS = (
-    ("models_added", "新增模型"),
-    ("models_removed", "下架模型"),
-    ("offers_added", "新增计费方式"),
-    ("offers_removed", "移除计费方式"),
+# The order a reader wants the channels in: what needs a look first, then what
+# is merely fine. Sorting is stable, so channels of one status keep the order
+# the scan covered them in, and two reports stay comparable line by line.
+DELTA_STATUS_ORDER = (CHANGED, EMPTY_SCAN, SOURCE_ERROR, BASELINE_CREATED, UNCHANGED)
+
+DELTA_STATUS_RANK = {status: rank for rank, status in enumerate(DELTA_STATUS_ORDER)}
+
+# Every change kind a channel can report, in the order a report lists them.
+CHANGE_FIELD_LABELS = {
+    "models_added": "新增模型",
+    "models_removed": "下架模型",
+    "offers_added": "新增计费方式",
+    "offers_removed": "移除计费方式",
+    PRICE_CHANGE_FIELD: "价格变化",
+}
+
+# The kinds detailed as bullets; price moves get the table that follows instead.
+BULLET_CHANGE_FIELDS = tuple(
+    field for field in CHANGE_FIELDS if field != PRICE_CHANGE_FIELD
 )
 
 
 def amount_text(value: dict[str, Any] | None) -> str:
     """Read a snapshot price as one comparable amount."""
     if not value:
-        return "—"
+        return NO_CHANGE
     return format_price({"amount": value.get("amount"), "unit": value.get("unit")})
 
 
@@ -282,34 +353,114 @@ def model_digest(model: dict[str, Any]) -> str:
     return f"{digest}（另有 {remaining} 种计费方式）" if remaining else digest
 
 
-def delta_to_markdown(payload: dict[str, Any]) -> str:
-    """Render a whole-catalogue comparison, saying plainly where nothing moved."""
+def scan_conclusion(payload: dict[str, Any]) -> str:
+    """State the whole scan in one line, before any table is read.
+
+    A reader who only ever sees the first screen should still learn whether
+    anything moved and how much was covered, so the counts of what moved come
+    before the detail and the total model count comes before the channel count.
+    A run that priced nothing omits the model total rather than claiming zero.
+    """
     reports = payload.get("providers", [])
     summary = payload.get("summary", {})
+    total_models = sum(report.get("model_count") or 0 for report in reports)
+    scope = f"{summary.get('providers', len(reports))} 个渠道"
+    if total_models:
+        scope += f"共 {total_models} 个模型"
+    counts = [
+        f"{summary.get(CHANGED, 0)} 个有变化",
+        f"{summary.get(UNCHANGED, 0)} 个无变化",
+    ]
+    if summary.get(BASELINE_CREATED):
+        counts.append(f"{summary[BASELINE_CREATED]} 个首次建立基线")
+    failed = summary.get(EMPTY_SCAN, 0) + summary.get(SOURCE_ERROR, 0)
+    counts.append(f"{failed} 个未能完成")
+    return f"**本次结论**：{scope}：{'，'.join(counts)}。"
+
+
+def status_rank(report: dict[str, Any]) -> int:
+    return DELTA_STATUS_RANK.get(report["status"], len(DELTA_STATUS_ORDER))
+
+
+def channel_overview(reports: list[dict[str, Any]]) -> list[str]:
+    """List every scanned channel with its size and what this scan found.
+
+    Every channel appears, including the ones that failed: a table that only
+    showed the interesting rows would leave the reader unable to tell a silent
+    channel from one the scan never reached. A failure has no model count of
+    its own, so its cell says so rather than borrowing the baseline's number.
+    """
     lines = [
-        "# 模型价格变化对比",
+        "## 各渠道模型数量",
         "",
-        f"扫描时间：{payload.get('retrieved_at', '')}",
-        "",
-        "| 结果 | 渠道数 |",
-        "|---|---:|",
+        "| 渠道 | 模型数 | 结果 | 本次变化 | 官方更新时间 |",
+        "|---|---:|---|---|---|",
     ]
     lines.extend(
-        f"| {DELTA_STATUS_LABELS[status]} | {summary.get(status, 0)} |"
-        for status in DELTA_STATUS_LABELS
+        "| {name} | {count} | {status} | {change} | {updated} |".format(
+            name=report["provider"]["name"].replace("|", "\\|"),
+            count=report.get("model_count") or NO_CHANGE,
+            status=DELTA_STATUS_LABELS.get(report["status"], report["status"]),
+            change=change_digest(report).replace("|", "\\|"),
+            updated=moment_cell((report.get("source") or {}).get("updated_at")),
+        )
+        for report in sorted(reports, key=status_rank)
     )
-    for title, statuses, render in (
-        ("有变化的渠道", (CHANGED,), changed_provider_block),
-        ("无变化的渠道", (UNCHANGED,), quiet_provider_line),
-        ("首次建立基线的渠道", (BASELINE_CREATED,), baseline_provider_line),
-        ("未能完成的渠道", (EMPTY_SCAN, SOURCE_ERROR), failed_provider_line),
-    ):
-        selected = [report for report in reports if report["status"] in statuses]
-        if not selected:
-            continue
-        lines.extend(["", f"## {title}", ""])
-        for report in selected:
-            lines.extend(render(report))
+    return lines
+
+
+def change_digest(report: dict[str, Any]) -> str:
+    """Say in one cell what this channel did — or why it could not be read."""
+    status = report["status"]
+    if status == CHANGED:
+        changes = report.get("changes") or {}
+        counts = [
+            f"{CHANGE_FIELD_LABELS[field]} {len(changes.get(field) or [])}"
+            for field in CHANGE_FIELDS
+            if changes.get(field)
+        ]
+        return "；".join(counts) or NO_CHANGE
+    if status == BASELINE_CREATED:
+        return f"记录 {report.get('model_count', 0)} 个模型，下次扫描起参与对比"
+    if status in (EMPTY_SCAN, SOURCE_ERROR):
+        return report.get("error") or UNSTATED
+    return NO_CHANGE
+
+
+def delta_to_markdown(payload: dict[str, Any]) -> str:
+    """Render a whole-catalogue comparison in the order a reader scans it.
+
+    The title, the scan time and one line of conclusion come first, so the
+    answer to "did anything move" arrives before any table. The per-channel
+    table then answers "which channel, how big, what moved" in a single
+    screen, and only the channels that actually moved are detailed below it —
+    a channel that held still is a row, not a section.
+    """
+    reports = payload.get("providers", [])
+    lines = [
+        f"# {DELTA_TITLE}",
+        "",
+        f"扫描时间：{format_moment(payload.get('retrieved_at'))}",
+        "",
+        scan_conclusion(payload),
+        "",
+        *channel_overview(reports),
+    ]
+    moved = [report for report in reports if report["status"] == CHANGED]
+    if moved:
+        lines.extend(["", "## 变化详情", ""])
+        for position, report in enumerate(moved):
+            if position:
+                lines.append("")
+            lines.extend(changed_provider_block(report))
+    failed = [
+        report for report in reports if report["status"] in (EMPTY_SCAN, SOURCE_ERROR)
+    ]
+    if failed:
+        lines.extend(["", "## 未能完成的渠道", ""])
+        for report in failed:
+            lines.extend(failed_provider_line(report))
+    lines.extend(skill_update_section(payload))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -319,12 +470,14 @@ def changed_provider_block(report: dict[str, Any]) -> list[str]:
     lines = [
         f"### {report['provider']['name']}",
         "",
-        f"上次扫描：{report.get('baseline_at') or '未知'}；"
+        f"上次扫描：{format_moment(report.get('baseline_at'))}；"
         f"本次扫描 {report.get('model_count', 0)} 个模型",
     ]
-    for field, heading in CHANGE_HEADINGS:
-        lines.extend(change_bullets(heading, changes.get(field) or []))
-    lines.extend(price_change_table(changes.get("price_changes") or []))
+    for field in BULLET_CHANGE_FIELDS:
+        lines.extend(
+            change_bullets(CHANGE_FIELD_LABELS[field], changes.get(field) or [])
+        )
+    lines.extend(price_change_table(changes.get(PRICE_CHANGE_FIELD) or []))
     return lines
 
 
@@ -350,7 +503,7 @@ def price_change_table(changes: list[dict[str, Any]]) -> list[str]:
         return []
     lines = [
         "",
-        f"**价格变化（{len(changes)}）**",
+        f"**{CHANGE_FIELD_LABELS[PRICE_CHANGE_FIELD]}（{len(changes)}）**",
         "",
         "| 模型 | 计费条件 | 价格项 | 变化 |",
         "|---|---|---|---|",
@@ -369,26 +522,15 @@ def price_change_table(changes: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
-def quiet_provider_line(report: dict[str, Any]) -> list[str]:
-    """Say a provider did not move, and on whose word."""
-    stamp = (report.get("source") or {}).get("updated_at")
-    detail = f"共 {report.get('model_count', 0)} 个模型"
-    if stamp:
-        detail += f"；官方标注更新时间 {stamp}"
-    return [f"- **{report['provider']['name']}**：模型无变化（{detail}）"]
-
-
-def baseline_provider_line(report: dict[str, Any]) -> list[str]:
-    return [
-        f"- **{report['provider']['name']}**：已记录 {report.get('model_count', 0)} 个模型，"
-        "下次扫描起参与对比"
-    ]
-
-
 def failed_provider_line(report: dict[str, Any]) -> list[str]:
-    reason = report.get("error") or "未说明原因"
+    """Name a channel that produced no catalogue, and what is kept meanwhile."""
+    reason = report.get("error") or UNSTATED
     baseline = report.get("baseline_at")
-    kept = f"；上次基线 {baseline} 保留" if baseline else ""
+    kept = (
+        f"；上次基线 {format_moment(baseline)} 保留，下次扫描仍与它对比"
+        if baseline
+        else ""
+    )
     return [
         f"- **{report['provider']['name']}**："
         f"{DELTA_STATUS_LABELS.get(report['status'], report['status'])}；{reason}{kept}"
