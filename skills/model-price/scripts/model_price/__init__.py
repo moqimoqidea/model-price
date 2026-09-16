@@ -9,6 +9,9 @@ Responsibility split:
 - ``providers``  one module per vendor
 - ``caching``    provider-scoped file cache
 - ``updating``   Git self-update before an explicit refresh
+- ``snapshots``  the per-provider baselines a later scan is compared against
+- ``diffing``    what moved between two baselines
+- ``delta``      the scan-every-catalogue-and-compare run
 - ``reporting``  JSON and Markdown output
 - ``registry``   wiring and cross-provider queries
 

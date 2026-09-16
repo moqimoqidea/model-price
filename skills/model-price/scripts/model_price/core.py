@@ -4,19 +4,41 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from .errors import SourceError
-from .models import model_matches
+from .models import model_matches, normalize_model
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def write_json(path: Path, payload: Any, *, indent: int | None = None) -> None:
+    """Write JSON through a temporary file, so a reader never sees a partial one."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(
+                payload,
+                handle,
+                ensure_ascii=False,
+                indent=indent,
+                separators=None if indent else (",", ":"),
+            )
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 class HttpClient:
@@ -84,6 +106,21 @@ class PriceSource(ABC):
     @abstractmethod
     def list_models(self, prefix: str = "") -> list[str]:
         """Return the model ids this source publishes."""
+
+    def catalog_records(self) -> list[dict[str, Any]]:
+        """Return every priced record this source publishes, for a whole-catalogue scan.
+
+        Deliberately not abstract: an adapter that already parses its document in
+        one pass should override this, but one that only knows how to answer a
+        single model still scans correctly by walking its own catalogue. The
+        fallback costs one ``query`` per model, so an adapter whose ``query`` makes
+        its own HTTP request (Aliyun) overrides this rather than paying that.
+        """
+        records: dict[str, dict[str, Any]] = {}
+        for model in self.list_models():
+            for record in self.query(model):
+                records.setdefault(normalize_model(record["model_id"]), record)
+        return [records[key] for key in sorted(records)]
 
     def search(self, model: str, *, exact: bool = False) -> list[dict[str, Any]]:
         """Return records for a model, expanding to its family unless ``exact``."""

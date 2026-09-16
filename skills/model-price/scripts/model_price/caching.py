@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .core import PriceSource
+from .core import PriceSource, write_json
 from .paths import CACHE_SCHEMA_VERSION, CACHE_TTL, DEFAULT_CACHE_DIR
 
 
@@ -56,27 +54,18 @@ class CacheStore:
             return None
 
     def write(self, provider: str, operation: str, arguments: Any, data: Any) -> str:
-        path = self._path(provider, operation, arguments)
-        path.parent.mkdir(parents=True, exist_ok=True)
         fetched_at = self.clock().astimezone().isoformat(timespec="seconds")
-        payload = {
-            "schema_version": CACHE_SCHEMA_VERSION,
-            "provider": provider,
-            "operation": operation,
-            "arguments": arguments,
-            "fetched_at": fetched_at,
-            "data": data,
-        }
-        descriptor, temporary = tempfile.mkstemp(
-            prefix=f".{path.name}.", dir=path.parent
+        write_json(
+            self._path(provider, operation, arguments),
+            {
+                "schema_version": CACHE_SCHEMA_VERSION,
+                "provider": provider,
+                "operation": operation,
+                "arguments": arguments,
+                "fetched_at": fetched_at,
+                "data": data,
+            },
         )
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
-            os.replace(temporary, path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
         return fetched_at
 
 
@@ -121,6 +110,10 @@ class CachedPriceSource(PriceSource):
         return self._cached(
             "list", {"prefix": prefix}, lambda: self.source.list_models(prefix)
         )
+
+    def catalog_records(self) -> list[dict[str, Any]]:
+        """Cache a whole-catalogue scan as one entry, not one per model."""
+        return self._cached("catalog", {}, self.source.catalog_records)
 
     def query(self, model: str) -> list[dict[str, Any]]:
         return self._cached("query", {"model": model}, lambda: self.source.query(model))

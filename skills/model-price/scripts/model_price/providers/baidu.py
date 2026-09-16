@@ -320,6 +320,10 @@ class BaiduAdapter(PriceSource):
             models = {model for model in models if normalize_model(model).startswith(key)}
         return sorted(models, key=str.lower)
 
+    def catalog_records(self) -> list[dict[str, Any]]:
+        """The Qianfan article body is grouped into its models in one read."""
+        return self._records()
+
     def query(self, model: str) -> list[dict[str, Any]]:
         key = normalize_model(model)
         return [

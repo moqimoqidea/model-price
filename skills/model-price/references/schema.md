@@ -47,3 +47,47 @@ Explicit refreshes also add `skill_update` before querying official sources:
   }
 }
 ```
+
+## Change reports
+
+`delta` reports `command`, `retrieved_at`, `summary`, and `providers`, with
+`skill_update` added on the same terms as a query:
+
+```json
+{
+  "command": "delta",
+  "retrieved_at": "ISO-8601",
+  "summary": {
+    "providers": 9,
+    "changed": 1, "unchanged": 7, "baseline_created": 1,
+    "empty_scan": 0, "source_error": 0,
+    "models_added": 2, "models_removed": 1,
+    "offers_added": 1, "offers_removed": 0, "price_changes": 3
+  },
+  "providers": []
+}
+```
+
+Each entry of `providers` carries `provider`, `status`, `baseline_at`,
+`captured_at`, `source`, `model_count`, and `changes`. `status` is one of:
+
+- `changed` — `changes` holds what moved
+- `unchanged` — `changes` is empty; the models and prices are the baseline's
+- `baseline_created` — there was no baseline yet, so `changes` is empty and the run is not a comparison
+- `empty_scan` — the source yielded no priced model; the previous baseline is kept
+- `source_error` — the source failed; `error` says why and the previous baseline is kept
+
+The two failure statuses omit `model_count` and `changes`. `baseline_at` is `null`
+when no baseline existed.
+
+`changes` holds `models_added`, `models_removed`, `offers_added`, `offers_removed`,
+`price_changes`, and their `total`. A model entry is the snapshot model, offers and
+prices included, so a new model's price is readable without a second query. An
+offer entry is a model plus `offer` (`name` and `conditions`). A price change is a
+model plus `offer`, `conditions`, `type`, `label`, and `from`/`to` — each one an
+`{amount, unit}` pair, with `null` on the side where the price did not exist.
+
+Baselines are stored one per provider under `snapshots/` and never expire. They are
+not cache entries and not this payload: a baseline keeps the catalogue keyed by
+normalized model id, with each offer identified by its name and the conditions that
+describe what is billed rather than where the document filed it.

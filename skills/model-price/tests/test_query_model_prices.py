@@ -12,6 +12,13 @@ if str(SCRIPTS) not in sys.path:
 
 from model_price.caching import CacheStore, CachedPriceSource
 from model_price.core import PriceSource
+from model_price.delta import scan_providers
+from model_price.diffing import (
+    BASELINE_CREATED,
+    CHANGED,
+    UNCHANGED,
+    compare_snapshots,
+)
 from model_price.errors import SourceError
 from model_price.models import model_matches, normalize_model, strip_footnote_markers
 from model_price.parsing import (
@@ -23,7 +30,12 @@ from model_price.parsing import (
     time_bands_for,
     token_price_kind,
 )
-from model_price.pricing import per_million_tokens, tokens_per_price_unit
+from model_price.pricing import (
+    make_record,
+    per_million_tokens,
+    price_item,
+    tokens_per_price_unit,
+)
 from model_price.providers.aliyun import (
     ALIYUN_BAND_DOC_URL,
     AliyunAdapter,
@@ -60,10 +72,17 @@ from model_price.registry import (
     select_compare_providers,
 )
 from model_price.reporting import (
+    delta_to_markdown,
     offer_condition_text,
+    offering_text,
     price_lookup,
     time_band_sections,
     to_markdown,
+)
+from model_price.snapshots import (
+    SnapshotStore,
+    build_snapshot,
+    offer_identity,
 )
 from model_price.updating import GitSkillUpdater
 
@@ -1365,6 +1384,463 @@ class TimeBandRenderingTests(unittest.TestCase):
 
     def test_a_comparison_without_time_bands_has_no_window_section(self):
         self.assertEqual(time_band_sections([{"offers": [{"conditions": {}}]}]), [])
+
+
+def scanned_record(
+    model_id,
+    display_name,
+    input_amount,
+    output_amount,
+    *,
+    offer="online_standard",
+    band=None,
+    updated_at=None,
+):
+    """A record as an adapter would return it, for catalogue-scan tests."""
+    extra = {"source_updated_at": updated_at} if updated_at else {}
+    return make_record(
+        "fake",
+        "假渠道",
+        model_id,
+        display_name,
+        "中国区",
+        [
+            {
+                "name": offer,
+                "conditions": {"time_band": band} if band else {},
+                "prices": [
+                    price_item("input", "输入", input_amount, "CNY_per_million_tokens"),
+                    price_item("output", "输出", output_amount, "CNY_per_million_tokens"),
+                ],
+            }
+        ],
+        "https://example.test/fake",
+        "test",
+        "2026-09-16T00:00:00+08:00",
+        delivery_mode="platform_hosted",
+        **extra,
+    )
+
+
+def scanned_offers(model_id, display_name, *offers):
+    """A record carrying several offers at once, as one adapter returns them.
+
+    Each offer is ``(name, band, input_amount, output_amount)``.
+    """
+    return make_record(
+        "fake",
+        "假渠道",
+        model_id,
+        display_name,
+        "中国区",
+        [
+            {
+                "name": name,
+                "conditions": {"time_band": band} if band else {},
+                "prices": [
+                    price_item("input", "输入", input_amount, "CNY_per_million_tokens"),
+                    price_item("output", "输出", output_amount, "CNY_per_million_tokens"),
+                ],
+            }
+            for name, band, input_amount, output_amount in offers
+        ],
+        "https://example.test/fake",
+        "test",
+        "2026-09-16T00:00:00+08:00",
+        delivery_mode="platform_hosted",
+    )
+
+
+class ScannedProvider:
+    """A provider that serves a fixed catalogue, or fails on demand."""
+
+    source_kind = "test"
+
+    def __init__(
+        self, records=(), error=None, provider_id="fake", provider_name="假渠道"
+    ):
+        self.records = list(records)
+        self.error = error
+        self.provider_id = provider_id
+        self.provider_name = provider_name
+        self.source_url = f"https://example.test/{provider_id}"
+
+    def catalog_records(self):
+        if self.error:
+            raise self.error
+        return list(self.records)
+
+
+def snapshot_of(records, captured_at="2026-09-16T10:00:00+08:00"):
+    return build_snapshot(ScannedProvider(records), records, captured_at)
+
+
+class SnapshotTests(unittest.TestCase):
+    def test_a_model_without_a_price_is_left_out_of_the_catalogue(self):
+        unpriced = make_record(
+            "fake",
+            "假渠道",
+            "m2",
+            "M2",
+            "中国区",
+            [],
+            "https://example.test/fake",
+            "test",
+            "2026-09-16T00:00:00+08:00",
+        )
+        snapshot = snapshot_of([scanned_record("m1", "M1", "2", "8"), unpriced])
+        self.assertEqual(list(snapshot["models"]), ["m1"])
+
+    def test_the_same_catalogue_builds_the_same_snapshot(self):
+        first = snapshot_of([scanned_record("m1", "M1", "2", "8")], "2026-09-16T10:00:00+08:00")
+        second = snapshot_of([scanned_record("m1", "M1", "2", "8")], "2026-09-17T10:00:00+08:00")
+        first.pop("captured_at")
+        second.pop("captured_at")
+        self.assertEqual(first, second)
+
+    def test_the_documents_own_section_is_not_part_of_an_offers_identity(self):
+        one = {"name": "标准", "conditions": {"source_section": "在线推理"}}
+        other = {"name": "标准", "conditions": {"source_section": "批量推理"}}
+        self.assertEqual(offer_identity(one), offer_identity(other))
+
+    def test_a_billed_condition_stays_part_of_an_offers_identity(self):
+        one = {"name": "闲时", "conditions": {"time_band": "闲时"}}
+        other = {"name": "忙时", "conditions": {"time_band": "忙时"}}
+        self.assertNotEqual(offer_identity(one), offer_identity(other))
+
+    def test_the_newest_update_stamp_the_vendor_published_is_kept(self):
+        snapshot = snapshot_of(
+            [
+                scanned_record("m1", "M1", "2", "8", updated_at="2026-09-10T00:00:00Z"),
+                scanned_record("m2", "M2", "2", "8", updated_at="2026-09-14T03:03:07Z"),
+            ]
+        )
+        self.assertEqual(snapshot["source"]["updated_at"], "2026-09-14T03:03:07Z")
+
+    def test_a_vendor_publishing_no_update_stamp_reports_none(self):
+        snapshot = snapshot_of([scanned_record("m1", "M1", "2", "8")])
+        self.assertIsNone(snapshot["source"]["updated_at"])
+
+    def test_two_records_for_one_model_contribute_both_sets_of_offers(self):
+        snapshot = snapshot_of(
+            [
+                scanned_record("m1", "M1", "1", "4", offer="闲时", band="闲时"),
+                scanned_record("m1", "M1", "2", "8", offer="忙时", band="忙时"),
+            ]
+        )
+        self.assertEqual(len(snapshot["models"]["m1"]["offers"]), 2)
+
+
+class SnapshotStoreTests(unittest.TestCase):
+    def test_a_baseline_is_written_and_read_back(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            snapshot = snapshot_of([scanned_record("m1", "M1", "2", "8")])
+            self.assertIsNone(store.read("fake"))
+            store.write("fake", snapshot)
+            self.assertEqual(store.read("fake"), snapshot)
+
+    def test_a_baseline_written_by_an_older_shape_is_treated_as_absent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            store.write("fake", {"schema_version": 0, "models": {}})
+            self.assertIsNone(store.read("fake"))
+
+    def test_an_unreadable_baseline_reads_as_absent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            store.path("fake").write_text("{not json", encoding="utf-8")
+            self.assertIsNone(store.read("fake"))
+
+
+class DiffingTests(unittest.TestCase):
+    def report(self, before, after):
+        return compare_snapshots(
+            snapshot_of(before, "2026-09-15T10:00:00+08:00"),
+            snapshot_of(after, "2026-09-16T10:00:00+08:00"),
+        )
+
+    def test_a_new_model_carries_what_it_costs(self):
+        report = self.report(
+            [scanned_record("m1", "M1", "2", "8")],
+            [scanned_record("m1", "M1", "2", "8"), scanned_record("m2", "M2", "3", "12")],
+        )
+        self.assertEqual(report["status"], CHANGED)
+        added = report["changes"]["models_added"]
+        self.assertEqual([model["model_id"] for model in added], ["m2"])
+        self.assertEqual(price_lookup(added[0]["offers"][0], "input")["amount"], "3")
+
+    def test_a_withdrawn_model_keeps_the_price_it_had(self):
+        report = self.report(
+            [scanned_record("m1", "M1", "2", "8"), scanned_record("m2", "M2", "3", "12")],
+            [scanned_record("m1", "M1", "2", "8")],
+        )
+        removed = report["changes"]["models_removed"]
+        self.assertEqual([model["model_id"] for model in removed], ["m2"])
+        self.assertEqual(price_lookup(removed[0]["offers"][0], "input")["amount"], "3")
+
+    def test_a_moved_amount_is_reported_with_both_ends(self):
+        report = self.report(
+            [scanned_record("m1", "M1", "2", "8")],
+            [scanned_record("m1", "M1", "1.5", "8")],
+        )
+        change = report["changes"]["price_changes"][0]
+        self.assertEqual((change["type"], change["label"]), ("input", "输入"))
+        self.assertEqual(
+            change["from"], {"amount": "2", "unit": "CNY_per_million_tokens"}
+        )
+        self.assertEqual(
+            change["to"], {"amount": "1.5", "unit": "CNY_per_million_tokens"}
+        )
+
+    def test_a_price_that_did_not_move_is_not_a_change(self):
+        report = self.report(
+            [scanned_record("m1", "M1", "2", "8")],
+            [scanned_record("m1", "M1", "2", "8")],
+        )
+        self.assertEqual(report["status"], UNCHANGED)
+        self.assertEqual(report["changes"]["total"], 0)
+
+    def test_a_new_time_band_is_an_offer_change_not_a_moved_price(self):
+        report = self.report(
+            [scanned_record("m1", "M1", "2", "8")],
+            [
+                scanned_offers(
+                    "m1",
+                    "M1",
+                    ("闲时", "闲时", "1", "4"),
+                    ("忙时", "忙时", "2", "8"),
+                )
+            ],
+        )
+        self.assertEqual(report["changes"]["price_changes"], [])
+        self.assertEqual(len(report["changes"]["offers_added"]), 2)
+        self.assertEqual(len(report["changes"]["offers_removed"]), 1)
+
+    def test_a_provider_without_a_baseline_is_not_reported_as_unchanged(self):
+        report = compare_snapshots(
+            None, snapshot_of([scanned_record("m1", "M1", "2", "8")])
+        )
+        self.assertEqual(report["status"], BASELINE_CREATED)
+        self.assertIsNone(report["baseline_at"])
+        self.assertEqual(report["changes"]["total"], 0)
+
+
+class DeltaScanTests(unittest.TestCase):
+    def test_the_first_scan_records_a_baseline_rather_than_no_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            payload = scan_providers(
+                [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
+                store,
+                captured_at="2026-09-16T10:00:00+08:00",
+            )
+            report = payload["providers"][0]
+            self.assertEqual(report["status"], BASELINE_CREATED)
+            self.assertEqual(report["model_count"], 1)
+            self.assertIsNotNone(store.read("fake"))
+
+    def test_a_second_identical_scan_reports_no_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            records = [scanned_record("m1", "M1", "2", "8")]
+            scan_providers([ScannedProvider(records)], store, captured_at="2026-09-16T10:00:00+08:00")
+            payload = scan_providers(
+                [ScannedProvider(records)], store, captured_at="2026-09-17T10:00:00+08:00"
+            )
+            report = payload["providers"][0]
+            self.assertEqual(report["status"], UNCHANGED)
+            self.assertEqual(report["baseline_at"], "2026-09-16T10:00:00+08:00")
+
+    def test_a_failed_scan_keeps_the_baseline_the_next_scan_compares_against(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            scan_providers(
+                [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
+                store,
+                captured_at="2026-09-16T10:00:00+08:00",
+            )
+            failed = scan_providers(
+                [ScannedProvider(error=SourceError("offline"))],
+                store,
+                captured_at="2026-09-17T10:00:00+08:00",
+            )
+            self.assertEqual(failed["providers"][0]["status"], "source_error")
+            self.assertEqual(
+                failed["providers"][0]["baseline_at"], "2026-09-16T10:00:00+08:00"
+            )
+            recovered = scan_providers(
+                [ScannedProvider([scanned_record("m1", "M1", "1.5", "8")])],
+                store,
+                captured_at="2026-09-18T10:00:00+08:00",
+            )
+            self.assertEqual(recovered["providers"][0]["status"], CHANGED)
+
+    def test_a_scan_that_prices_nothing_keeps_the_baseline_too(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            scan_providers(
+                [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
+                store,
+                captured_at="2026-09-16T10:00:00+08:00",
+            )
+            empty = scan_providers(
+                [ScannedProvider([])], store, captured_at="2026-09-17T10:00:00+08:00"
+            )
+            self.assertEqual(empty["providers"][0]["status"], "empty_scan")
+            self.assertEqual(store.read("fake")["captured_at"], "2026-09-16T10:00:00+08:00")
+
+    def test_the_summary_counts_every_provider_and_every_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            scan_providers(
+                [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
+                store,
+                captured_at="2026-09-16T10:00:00+08:00",
+            )
+            payload = scan_providers(
+                [
+                    ScannedProvider([scanned_record("m1", "M1", "1", "8")]),
+                    ScannedProvider(
+                        error=SourceError("offline"),
+                        provider_id="broken",
+                        provider_name="坏渠道",
+                    ),
+                ],
+                store,
+                captured_at="2026-09-17T10:00:00+08:00",
+            )
+            self.assertEqual(
+                payload["summary"],
+                {
+                    "providers": 2,
+                    "changed": 1,
+                    "unchanged": 0,
+                    "baseline_created": 0,
+                    "empty_scan": 0,
+                    "source_error": 1,
+                    "models_added": 0,
+                    "models_removed": 0,
+                    "offers_added": 0,
+                    "offers_removed": 0,
+                    "price_changes": 1,
+                },
+            )
+
+
+class CatalogScanTests(unittest.TestCase):
+    def test_the_default_scan_walks_a_catalogue_it_cannot_read_at_once(self):
+        records = CountingSource().catalog_records()
+        self.assertEqual([record["model_id"] for record in records], ["model-a"])
+
+    def test_a_tabular_adapter_builds_every_model_from_one_document_pass(self):
+        adapter = VolcengineAdapter(
+            MappingClient({VOLCENGINE_DOC_API: json.dumps(volc_payload())})
+        )
+        self.assertEqual(
+            {record["model_id"] for record in adapter.catalog_records()},
+            {
+                "doubao-seed-2.0-pro",
+                "deepseek-v4-1-flash",
+                "deepseek-v4-flash正式版",
+                "deepseek-v4-pro预览版",
+            },
+        )
+
+    def test_a_whole_catalogue_is_cached_as_a_single_entry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = CacheStore(Path(directory))
+            source = CountingSource()
+            adapter = CachedPriceSource(source, cache)
+            self.assertEqual(adapter.catalog_records(), [{"model_id": "model-a"}])
+            self.assertEqual(source.calls, 2)
+            adapter.catalog_records()
+            self.assertEqual(source.calls, 2)
+            self.assertEqual(len(list(Path(directory).rglob("*.json"))), 1)
+
+
+class DeltaRenderingTests(unittest.TestCase):
+    def test_an_internal_band_key_is_shown_in_the_vendors_own_words(self):
+        self.assertEqual(offering_text("off_peak", {"time_band": "空闲时段"}), "空闲时段")
+
+    def test_a_band_offer_is_not_named_twice(self):
+        self.assertEqual(offering_text("闲时", {"time_band": "闲时"}), "闲时")
+
+    def test_an_offer_without_a_band_keeps_its_name_and_conditions(self):
+        self.assertEqual(
+            offering_text("online_standard", {"context_tier": "输入长度 [0, 32]"}),
+            "online_standard；context_tier=输入长度 [0, 32]",
+        )
+
+    def render(self, store, provider, captured_at):
+        return delta_to_markdown(
+            scan_providers([provider], store, captured_at=captured_at)
+        )
+
+    def test_an_unchanged_channel_is_named_as_unchanged_on_the_vendors_own_word(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            provider = ScannedProvider(
+                [scanned_record("m1", "M1", "2", "8", updated_at="2026-09-14T03:03:07Z")]
+            )
+            self.render(store, provider, "2026-09-15T10:00:00+08:00")
+            report = self.render(store, provider, "2026-09-16T10:00:00+08:00")
+            self.assertIn("模型无变化", report)
+            self.assertIn("共 1 个模型", report)
+            self.assertIn("官方标注更新时间 2026-09-14T03:03:07Z", report)
+
+    def test_a_channel_that_moved_lists_what_moved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            self.render(
+                store,
+                ScannedProvider([scanned_record("m1", "M1", "2", "8")]),
+                "2026-09-15T10:00:00+08:00",
+            )
+            report = self.render(
+                store,
+                ScannedProvider(
+                    [
+                        scanned_record("m1", "M1", "1", "8"),
+                        scanned_record("m2", "M2", "3", "12"),
+                    ]
+                ),
+                "2026-09-16T10:00:00+08:00",
+            )
+            self.assertIn("新增模型（1）", report)
+            self.assertIn("输入 3 元/百万 tokens", report)
+            self.assertIn("2 元/百万 tokens → 1 元/百万 tokens", report)
+
+    def test_a_failed_channel_is_named_with_its_reason_and_kept_baseline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            store.write(
+                "broken",
+                snapshot_of([scanned_record("m1", "M1", "2", "8")], "2026-09-15T10:00:00+08:00"),
+            )
+            report = self.render(
+                store,
+                ScannedProvider(
+                    error=SourceError("official document changed shape"),
+                    provider_id="broken",
+                    provider_name="坏渠道",
+                ),
+                "2026-09-16T10:00:00+08:00",
+            )
+            self.assertIn("坏渠道", report)
+            self.assertIn("来源解析失败", report)
+            self.assertIn("official document changed shape", report)
+            self.assertIn("上次基线 2026-09-15T10:00:00+08:00 保留", report)
+
+    def test_a_baseline_run_says_how_many_models_it_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            report = self.render(
+                store,
+                ScannedProvider([scanned_record("m1", "M1", "2", "8")]),
+                "2026-09-16T10:00:00+08:00",
+            )
+            self.assertIn("已记录 1 个模型，下次扫描起参与对比", report)
 
 
 if __name__ == "__main__":

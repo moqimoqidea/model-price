@@ -60,6 +60,28 @@ neither.
 
 Provider caches live under `cache/<provider>/`. A cache entry records its provider, operation, arguments, fetch time, schema version, and data. Entries older than 3 hours are not used as fallback when refresh fails, and `CACHE_SCHEMA_VERSION` is bumped whenever a source or parser changes so entries written by an older version are ignored.
 
+The baselines `delta` compares against live beside the cache under
+`snapshots/<provider>.json` — one file per provider, replaced in place, and never
+expiring, because an expiring baseline would turn every run into a first run. A
+baseline records the catalogue only: models keyed by normalized id, each with its
+offers, and each offer identified by its name plus the conditions saying what is
+billed. `source_section` deliberately stays out of that identity, since it names
+where the document filed the row and a renamed section would otherwise read as one
+offer vanishing and another appearing; the condition itself is still kept for the
+reader. `SNAPSHOT_SCHEMA_VERSION` is bumped when the shape changes, and a baseline
+written by an older shape is treated as absent rather than diffed against.
+
+Two catalogue-level traps:
+
+- A scan must read the sources afresh. Serving a scan from the 3-hour cache would
+  compare the previous scan's own data with itself and report "no change" for a
+  vendor that did move, so `delta` always refreshes.
+- Some vendors date their catalogue and most do not. Aliyun publishes a per-model
+  `updateAt` and Ark a document-level `UpdatedTime`; both are kept as
+  `source_updated_at`, and a scan that finds no price movement repeats the newest
+  one as evidence. An absent stamp means the vendor publishes none — never that its
+  prices are stale.
+
 ## Time bands
 
 A vendor that bills by time of day states the window somewhere other than a price column, and every platform words it differently — so the hours are read per vendor and never carried across. Most state it in prose beside the table: `time_band_rules()` collects those sentences, `select_time_band_rules()` keeps the ones governing a model (matched by model name first, then by a delivery label such as `原厂直供`), and `compact_time_band_window()` reduces a sentence to the window repeated on each peak/off-peak row. Baidu instead writes the window into the billed item's own text, so `baidu.py` reads it off the rows. Either way the vendor's own wording stays on the record as `time_bands.statements`, because the wording is what settles the bill.
@@ -82,6 +104,15 @@ Three traps: a `；` joins clauses of one rule (Tencent states the weekday windo
 ## Parser maintenance
 
 Identify rows by content — parsed prices, table headers, or section anchors — never by a hard-coded model-name prefix, family list, or document-name suffix. A vendor rename, a newly launched family, or a renamed pricing document must be picked up without a code change. Where filtering is unavoidable, prefer an explicit blocklist of non-model sections (see `NON_MODEL_SECTIONS` and `NON_MODEL_SECTION_IDS`) over an allowlist of model prefixes, and keep alias maps additive so they never drop an existing match.
+
+A whole-catalogue scan reads each vendor once, so an adapter that already parses its
+entire document exposes it through `catalog_records()` rather than being walked model
+by model; `PriceSource` still provides a walking fallback so an adapter that only
+knows how to answer a single model scans correctly without changes. Aliyun is the
+one adapter whose `query` is itself an HTTP request, so it overrides `catalog_records`
+to page its catalogue instead — asking that endpoint for a page of models with
+`queryPrice` returns each model with its prices, turning 511 requests into 11.
+`CachedPriceSource` caches a scan as a single `catalog` entry, not one per model.
 
 Two conventions apply to every table-driven adapter:
 

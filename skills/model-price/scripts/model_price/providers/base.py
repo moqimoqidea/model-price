@@ -227,36 +227,45 @@ class TabularTokenPricingAdapter(PriceSource):
             }
         return sorted(models, key=str.lower)
 
+    def _rows_by_model(self) -> dict[str, list[dict[str, Any]]]:
+        """Group the parsed rows by model, so a model is built from its own rows."""
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in self._rows():
+            grouped.setdefault(normalize_model(row["model_id"]), []).append(row)
+        return grouped
+
+    def _record_for(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        """Build the record for every row that shares one model."""
+        first = rows[0]
+        return make_record(
+            self.provider_id,
+            self.provider_name,
+            first["model_id"],
+            first["display_name"],
+            self.region,
+            [
+                {
+                    "name": row["offer_name"],
+                    "conditions": row["conditions"],
+                    "prices": row["prices"],
+                }
+                for row in rows
+            ],
+            self.source_url,
+            self.source_kind,
+            now_iso(),
+            currency=self.currency,
+            delivery_mode=self.delivery_mode,
+            model_family=model_family(first["model_id"]),
+            **self.model_extras(first["model_id"], first["display_name"]),
+            **self.record_extras(),
+        )
+
     def query(self, model: str) -> list[dict[str, Any]]:
-        matched = [
-            row
-            for row in self._rows()
-            if normalize_model(row["model_id"]) == normalize_model(model)
-        ]
-        if not matched:
-            return []
-        return [
-            make_record(
-                self.provider_id,
-                self.provider_name,
-                matched[0]["model_id"],
-                matched[0]["display_name"],
-                self.region,
-                [
-                    {
-                        "name": row["offer_name"],
-                        "conditions": row["conditions"],
-                        "prices": row["prices"],
-                    }
-                    for row in matched
-                ],
-                self.source_url,
-                self.source_kind,
-                now_iso(),
-                currency=self.currency,
-                delivery_mode=self.delivery_mode,
-                model_family=model_family(matched[0]["model_id"]),
-                **self.model_extras(matched[0]["model_id"], matched[0]["display_name"]),
-                **self.record_extras(),
-            )
-        ]
+        rows = self._rows_by_model().get(normalize_model(model))
+        return [self._record_for(rows)] if rows else []
+
+    def catalog_records(self) -> list[dict[str, Any]]:
+        """Build every record from the document already parsed, in a single pass."""
+        grouped = self._rows_by_model()
+        return [self._record_for(grouped[key]) for key in sorted(grouped)]

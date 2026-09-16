@@ -168,6 +168,10 @@ class GeminiAdapter(PriceSource):
             }
         return sorted(models, key=str.lower)
 
+    def catalog_records(self) -> list[dict[str, Any]]:
+        """Every priced section of the Gemini document is read in one pass."""
+        return self._records()
+
     def query(self, model: str) -> list[dict[str, Any]]:
         key = normalize_model(model)
         return [

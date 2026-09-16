@@ -298,6 +298,10 @@ class TencentAdapter(PriceSource):
             )
         return records
 
+    def catalog_records(self) -> list[dict[str, Any]]:
+        """TokenHub's whole catalogue is already built from one document pass."""
+        return self._records()
+
     def query(self, model: str) -> list[dict[str, Any]]:
         query_key = normalize_model(model)
         return [

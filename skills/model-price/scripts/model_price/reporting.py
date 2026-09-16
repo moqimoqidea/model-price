@@ -6,6 +6,9 @@ import json
 import re
 from typing import Any
 
+from .delta import EMPTY_SCAN, SOURCE_ERROR
+from .diffing import BASELINE_CREATED, CHANGED, UNCHANGED
+
 DELIVERY_LABELS = {
     "platform_hosted": "平台托管",
     "self_deployed": "自部署",
@@ -39,8 +42,8 @@ SKILL_UPDATE_LABELS = {
 CORE_PRICE_TYPES = {"input", "output", "cache_hit", "cache_write", "cache_storage"}
 
 
-def offer_condition_text(offer: dict[str, Any], record: dict[str, Any]) -> str:
-    """Describe an offer's billing conditions, always with its time window.
+def condition_text(name: str, conditions: dict[str, Any], window: str = "") -> str:
+    """Describe a billing condition, always with the time window it covers.
 
     A peak/off-peak row is meaningless without the hours it covers, and every
     platform draws those hours differently, so the window the vendor published is
@@ -48,13 +51,19 @@ def offer_condition_text(offer: dict[str, Any], record: dict[str, Any]) -> str:
     in the vendor's own words (高峰时段 or 忙时) — the adapters translate their
     enum, this layer never guesses what an English key meant.
     """
-    conditions = offer.get("conditions", {})
-    details = [str(offer.get("name", "标准"))]
-    details.extend(f"{key}={value}" for key, value in conditions.items())
-    window = (record.get("time_bands") or {}).get("window")
-    if window and "time_band" in conditions:
+    details = [str(name or "标准")]
+    details.extend(f"{key}={value}" for key, value in (conditions or {}).items())
+    if window and "time_band" in (conditions or {}):
         details.append(f"时段规则={window}")
     return "；".join(filter(None, details))
+
+
+def offer_condition_text(offer: dict[str, Any], record: dict[str, Any]) -> str:
+    """Describe one offer, carrying the record's own published window."""
+    window = (record.get("time_bands") or {}).get("window", "")
+    return condition_text(
+        offer.get("name", "标准"), offer.get("conditions", {}), window
+    )
 
 
 def time_band_sections(results: list[dict[str, Any]]) -> list[str]:
@@ -205,8 +214,189 @@ def to_markdown(payload: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def emit(payload: Any, output_format: str) -> None:
+DELTA_STATUS_LABELS = {
+    "changed": "有变化",
+    "unchanged": "无变化",
+    "baseline_created": "首次建立基线",
+    "empty_scan": "未取到任何模型",
+    "source_error": "来源解析失败",
+}
+
+CHANGE_HEADINGS = (
+    ("models_added", "新增模型"),
+    ("models_removed", "下架模型"),
+    ("offers_added", "新增计费方式"),
+    ("offers_removed", "移除计费方式"),
+)
+
+
+def amount_text(value: dict[str, Any] | None) -> str:
+    """Read a snapshot price as one comparable amount."""
+    if not value:
+        return "—"
+    return format_price({"amount": value.get("amount"), "unit": value.get("unit")})
+
+
+def price_movement(change: dict[str, Any]) -> str:
+    """Read one price change as newly billed, withdrawn, or moved."""
+    if change.get("from") is None:
+        return f"新增 {amount_text(change.get('to'))}"
+    if change.get("to") is None:
+        return f"已移除（原为 {amount_text(change.get('from'))}）"
+    return f"{amount_text(change.get('from'))} → {amount_text(change.get('to'))}"
+
+
+def offering_text(name: str, conditions: dict[str, Any]) -> str:
+    """Name an offer in the vendor's own words.
+
+    Two things are worth avoiding here. A vendor that files a band in a condition
+    column also names the offer after it (Aliyun's offer 闲时 carries
+    ``time_band=闲时``), and printing both reads as a stutter rather than as two
+    facts. An adapter that instead names a band offer with its own API enum
+    (``off_peak``) is repeating the vendor's wording one field away — and the
+    wording is what a reader can match against the page, so it is shown in place
+    of the enum. A name that is already the vendor's own wording (阿里云的「闲时」)
+    is left alone.
+    """
+    conditions = conditions or {}
+    band = conditions.get("time_band")
+    if band is not None and name.isascii():
+        return str(band)
+    trimmed = {key: value for key, value in conditions.items() if str(value) != name}
+    return condition_text(name, trimmed)
+
+
+def model_digest(model: dict[str, Any]) -> str:
+    """Name what a newly listed model charges, from its first published offer."""
+    offers = model.get("offers", [])
+    if not offers:
+        return ""
+    head = offers[0]
+    charges = "；".join(
+        f"{price.get('label') or price.get('type')} {format_price(price)}"
+        for price in head.get("prices", [])
+    )
+    condition = offering_text(head.get("name", ""), head.get("conditions", {}))
+    digest = f"{condition} — {charges}" if charges else condition
+    remaining = len(offers) - 1
+    return f"{digest}（另有 {remaining} 种计费方式）" if remaining else digest
+
+
+def delta_to_markdown(payload: dict[str, Any]) -> str:
+    """Render a whole-catalogue comparison, saying plainly where nothing moved."""
+    reports = payload.get("providers", [])
+    summary = payload.get("summary", {})
+    lines = [
+        "# 模型价格变化对比",
+        "",
+        f"扫描时间：{payload.get('retrieved_at', '')}",
+        "",
+        "| 结果 | 渠道数 |",
+        "|---|---:|",
+    ]
+    lines.extend(
+        f"| {DELTA_STATUS_LABELS[status]} | {summary.get(status, 0)} |"
+        for status in DELTA_STATUS_LABELS
+    )
+    for title, statuses, render in (
+        ("有变化的渠道", (CHANGED,), changed_provider_block),
+        ("无变化的渠道", (UNCHANGED,), quiet_provider_line),
+        ("首次建立基线的渠道", (BASELINE_CREATED,), baseline_provider_line),
+        ("未能完成的渠道", (EMPTY_SCAN, SOURCE_ERROR), failed_provider_line),
+    ):
+        selected = [report for report in reports if report["status"] in statuses]
+        if not selected:
+            continue
+        lines.extend(["", f"## {title}", ""])
+        for report in selected:
+            lines.extend(render(report))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def changed_provider_block(report: dict[str, Any]) -> list[str]:
+    """Detail everything one provider moved."""
+    changes = report.get("changes") or {}
+    lines = [
+        f"### {report['provider']['name']}",
+        "",
+        f"上次扫描：{report.get('baseline_at') or '未知'}；"
+        f"本次扫描 {report.get('model_count', 0)} 个模型",
+    ]
+    for field, heading in CHANGE_HEADINGS:
+        lines.extend(change_bullets(heading, changes.get(field) or []))
+    lines.extend(price_change_table(changes.get("price_changes") or []))
+    return lines
+
+
+def change_bullets(heading: str, items: list[dict[str, Any]]) -> list[str]:
+    if not items:
+        return []
+    return ["", f"**{heading}（{len(items)}）**", "", *map(change_bullet, items)]
+
+
+def change_bullet(change: dict[str, Any]) -> str:
+    """Read one change: a whole model, or one offer of a model that stayed."""
+    model = f"**{change.get('display_name')}** (`{change.get('model_id')}`)"
+    offer = change.get("offer")
+    if offer is None:
+        digest = model_digest(change)
+    else:
+        digest = offering_text(offer.get("name", ""), offer.get("conditions", {}))
+    return f"- {model}：{digest}" if digest else f"- {model}"
+
+
+def price_change_table(changes: list[dict[str, Any]]) -> list[str]:
+    if not changes:
+        return []
+    lines = [
+        "",
+        f"**价格变化（{len(changes)}）**",
+        "",
+        "| 模型 | 计费条件 | 价格项 | 变化 |",
+        "|---|---|---|---|",
+    ]
+    lines.extend(
+        "| `{model}` | {condition} | {label} | {movement} |".format(
+            model=change.get("model_id", ""),
+            condition=offering_text(
+                change.get("offer", ""), change.get("conditions", {})
+            ).replace("|", "\\|"),
+            label=change.get("label") or change.get("type", ""),
+            movement=price_movement(change),
+        )
+        for change in changes
+    )
+    return lines
+
+
+def quiet_provider_line(report: dict[str, Any]) -> list[str]:
+    """Say a provider did not move, and on whose word."""
+    stamp = (report.get("source") or {}).get("updated_at")
+    detail = f"共 {report.get('model_count', 0)} 个模型"
+    if stamp:
+        detail += f"；官方标注更新时间 {stamp}"
+    return [f"- **{report['provider']['name']}**：模型无变化（{detail}）"]
+
+
+def baseline_provider_line(report: dict[str, Any]) -> list[str]:
+    return [
+        f"- **{report['provider']['name']}**：已记录 {report.get('model_count', 0)} 个模型，"
+        "下次扫描起参与对比"
+    ]
+
+
+def failed_provider_line(report: dict[str, Any]) -> list[str]:
+    reason = report.get("error") or "未说明原因"
+    baseline = report.get("baseline_at")
+    kept = f"；上次基线 {baseline} 保留" if baseline else ""
+    return [
+        f"- **{report['provider']['name']}**："
+        f"{DELTA_STATUS_LABELS.get(report['status'], report['status'])}；{reason}{kept}"
+    ]
+
+
+def emit(payload: Any, output_format: str, render_markdown: Any = to_markdown) -> None:
     if output_format == "markdown":
-        print(to_markdown(payload), end="")
+        print(render_markdown(payload), end="")
     else:
         print(json.dumps(payload, ensure_ascii=False, indent=2))

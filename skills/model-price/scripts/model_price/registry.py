@@ -96,6 +96,13 @@ def inferred_overseas_providers(model: str) -> tuple[str, ...]:
     )
 
 
+def _selected(
+    adapters: dict[str, PriceSource], provider_ids: Iterable[str]
+) -> list[PriceSource]:
+    """Map provider ids to adapters, dropping duplicates while keeping order."""
+    return [adapters[provider_id] for provider_id in dict.fromkeys(provider_ids)]
+
+
 def select_compare_providers(
     adapters: dict[str, PriceSource],
     model: str,
@@ -104,15 +111,28 @@ def select_compare_providers(
     include_overseas: bool = False,
 ) -> list[PriceSource]:
     if requested:
-        provider_ids = requested
-    else:
-        overseas = (
-            OVERSEAS_PROVIDER_IDS
-            if include_overseas
-            else inferred_overseas_providers(model)
-        )
-        provider_ids = [*DOMESTIC_PROVIDER_IDS, *overseas]
-    return [adapters[provider_id] for provider_id in dict.fromkeys(provider_ids)]
+        return _selected(adapters, requested)
+    overseas = (
+        OVERSEAS_PROVIDER_IDS if include_overseas else inferred_overseas_providers(model)
+    )
+    return _selected(adapters, [*DOMESTIC_PROVIDER_IDS, *overseas])
+
+
+def select_catalog_providers(
+    adapters: dict[str, PriceSource],
+    *,
+    requested: list[str] | None = None,
+    include_overseas: bool = False,
+) -> list[PriceSource]:
+    """Select the providers a whole-catalogue scan covers.
+
+    No model name takes part, so no overseas provider is inferred: scanning is
+    asked for by provider, never guessed from a model the user never named.
+    """
+    if requested:
+        return _selected(adapters, requested)
+    overseas = OVERSEAS_PROVIDER_IDS if include_overseas else ()
+    return _selected(adapters, [*DOMESTIC_PROVIDER_IDS, *overseas])
 
 
 def query_adapters(

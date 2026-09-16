@@ -5,6 +5,7 @@ The implementation lives in the ``model_price`` package beside this file. This
 module stays a thin, stable CLI entry point so existing invocations keep working:
 
     python3 scripts/query_model_prices.py compare deepseek-flash --format markdown
+    python3 scripts/query_model_prices.py delta --format markdown
 """
 
 from __future__ import annotations
@@ -17,16 +18,21 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from model_price.core import HttpClient, now_iso
-from model_price.paths import DEFAULT_CACHE_DIR
+from model_price.delta import scan_providers
+from model_price.paths import DEFAULT_CACHE_DIR, DEFAULT_SNAPSHOT_DIR
 from model_price.registry import (
     build_adapters,
     catalog_payload,
     query_adapters,
+    select_catalog_providers,
     select_compare_providers,
     source_status,
 )
-from model_price.reporting import emit
+from model_price.reporting import delta_to_markdown, emit, to_markdown
+from model_price.snapshots import SnapshotStore
 from model_price.updating import update_skill_before_refresh
+
+PROVIDER_OPTION_HELP = "query only this provider; repeat to compare selected providers"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -52,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--provider",
         action="append",
         dest="providers",
-        help="query only this provider; repeat to compare selected providers",
+        help=PROVIDER_OPTION_HELP,
     )
     compare.add_argument(
         "--include-overseas",
@@ -83,15 +89,41 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--refresh", action="store_true", help="ignore fresh cache")
     listing.add_argument("--format", choices=("json",), default="json")
 
+    delta = subparsers.add_parser(
+        "delta",
+        help="scan whole catalogues and compare each provider with its last scan",
+    )
+    delta.add_argument(
+        "--provider",
+        action="append",
+        dest="providers",
+        help=PROVIDER_OPTION_HELP,
+    )
+    delta.add_argument(
+        "--include-overseas",
+        action="store_true",
+        help="also scan OpenAI, Anthropic, Google, and xAI",
+    )
+    delta.add_argument("--format", choices=("json", "markdown"), default="markdown")
+    delta.add_argument(
+        "--snapshot-dir",
+        type=Path,
+        default=DEFAULT_SNAPSHOT_DIR,
+        help=argparse.SUPPRESS,
+    )
+
     return parser
 
 
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    skill_update = update_skill_before_refresh(args.refresh)
+    # A scan answers "did anything move", so it must read the sources afresh: a
+    # cache hit would serve the previous scan's data back as "no change".
+    refresh = args.command == "delta" or getattr(args, "refresh", False)
+    skill_update = update_skill_before_refresh(refresh)
     adapters = build_adapters(
-        HttpClient(args.timeout), cache_dir=args.cache_dir, refresh=args.refresh
+        HttpClient(args.timeout), cache_dir=args.cache_dir, refresh=refresh
     )
     selected_provider = getattr(args, "provider", None)
     if selected_provider is not None and selected_provider not in adapters:
@@ -119,6 +151,15 @@ def main() -> int:
         payload = query_adapters(
             [adapters[args.provider]], args.model, exact=args.exact
         )
+    elif args.command == "delta":
+        payload = scan_providers(
+            select_catalog_providers(
+                adapters,
+                requested=args.providers,
+                include_overseas=args.include_overseas,
+            ),
+            SnapshotStore(args.snapshot_dir),
+        )
     else:
         adapter = adapters[args.provider]
         try:
@@ -128,7 +169,11 @@ def main() -> int:
 
     if skill_update:
         payload["skill_update"] = skill_update
-    emit(payload, args.format)
+    emit(
+        payload,
+        args.format,
+        delta_to_markdown if args.command == "delta" else to_markdown,
+    )
     return 0
 
 

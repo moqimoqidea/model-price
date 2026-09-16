@@ -1,6 +1,6 @@
 ---
 name: model-price
-description: Find major AI models and compare current official prices across cloud platforms and first-party providers. Use for model availability, versions, service modes, token or cache pricing, and provider comparisons involving Aliyun, Volcengine, Tencent Cloud, Baidu Qianfan, DeepSeek, Kimi, Zhipu, MiniMax, Xiaomi MiMo, OpenAI, Anthropic, Google Gemini, or xAI Grok.
+description: Find major AI models and compare current official prices across cloud platforms and first-party providers, or scan every catalogue for what changed since the previous scan. Use for model availability, versions, service modes, token or cache pricing, provider comparisons, and price-move or model-launch tracking involving Aliyun, Volcengine, Tencent Cloud, Baidu Qianfan, DeepSeek, Kimi, Zhipu, MiniMax, Xiaomi MiMo, OpenAI, Anthropic, Google Gemini, or xAI Grok.
 ---
 
 # Model Price
@@ -19,13 +19,21 @@ python3 scripts/query_model_prices.py compare MODEL --include-overseas
 # Query or list one provider.
 python3 scripts/query_model_prices.py provider PROVIDER MODEL --format markdown
 python3 scripts/query_model_prices.py list PROVIDER --prefix PREFIX
+
+# Scan every catalogue and report what moved since the previous scan.
+python3 scripts/query_model_prices.py delta --format markdown
+python3 scripts/query_model_prices.py delta --provider PROVIDER --format json
 ```
 
 Provider IDs: `aliyun`, `volcengine`, `tencent`, `baidu`, `deepseek`, `kimi`, `zhipu`, `minimax`, `xiaomi`, `openai`, `anthropic`, `google`, `xai`.
 
 Do not query `openai`, `anthropic`, `google`, or `xai` by default. Add only the relevant provider when the user explicitly mentions GPT/OpenAI, Claude/Anthropic, Gemini/Google, or Grok/xAI; use `--include-overseas` when the user explicitly asks about overseas models generally.
 
-Each provider caches lists and price searches independently under `cache/`. Fresh caches are valid for 3 hours. Add `--refresh` only when the user asks for the latest/current refresh; with `provider` or repeated `--provider`, refresh only those providers.
+Each provider caches lists and price searches independently under `cache/`. Fresh caches are valid for 3 hours. Add `--refresh` only when the user asks for the latest/current refresh; with `provider` or repeated `--provider`, refresh only those providers. `delta` is the exception — it always reads the sources afresh, because a cache hit would hand the previous scan back as "no change".
+
+`delta` is the incremental run, for a scheduled or repeated check rather than a question about one model. It takes no model name: it scans each provider's whole catalogue and compares it with the baseline the previous run left in `snapshots/`. It covers domestic providers only unless `--include-overseas` is given, prints Markdown unless `--format json` is asked for, and runs the skill's own Git update check the way any refresh does. A baseline never expires, so a run a week later still compares against the last scan.
+
+Report every scanned provider, including the ones that did not move — that is what shows the scan actually covered them. A first run reports `baseline_created` and how many models it recorded, instead of claiming nothing changed. `unchanged` is stated plainly as 模型无变化, and carries the vendor's own update stamp in the vendor's own wording when its catalogue publishes one. `changed` lists the models added with what they cost, the models withdrawn with what they cost before, the offers added or removed, and every price that moved, old amount to new. A provider that fails (`source_error`) or yields no priced model (`empty_scan`) is named with its reason and keeps its previous baseline rather than overwriting it, so the change stays visible once the source recovers.
 
 Before any `--refresh` source request, the script fetches the skill repository's configured Git upstream. It fast-forwards and restarts with the updated skill only when the upstream changed this skill, the branch can fast-forward, and the working tree is clean. It otherwise continues with the current code and reports `skill_update` as `up_to_date`, `update_skipped`, or `check_failed`; never hide that status. If an overseas source is unreachable and no fresh cache exists, report `source_error` and say its price is unknown.
 
@@ -39,6 +47,6 @@ Peak and off-peak hours are set per platform and must never be carried across th
 
 Prefer a representation the official page publishes for machines over scraping its rendered markup: the page's own Markdown copy when it publishes one with real Markdown tables, otherwise its public structured JSON. Parse rendered HTML only when the vendor publishes neither. Never use credentials or private console data.
 
-Code layout: `scripts/query_model_prices.py` is the stable CLI entry point; the implementation lives in `scripts/model_price/`, with one module per vendor under `providers/` and shared concerns split into `core` (HTTP + source contract), `parsing` (document readers), `pricing` (record shapes), `models` (identity), `caching`, `updating`, `reporting`, and `registry` (wiring). Add a provider by writing its module and listing it in `providers/__init__.py`.
+Code layout: `scripts/query_model_prices.py` is the stable CLI entry point; the implementation lives in `scripts/model_price/`, with one module per vendor under `providers/` and shared concerns split into `core` (HTTP + source contract), `parsing` (document readers), `pricing` (record shapes), `models` (identity), `caching`, `updating`, `snapshots` (the baselines `delta` compares against), `diffing` (what moved between two baselines), `delta` (the scan-and-compare run), `reporting`, and `registry` (wiring). Add a provider by writing its module and listing it in `providers/__init__.py`; an adapter that parses its document in one pass overrides `catalog_records()` so a whole-catalogue scan costs one read instead of one query per model.
 
 Read [references/schema.md](references/schema.md) when consuming JSON. Read [references/source-notes.md](references/source-notes.md) only when a source or parser needs maintenance.

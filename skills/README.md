@@ -19,7 +19,7 @@ needs them.
 
 | Skill | Description |
 | --- | --- |
-| [model-price](model-price/SKILL.md) | Query and compare major models and official prices across Chinese cloud platforms, OpenAI, Anthropic, and Google Gemini. |
+| [model-price](model-price/SKILL.md) | Query and compare major models and official prices across Chinese cloud platforms, OpenAI, Anthropic, and Google Gemini — and scan every catalogue for what changed since the previous scan. |
 
 ## Adding a new skill
 
