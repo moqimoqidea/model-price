@@ -18,9 +18,14 @@ Responsibility split:
 - ``delta``        the scan-every-catalogue-and-compare run
 - ``reporting``    the shared wording and single-value formatters
 - ``messages``     the plain-text messages those formatted values are laid into
-- ``budget``       how much of a message fits the channel carrying it
+- ``budget``       how far a message overruns the character limit it has to fit
 - ``registry``     wiring and cross-provider queries
 
 Adapters preserve provider-specific conditions instead of merging prices across
 regions, time bands, context tiers, or promotions.
+
+Character limits are never met by cutting. A message over ``--max-chars`` and an
+introduction over 300 characters are both rendered whole and flagged; the
+summarizing that brings them under is done by whoever sends them, since this
+tool takes no credentials and has no model to ask.
 """

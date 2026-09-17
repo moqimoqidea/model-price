@@ -16,6 +16,7 @@ from typing import Any
 from .delta import EMPTY_SCAN, SOURCE_ERROR
 from .descriptions.core import AVAILABLE as DESCRIPTION_AVAILABLE
 from .descriptions.core import NOT_FOUND as DESCRIPTION_NOT_FOUND
+from .descriptions.core import SUMMARY_MAX_CHARS
 from .diffing import (
     BASELINE_CREATED,
     CHANGE_FIELDS,
@@ -129,6 +130,24 @@ UNSTATED = "未说明原因"
 UNPRICED = "官方文档未给出本工具可解析的价格"
 NO_WINDOW = "官方文档未公布具体时段"
 NO_SUMMARY = "官方页面未给出文字摘要"
+
+# What an introduction's prose is filed under. A vendor's announcement can run far
+# past what one message may carry, and the tool neither cuts it nor summarizes it —
+# so the label carries the two facts a reader needs: how long it is, and that the
+# message is not ready to send until someone has summarized it.
+SUMMARY_LABEL = "用途"
+SUMMARY_OVER_LIMIT_LABEL = (
+    "用途（原文 {chars} 字，超过 {limit} 字上限，需先总结再发送）"
+)
+
+
+def summary_label(description: dict[str, Any]) -> str:
+    """The label the 用途 line carries, saying so when the prose is over the limit."""
+    if not description.get("summary_needs_condensing"):
+        return SUMMARY_LABEL
+    return SUMMARY_OVER_LIMIT_LABEL.format(
+        chars=len(description.get("summary") or ""), limit=SUMMARY_MAX_CHARS
+    )
 
 
 def format_moment(value: Any) -> str:

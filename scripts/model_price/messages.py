@@ -11,21 +11,19 @@ Both messages open with what the model is for rather than what it costs — a re
 who does not yet know what the model does cannot judge a price for it — and run
 conclusion, detail, then summary from there.
 
-A message also has to fit the channel it is sent through, so the same report is
-described at three densities. ``Detail`` says how much of it the reader gets and
-``comparison_sections`` / ``scan_sections`` lay that out as one declarative list
-of blocks; ``budget`` picks the richest density that fits. Which blocks survive
-which density is the only thing this module decides about length — it never
-measures or truncates anything itself.
+A message also has to fit the channel it is sent through, and this module neither
+measures nor shortens anything to make it fit: every block the sources support is
+laid out, and ``budget`` reports by how much the result overruns. Shortening is
+summarizing, which needs a model, and this tool takes no credentials — so an
+over-long message leaves here as the report in full, saying that it still has to
+be summarized before it goes out.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import IntEnum
 from typing import Any, Iterable, Sequence
 
-from .budget import DEFAULT_MAX_CHARS, fit_to_budget
+from .budget import DEFAULT_MAX_CHARS, overage
 from .delta import EMPTY_SCAN, SOURCE_ERROR
 
 from .descriptions.core import AVAILABLE as DESCRIPTION_AVAILABLE
@@ -69,6 +67,7 @@ from .reporting import (
     shared_conditions,
     skill_update_text,
     specification_text,
+    summary_label,
 )
 
 COMPARISON_TITLE = "模型价格对比"
@@ -84,38 +83,14 @@ STATUS_ORDER = (CHANGED, EMPTY_SCAN, SOURCE_ERROR, BASELINE_CREATED, UNCHANGED)
 
 STATUS_RANK = {status: rank for rank, status in enumerate(STATUS_ORDER)}
 
-
-class Detail(IntEnum):
-    """How much of a report a reader gets, richest first.
-
-    ``FULL`` is the report as the sources support it. ``COMPACT`` folds each
-    offer's amounts onto one line and drops the blocks a reader only consults
-    afterwards. ``BRIEF`` keeps what answers the question the message was sent to
-    answer and bounds every list it keeps.
-
-    A denser level never states something the richer one contradicts: it prints
-    fewer facts, and says which ones it left out.
-    """
-
-    FULL = 0
-    COMPACT = 1
-    BRIEF = 2
-
-
-@dataclass(frozen=True)
-class Section:
-    """One block of a message, and the density at which it stops being printed.
-
-    ``dropped_at`` names the first density that leaves the block out, so ``None``
-    marks a block that every density keeps: it is part of what the message is
-    for, not a detail of it. A block that renders to nothing drops out by itself,
-    which is what ``section`` already does for an empty body.
-    """
-
-    heading: str | None
-    lines: Sequence[str]
-    dropped_at: Detail | None = None
-
+# Said instead of sending an over-long report as if it were complete. The tool
+# neither cuts the message nor shortens it by dropping a block — a reader cannot
+# tell an omitted channel from one the scan never reached — so what it states is
+# the overrun and what a summary is not allowed to lose.
+SUMMARIZE_NOTE = (
+    "本消息 {chars} 字，超过 {limit} 字上限 {over} 字；"
+    "发送前需总结压缩到 {limit} 字内，保留标题、结论、各渠道条目与全部金额"
+)
 
 # One step of hierarchy. A message is read on a phone, so a level is added by
 # indentation rather than by a heading syntax something downstream might re-render.
@@ -146,25 +121,6 @@ def bullets(texts: Iterable[str], depth: int = SECTION) -> list[str]:
 def note(text: str, depth: int = FIELD) -> str:
     """A line continuing the item above it rather than being another item."""
     return f"{INDENT * depth}{text}"
-
-
-# How many items a list may show at each density. A change list is the one place
-# a report has no natural bound — a catalogue can add a hundred models at once —
-# so it is the one place a density cuts a list short. The cut is always stated:
-# a reader cannot tell an omitted item from one that never existed.
-LIST_LIMITS = {Detail.FULL: None, Detail.COMPACT: 8, Detail.BRIEF: 1}
-
-
-def capped(texts: Iterable[str], detail: Detail, depth: int = ITEM) -> list[str]:
-    """Bullet as many items as the density allows, and name the ones left out."""
-    values = list(texts)
-    limit = LIST_LIMITS.get(detail)
-    if limit is None or len(values) <= limit:
-        return bullets(values, depth)
-    return [
-        *bullets(values[:limit], depth),
-        note(f"…其余 {len(values) - limit} 项见完整明细", depth),
-    ]
 
 
 def entry(position: int, title: str, fields: Iterable[str] = ()) -> list[str]:
@@ -208,51 +164,21 @@ def header(title: str, subject: str, payload: dict[str, Any]) -> list[str]:
     ]
 
 
-# What a denser message stopped printing, named as a fact rather than as an
-# apology: the reader is told the report is a digest, so an absent detail reads
-# as left out rather than as never existing.
-COMPACTION_NOTE = {
-    Detail.COMPACT: "峰谷时段与差异总结未展开，价格按计费方案合并为一行",
-    Detail.BRIEF: "仅保留模型用途、渠道价格与渠道状态",
-}
+def finalize(blocks: Iterable[Sequence[str]], max_chars: int) -> str:
+    """Lay the blocks out, and say so when the result is too long to send.
 
-# Said instead when even the densest layout did not come in under the limit. The
-# alternative — sending it as if it fitted — would read as a complete report.
-OVERSIZED_NOTE = "已按最精简的形式压缩，仍超过该上限"
-
-
-def compaction_text(level: Detail, max_chars: int, *, oversized: bool = False) -> str:
-    """Say that the message was shortened for its channel, and where the rest is."""
-    kept = (
-        OVERSIZED_NOTE if oversized else COMPACTION_NOTE.get(level, "")
-    )
-    return f"本消息已压缩至 {max_chars} 字符内（{kept}）；完整明细见 JSON 输出"
-
-
-def compose(sections: Iterable[Section], level: Detail, max_chars: int) -> str:
-    """Lay out the blocks this density keeps, one blank line apart.
-
-    A compacted message states its own compaction, and when it is still over the
-    limit after compacting it says that instead — a reader who is told the report
-    is a digest knows to ask for the rest, and one who is told nothing assumes
-    there is no rest.
+    Nothing is dropped to make the message fit. A report that fits because a block
+    was left out reports on less than the scan covered, and the reader cannot tell
+    an omitted block from one that was never there — so an over-long message is
+    the report in full, carrying the fact that it still has to be summarized.
     """
-    blocks = [
-        section(item.heading, item.lines) if item.heading else list(item.lines)
-        for item in sections
-        if item.dropped_at is None or level < item.dropped_at
-    ]
-    if level is Detail.FULL:
-        return "\n".join(stacked(blocks)) + "\n"
-    text = "\n".join(stacked([*blocks, [compaction_text(level, max_chars)]])) + "\n"
-    if len(text) <= max_chars:
+    lines = stacked(blocks)
+    text = "\n".join(lines) + "\n"
+    over = overage(text, max_chars)
+    if not over:
         return text
-    return (
-        "\n".join(
-            stacked([*blocks, [compaction_text(level, max_chars, oversized=True)]])
-        )
-        + "\n"
-    )
+    closing = SUMMARIZE_NOTE.format(chars=len(text), limit=max_chars, over=over)
+    return "\n".join(stacked([lines, [closing]])) + "\n"
 
 
 def comparison_message(
@@ -265,96 +191,63 @@ def comparison_message(
     what differs between them follow in that order, so the first screen still
     answers what the comparison covers and where the channels part company. The
     peak and off-peak wording and the per-channel sources close it.
-
-    A message longer than the channel accepts is re-rendered at a denser level
-    rather than truncated, so no amount is ever cut in half.
     """
-    return fit_to_budget(
-        Detail,
-        lambda level: compose(comparison_sections(payload, level), level, max_chars),
-        max_chars,
-    )
+    return finalize(comparison_blocks(payload), max_chars)
 
 
-def comparison_sections(payload: dict[str, Any], level: Detail) -> list[Section]:
-    """The blocks of a comparison, richest density first.
+def comparison_blocks(payload: dict[str, Any]) -> list[list[str]]:
+    """The blocks of a comparison, in the order a reader wants them.
 
-    What the model is for comes first and is never dropped: it is the question
-    the comparison is asked on behalf of. So is the conclusion, the channels
-    themselves, and the per-channel status — a channel that answered with nothing
-    is a fact about the scan, not a detail of it. What a reader consults rather
-    than reads is what a tight budget spends first.
+    What the model is for comes first: it is the question the comparison is asked
+    on behalf of, and a reader who does not know what the model does cannot judge
+    a price for it.
     """
     results = payload.get("results", [])
     subject = COMPARISON_SUBJECT.format(model=payload.get("query", ""))
     return [
-        Section(None, header(COMPARISON_TITLE, subject, payload)),
-        Section(
-            "模型介绍",
-            description_lines(payload.get("model_descriptions", []), level),
+        header(COMPARISON_TITLE, subject, payload),
+        section(
+            "模型介绍", description_lines(payload.get("model_descriptions", []))
         ),
-        Section("结论", comparison_conclusion(results)),
-        Section("渠道对比", provider_entries(results, level)),
-        Section(
-            "差异总结",
-            bullets(comparison_differences(results)),
-            dropped_at=Detail.COMPACT,
-        ),
-        Section("峰谷时段", band_lines(results), dropped_at=Detail.COMPACT),
-        Section(
-            "来源检查",
-            source_lines(payload.get("source_checks", []), results, level),
-        ),
-        Section(
-            "Skill 更新检查",
-            bullets([skill_update_text(payload)]),
-            dropped_at=Detail.COMPACT,
-        ),
+        section("结论", comparison_conclusion(results)),
+        section("渠道对比", provider_entries(results)),
+        section("差异总结", bullets(comparison_differences(results))),
+        section("峰谷时段", band_lines(results)),
+        section("来源检查", source_lines(payload.get("source_checks", []), results)),
+        section("Skill 更新检查", bullets([skill_update_text(payload)])),
     ]
 
 
-def provider_entries(results: list[dict[str, Any]], level: Detail) -> list[str]:
+def provider_entries(results: list[dict[str, Any]]) -> list[str]:
     """One entry per channel: how it serves the model, what it charges, from where."""
     return stacked(
-        provider_entry(position, record, level)
+        provider_entry(position, record)
         for position, record in enumerate(results, start=1)
     )
 
 
-def provider_entry(
-    position: int, record: dict[str, Any], level: Detail
-) -> list[str]:
+def provider_entry(position: int, record: dict[str, Any]) -> list[str]:
     """One entry per channel: how it serves the model, what it charges, from where.
 
-    Every density keeps the channel, the model version it sells, and every amount
-    with the terms it is billed under. What a denser one leaves out is what the
-    entry restates rather than what it reports: the model id and the region
-    already stand in its title, and the source address is the longest line here —
-    thirteen of them cost more than every price in the message put together. A
-    digest folds the first two into the title and defers the addresses to JSON
-    output, which the closing note says.
-
-    A digest then prints each offer's terms whole rather than relative to the
-    shared line it no longer prints, so an amount is never left standing without
-    the conditions that make it what it is.
+    The entry keeps the channel, the model version it sells, every amount with the
+    terms it is billed under, and the page all of it was read from. What a summary
+    of an over-long message may condense is the wording — never an amount, and
+    never the channel it belongs to.
     """
     display_name = record.get("display_name") or record.get("model_id", "")
     offers = record.get("offers", [])
-    digest = level is Detail.BRIEF
-    title = f"{provider_name(record)}｜{display_name}"
-    facts: list[str] = []
-    if digest:
-        title += f"｜{delivery_text(record)}｜{record.get('region') or UNKNOWN}"
-    else:
-        facts = [
+    lines = entry(
+        position,
+        f"{provider_name(record)}｜{display_name}",
+        [
             field("模型", record.get("model_id", "")),
             field("服务方式", delivery_text(record)),
             field("地域", record.get("region") or UNKNOWN),
-        ]
-    lines = entry(position, title, facts)
+        ],
+    )
     if not offers:
         lines.append(field("价格", UNPRICED))
-    shared = {} if digest else shared_conditions(record)
+    shared = shared_conditions(record)
     # Tested after filtering, not before: a channel whose shared terms are all
     # unprinted ones has nothing to state here, and an empty label reads as a
     # value the source withheld.
@@ -362,50 +255,23 @@ def provider_entry(
         lines.append(field("计费条件", shared_text))
     for offer_position, offer in enumerate(offers, start=1):
         terms = offer_condition_text(offer, shared)
-        if digest:
-            # One line per offer. Two lines saying what one offer costs reads as a
-            # label and its value, and a message this close to its channel's limit
-            # cannot spend a line on each. The separator is not a colon because an
-            # amount carries one of its own ("输入：1 元/百万 tokens").
-            lines.append(note(f"{terms}｜{price_digest(offer)}", ITEM))
-            continue
         lines.append(field(f"计费方案 {offer_position}", terms))
-        lines.extend(price_lines(offer, level))
-    if not digest:
-        source = record.get("source") or {}
-        lines.append(field("来源", source.get("url") or UNKNOWN))
+        lines.extend(price_lines(offer))
+    source = record.get("source") or {}
+    lines.append(field("来源", source.get("url") or UNKNOWN))
     return lines
 
 
-def price_lines(offer: dict[str, Any], level: Detail) -> list[str]:
+def price_lines(offer: dict[str, Any]) -> list[str]:
     """Every amount an offer publishes, in the unit it was billed in.
 
     Each keeps its own label rather than being fitted to a column: a channel that
     bills cached input, or splits by input length, publishes more prices than a
     fixed set of columns could hold without dropping one.
-
-    ``FULL`` gives each amount a line of its own; a denser message gives them one
-    between them, which leaves ``COMPACT`` differing from ``FULL`` only in where
-    the line breaks are rather than in what it states.
     """
-    if level is Detail.FULL:
-        return bullets(
-            (price_text(price) for price in offer.get("prices", [])), ITEM
-        ) or [bullet(UNPRICED, ITEM)]
-    return [bullet(price_digest(offer), ITEM)]
-
-
-def price_digest(offer: dict[str, Any]) -> str:
-    """Every amount an offer publishes on one line.
-
-    Nothing is merged: each amount still carries its own label and unit, and only
-    the line breaks between them go, which is what a channel's price block spends
-    most of its height on.
-    """
-    prices = offer.get("prices", [])
-    if not prices:
-        return UNPRICED
-    return "；".join(price_text(price) for price in prices)
+    return bullets(
+        (price_text(price) for price in offer.get("prices", [])), ITEM
+    ) or [bullet(UNPRICED, ITEM)]
 
 
 def price_text(price: dict[str, Any]) -> str:
@@ -444,9 +310,7 @@ def band_lines(results: list[dict[str, Any]]) -> list[str]:
     return stacked(blocks)
 
 
-def description_lines(
-    descriptions: list[dict[str, Any]], level: Detail = Detail.FULL
-) -> list[str]:
+def description_lines(descriptions: list[dict[str, Any]]) -> list[str]:
     """One entry per model, from its vendor's own introduction.
 
     An introduction is a property of the model rather than of a price channel, so
@@ -454,36 +318,25 @@ def description_lines(
     times over, and its source is independent of every price source.
 
     This block opens both messages, so a reader learns what the model is for
-    before reading what it costs. Its source is kept at every density: a claim
-    about what a model can do is only worth as much as the page it came from.
-
-    A scan can name a hundred models at once, so the number introduced is bounded
-    like any other list, and what the bound cut is stated as a count.
+    before reading what it costs.
     """
-    limit = LIST_LIMITS.get(level)
-    shown = descriptions if limit is None else descriptions[:limit]
-    lines = stacked(
+    return stacked(
         entry(
             position,
             f"{description.get('display_name') or description.get('model_id', '')}"
             f"（{description.get('model_id', '')}）",
-            description_fields(description, level),
+            description_fields(description),
         )
-        for position, description in enumerate(shown, start=1)
+        for position, description in enumerate(descriptions, start=1)
     )
-    if rest := len(descriptions) - len(shown):
-        lines.append(note(f"…其余 {rest} 个模型的能力见完整明细", SECTION))
-    return lines
 
 
-def description_fields(
-    description: dict[str, Any], level: Detail = Detail.FULL
-) -> list[str]:
+def description_fields(description: dict[str, Any]) -> list[str]:
     """What an introduction states, or why there was none to state.
 
-    A denser message keeps the purpose and the capabilities — what the model is
-    for, which is why the block is at the top — and leaves out the lifecycle, the
-    specifications, and the sources that were tried and missed.
+    A vendor's announcement can run past what one message may carry, and it is
+    never cut to fit: the label says how long it is and that it still has to be
+    summarized, and the prose below it is the vendor's own, whole.
     """
     if description.get("status") != DESCRIPTION_AVAILABLE:
         status = DESCRIPTION_STATUS_LABELS.get(
@@ -491,67 +344,45 @@ def description_fields(
         )
         note_text = description.get("note")
         state = field("状态", f"{status}；{note_text}" if note_text else status)
-        if level is Detail.BRIEF:
-            return [state]
         return [state, field("已检查", description_source_text(description))]
     lifecycle = description.get("lifecycle", "unknown")
-    lines = [field("用途", description.get("summary") or NO_SUMMARY)]
-    if level is Detail.FULL:
-        lines.append(field("生命周期", LIFECYCLE_LABELS.get(lifecycle, lifecycle)))
+    lines = [
+        field(
+            summary_label(description),
+            description.get("summary") or NO_SUMMARY,
+        ),
+        field("生命周期", LIFECYCLE_LABELS.get(lifecycle, lifecycle)),
+    ]
     if description.get("capabilities"):
         lines.append(field("主打能力", "、".join(description["capabilities"])))
-    if level is Detail.FULL:
-        if specs := specification_text(description.get("specifications") or {}):
-            lines.append(field("规格", specs))
+    if specs := specification_text(description.get("specifications") or {}):
+        lines.append(field("规格", specs))
     lines.append(field("来源", description_source_text(description)))
     return lines
 
 
 def source_lines(
-    checks: list[dict[str, Any]],
-    results: list[dict[str, Any]],
-    level: Detail = Detail.FULL,
+    checks: list[dict[str, Any]], results: list[dict[str, Any]]
 ) -> list[str]:
     """One line per channel: whether it answered, and the page it answered from.
 
-    A channel that returned records has already had its page printed under its
-    own entry above, and this message only holds so much, so that page is not
-    printed a second time — the line says the channel answered and points back.
-    A channel that answered with no match is the one whose page a reader still
-    has to open, so it keeps its URL. The URL is written last so nothing trails
-    into the link DingTalk draws round it; the cache state and the check time the
-    report once carried are left out because this message is read on a phone
-    rather than filed, and a channel that did not answer still says why.
-
-    Every channel is named at every density: the list is what shows the scan
-    reached them, so a tight budget drops the addresses, never a channel. ``BRIEF``
-    counts the channels that answered instead of listing them — each already has an
-    entry above, and what a reader has to act on is the channels that did *not*
-    answer, which keep their own line.
+    A channel that returned records has already had its page printed under its own
+    entry above, and this message only holds so much, so that page is not printed
+    a second time — the line says the channel answered and points back. A channel
+    that answered with no match is the one whose page a reader still has to open,
+    so it keeps its URL. The URL is written last so nothing trails into the link
+    DingTalk draws round it; the cache state and the check time the report once
+    carried are left out because this message is read on a phone rather than
+    filed, and a channel that did not answer still says why.
     """
     printed = {(record.get("source") or {}).get("url") for record in results}
-    if level is Detail.BRIEF:
-        answered = {provider_name(record) for record in results}
-        missing = [
-            check for check in checks if check["provider"]["name"] not in answered
-        ]
-        lines = bullets(
-            (source_line_text(check, printed, level) for check in missing)
-        )
-        if rest := len(checks) - len(missing):
-            lines.append(bullet(f"其余 {rest} 个渠道均已找到，见上「渠道对比」"))
-        return lines
-    return [bullet(source_line_text(check, printed, level)) for check in checks]
+    return [bullet(source_line_text(check, printed)) for check in checks]
 
 
-def source_line_text(
-    check: dict[str, Any], printed: set[str | None], level: Detail = Detail.FULL
-) -> str:
+def source_line_text(check: dict[str, Any], printed: set[str | None]) -> str:
     """Read one source check, repeating its page only if no entry showed it."""
     name = check["provider"]["name"]
     status = source_status_text(check)
-    if level is not Detail.FULL:
-        return f"{name}：{status}"
     url = (check.get("source") or {}).get("url")
     if url and url in printed:
         return f"{name}：{status}（来源见上）"
@@ -576,48 +407,35 @@ def scan_message(
     keeps the full shape — a channel that moved, a channel that could not be
     read, or a first run with nothing to compare against — because in each of
     those cases the detail is what the message is for.
-
-    A message longer than the channel accepts is re-rendered at a denser level
-    rather than truncated, so no price movement is ever cut in half.
     """
-    return fit_to_budget(
-        Detail,
-        lambda level: compose(scan_sections(payload, level), level, max_chars),
-        max_chars,
-    )
+    return finalize(scan_blocks(payload), max_chars)
 
 
-def scan_sections(payload: dict[str, Any], level: Detail) -> list[Section]:
-    """The blocks of a scan, richest density first.
+def scan_blocks(payload: dict[str, Any]) -> list[list[str]]:
+    """The blocks of a scan, in the order a reader wants them.
 
     A change is worth knowing about, not just countable, so every model the scan
-    reports as moved is introduced once at the top: what it is for and what it
-    can do, before any channel's before-and-after. One model can move on several
+    reports as moved is introduced once at the top: what it is for and what it can
+    do, before any channel's before-and-after. One model can move on several
     channels, and its purpose does not change with the channel, so the block is
     keyed by model rather than by the change that mentioned it.
     """
     reports = payload.get("providers", [])
     blocks = [
-        Section(None, header(SCAN_TITLE, SCAN_SUBJECT, payload)),
-        Section("变化模型能力", description_lines(changed_descriptions(payload), level)),
-        Section("结论", scan_conclusion(payload)),
+        header(SCAN_TITLE, SCAN_SUBJECT, payload),
+        section("变化模型能力", description_lines(changed_descriptions(payload))),
+        section("结论", scan_conclusion(payload)),
     ]
     if not all_unchanged(payload):
         blocks.extend(
             [
-                Section("渠道概览", channel_entries(reports, level)),
-                Section("变化详情", changed_blocks(reports, level)),
-                Section("未能完成的渠道", failed_lines(reports)),
-                Section("小结", scan_summary(payload), dropped_at=Detail.BRIEF),
+                section("渠道概览", channel_entries(reports)),
+                section("变化详情", changed_blocks(reports)),
+                section("未能完成的渠道", failed_lines(reports)),
+                section("小结", scan_summary(payload)),
             ]
         )
-    blocks.append(
-        Section(
-            "Skill 更新检查",
-            bullets([skill_update_text(payload)]),
-            dropped_at=Detail.COMPACT,
-        )
-    )
+    blocks.append(section("Skill 更新检查", bullets([skill_update_text(payload)])))
     return blocks
 
 
@@ -625,35 +443,25 @@ def status_rank(report: dict[str, Any]) -> int:
     return STATUS_RANK.get(report["status"], len(STATUS_ORDER))
 
 
-def channel_entries(reports: list[dict[str, Any]], level: Detail) -> list[str]:
+def channel_entries(reports: list[dict[str, Any]]) -> list[str]:
     """Every scanned channel with its size, its state, and what this scan found.
 
     Every channel appears, including the ones that failed: a list showing only
     the interesting rows would leave the reader unable to tell a silent channel
     from one the scan never reached. A failure has no model count of its own, so
     its entry says so rather than borrowing the baseline's number.
-
-    ``BRIEF`` states the same four facts on the channel's own line. Nothing is
-    dropped — the labels are, which are what the extra four lines were paying for.
     """
     return stacked(
-        channel_entry(position, report, level)
+        channel_entry(position, report)
         for position, report in enumerate(sorted(reports, key=status_rank), start=1)
     )
 
 
-def channel_entry(
-    position: int, report: dict[str, Any], level: Detail
-) -> list[str]:
+def channel_entry(position: int, report: dict[str, Any]) -> list[str]:
     updated_at = (report.get("source") or {}).get("updated_at")
     status = DELTA_STATUS_LABELS.get(report["status"], report["status"])
     model_count = report.get("model_count") or NO_CHANGE
     updated = format_moment(updated_at) if updated_at else NO_CHANGE
-    if level is Detail.BRIEF:
-        return [
-            f"{position}. {report['provider']['name']}：{status}；"
-            f"{model_count} 个模型；{change_digest(report)}；官方更新时间 {updated}"
-        ]
     return entry(
         position,
         report["provider"]["name"],
@@ -666,19 +474,17 @@ def channel_entry(
     )
 
 
-def changed_blocks(reports: list[dict[str, Any]], level: Detail) -> list[str]:
+def changed_blocks(reports: list[dict[str, Any]]) -> list[str]:
     """The detail of every channel that moved — a channel that held still is a
     line in the overview, never a block of its own."""
     moved = [report for report in reports if report["status"] == CHANGED]
     return stacked(
-        changed_entry(position, report, level)
+        changed_entry(position, report)
         for position, report in enumerate(moved, start=1)
     )
 
 
-def changed_entry(
-    position: int, report: dict[str, Any], level: Detail
-) -> list[str]:
+def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
     """Detail everything one channel moved.
 
     The changed models are not introduced here: every one of them is already in
@@ -699,14 +505,14 @@ def changed_entry(
         lines.extend(
             group(
                 f"{CHANGE_FIELD_LABELS[field_name]}（{len(items)}）",
-                capped((change_text(item) for item in items), level),
+                bullets((change_text(item) for item in items), ITEM),
             )
         )
     moves = changes.get(PRICE_CHANGE_FIELD) or []
     lines.extend(
         group(
             f"{CHANGE_FIELD_LABELS[PRICE_CHANGE_FIELD]}（{len(moves)}）",
-            capped((price_change_text(move) for move in moves), level),
+            bullets((price_change_text(move) for move in moves), ITEM),
         )
     )
     return lines

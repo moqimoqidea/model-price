@@ -18,6 +18,24 @@ LEGACY = "legacy"
 RETIRED = "retired"
 UNKNOWN = "unknown"
 
+# How long the introduction's prose may be in a message. A vendor publishes an
+# announcement rather than a summary — one DeepSeek page opens with a whole press
+# release — and an introduction is a block of a message that already has to fit a
+# channel, so what one may carry is bounded.
+#
+# The bound is never applied by cutting. Text that stops mid-clause reads as the
+# vendor's own complete wording rather than as the first part of it, and a report
+# is not improved by prose that ends where a character count said. This layer has
+# no model to ask and takes no credentials, so it does not summarize either: it
+# marks the summary and keeps the vendor's words whole, and whoever writes the
+# message out replaces the marked one with a summary of their own.
+SUMMARY_MAX_CHARS = 300
+
+
+def summary_needs_condensing(summary: str) -> bool:
+    """Whether a summary is longer than one message may carry as it stands."""
+    return len(summary) > SUMMARY_MAX_CHARS
+
 
 def description_record(
     model_id: str,
@@ -31,12 +49,20 @@ def description_record(
     lifecycle: str = UNKNOWN,
     specifications: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build the stable description shape emitted by every source."""
+    """Build the stable description shape emitted by every source.
+
+    Every source funnels through here, so this is the one place the length of a
+    summary is judged: the checked-in Tencent mirror carries whatever the console
+    exported, and it reaches a message on the same terms as a page this tool
+    fetched.
+    """
+    prose = clean_text(summary)
     return {
         "model_id": model_id,
         "display_name": display_name or model_id,
         "status": AVAILABLE,
-        "summary": clean_text(summary),
+        "summary": prose,
+        "summary_needs_condensing": summary_needs_condensing(prose),
         "capabilities": list(
             dict.fromkeys(clean_text(item) for item in capabilities if clean_text(item))
         ),
@@ -71,6 +97,7 @@ def unavailable_description(
         "display_name": display_name or model_id,
         "status": status,
         "summary": "",
+        "summary_needs_condensing": False,
         "capabilities": [],
         "lifecycle": UNKNOWN,
         "specifications": {},

@@ -1,38 +1,30 @@
-"""Fit a rendered message into the character budget an instant messenger allows.
+"""Whether a message fits the character budget of the channel that carries it.
 
 An instant messenger delivers a report as one message, so the message has to fit
-before it is sent. Cutting it off at the limit is not an option: a price would
-lose its decimal point and the reader would have no way to tell what was left
-out. So the caller offers the same report at several densities, richest first,
-and this picks the first that fits — and when not even the densest one fits, it
-is still what gets sent, carrying its own note about what it left out.
+before it is sent. Two things this module deliberately does not do are cut the
+text and choose a shorter one: a report shortened by dropping a block, or by
+stopping mid-amount, is a report that lies about what it covers, and the reader
+has no way to tell what was left out.
+
+So fitting is someone else's job. This module measures the message, reports how
+much it overruns, and says that the message is not ready to send — the tool takes
+no credentials and has no model to ask, so the summarization that brings a report
+under its limit is done by whoever writes the message out.
 """
 
 from __future__ import annotations
-
-from typing import Callable, Iterable, TypeVar
 
 # A DingTalk text message holds 5120 characters, which is the channel this tool
 # writes for. A report is kept well inside that: the number of providers only
 # grows, and one message has to stay one message.
 DEFAULT_MAX_CHARS = 3000
 
-Level = TypeVar("Level")
+
+def overage(text: str, limit: int) -> int:
+    """How many characters ``text`` must shed to fit ``limit``, 0 when it fits."""
+    return max(0, len(text) - limit)
 
 
-def fit_to_budget(
-    levels: Iterable[Level], renders: Callable[[Level], str], limit: int
-) -> str:
-    """Return the richest of ``levels`` whose rendering fits within ``limit``.
-
-    ``levels`` is ordered richest first, so the first rendering that fits is also
-    the most detailed one that does. The densest level is returned even when it
-    still exceeds the limit: it is the most honest form the caller can reach, and
-    it says for itself which detail it had to leave out.
-    """
-    text = ""
-    for level in levels:
-        text = renders(level)
-        if len(text) <= limit:
-            return text
-    return text
+def fits_within(text: str, limit: int) -> bool:
+    """Whether a message may be sent as it stands."""
+    return overage(text, limit) == 0

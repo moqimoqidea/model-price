@@ -9,7 +9,12 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from model_price.delta import scan_providers
-from model_price.descriptions.core import DescriptionSource, description_record
+from model_price.descriptions.core import (
+    SUMMARY_MAX_CHARS,
+    DescriptionSource,
+    description_record,
+    unavailable_description,
+)
 from model_price.descriptions.resolver import DescriptionResolver
 from model_price.descriptions.sources import (
     KIMI_MODELS_URL,
@@ -218,6 +223,92 @@ class TencentMirrorTests(unittest.TestCase):
         self.assertEqual(lifecycles, {"Past": "retired", "Future": "legacy"})
 
 
+class SummaryOverLimitTests(unittest.TestCase):
+    """A vendor writes an announcement; one message may carry 300 characters."""
+
+    OVER_LIMIT = "腾讯云模型广场的官方卡片介绍，涵盖模型定位、适用场景与调用方式。" * 20
+
+    def test_a_summary_that_fits_is_not_flagged(self):
+        record = description_record(
+            "m1", "M1", "面向代码与智能体的高吞吐模型。", "https://example.test", "test"
+        )
+        self.assertFalse(record["summary_needs_condensing"])
+
+    def test_an_over_long_summary_is_kept_whole_and_flagged(self):
+        """Cutting would read as the vendor's own wording, so nothing is cut.
+
+        The tool takes no credentials and has no model to ask, so it cannot
+        summarize either: it keeps the vendor's words whole, says they are over
+        the limit, and leaves the summarizing to whoever sends the message.
+        """
+        record = description_record(
+            "m1", "M1", self.OVER_LIMIT, "https://example.test", "test"
+        )
+        self.assertEqual(record["summary"], self.OVER_LIMIT)
+        self.assertGreater(len(record["summary"]), SUMMARY_MAX_CHARS)
+        self.assertTrue(record["summary_needs_condensing"])
+
+    def test_a_summary_exactly_on_the_limit_is_not_flagged(self):
+        record = description_record(
+            "m1", "M1", "甲" * SUMMARY_MAX_CHARS, "https://example.test", "test"
+        )
+        self.assertFalse(record["summary_needs_condensing"])
+        record = description_record(
+            "m1", "M1", "甲" * (SUMMARY_MAX_CHARS + 1), "https://example.test", "test"
+        )
+        self.assertTrue(record["summary_needs_condensing"])
+
+    def test_the_flag_reaches_the_message_and_the_vendor_words_are_all_there(self):
+        payload = {
+            "query": "m1",
+            "retrieved_at": "2026-09-15T00:00:00+08:00",
+            "results": [],
+            "source_checks": [],
+            "model_descriptions": [
+                description_record(
+                    "m1", "M1", self.OVER_LIMIT, "https://example.test/m1", "test"
+                )
+            ],
+        }
+        message = comparison_message(payload)
+        self.assertIn(f"原文 {len(self.OVER_LIMIT)} 字", message)
+        self.assertIn(f"超过 {SUMMARY_MAX_CHARS} 字上限", message)
+        self.assertIn(self.OVER_LIMIT, message)
+
+    def test_the_mirror_is_flagged_at_read_time_not_rewritten_at_capture(self):
+        """The checked-in capture is evidence; the limit is a message concern."""
+        capture = {
+            "schema_version": 1,
+            "captured_at": "2026-09-17T00:00:00+08:00",
+            "source_url": TENCENT_MODELS_URL,
+            "models": [
+                {
+                    "model_id": "Long",
+                    "display_name": "Long",
+                    "summary": self.OVER_LIMIT,
+                    "capabilities": ["文本生成"],
+                    "lifecycle": "active",
+                    "specifications": {"brand": "Test"},
+                }
+            ],
+        }
+        mirror = build_tencent_mirror(capture)
+        # The capture keeps what the console exported, word for word.
+        self.assertEqual(mirror["models"][0]["summary"], self.OVER_LIMIT)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "tencent.json"
+            path.write_text(json.dumps(mirror), encoding="utf-8")
+            result = TencentMirrorDescriptionSource(None, path).describe("Long")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["summary"], self.OVER_LIMIT)
+        self.assertTrue(result["summary_needs_condensing"])
+
+    def test_an_absent_introduction_carries_the_flag_too(self):
+        """One record shape, so a consumer reads the key without a default."""
+        absent = unavailable_description("m1")
+        self.assertFalse(absent["summary_needs_condensing"])
+
+
 class ResolverTests(unittest.TestCase):
     def test_first_party_source_precedes_the_hosting_platform(self):
         resolver = DescriptionResolver(
@@ -351,8 +442,8 @@ def crowded_catalogue(count=30):
     ]
 
 
-class DeltaDensityTests(unittest.TestCase):
-    """A scan sent to a channel is re-rendered to fit it, never cut to fit it."""
+class DeltaLimitTests(unittest.TestCase):
+    """A scan over the character budget is reported whole, and says it is over."""
 
     def scan(self, resolver, catalogue, *, max_chars=None, extra=()):
         """Build a scan that moved, then render it for a channel."""
@@ -374,30 +465,23 @@ class DeltaDensityTests(unittest.TestCase):
             return scan_message(payload)
         return scan_message(payload, max_chars=max_chars)
 
-    def test_a_crowded_scan_still_opens_with_what_the_models_moved_are_for(self):
-        """Thirty new models cannot all be introduced; the first ones still are."""
+    def test_a_crowded_scan_still_introduces_every_model_it_reports(self):
+        """Thirty new models make a long message; none of them is dropped for it."""
         resolver = DescriptionResolver({"fake": NamedDescriptionSource("fake", "")})
-        full = self.scan(resolver, crowded_catalogue(), max_chars=10**9)
         message = self.scan(resolver, crowded_catalogue())
-        self.assertLess(len(message), len(full))
-        self.assertIn("本消息已压缩至 3000 字符内", message)
+        self.assertGreater(len(message), 3000)
         self.assertIn("【变化模型能力】", message)
         self.assertLess(message.index("【变化模型能力】"), message.index("【结论】"))
-        # The opening block is bounded like any other list, and what the bound
-        # cut is stated as a count, so an absent model reads as left out rather
-        # than as never having existed.
-        self.assertIn("new-0 的官方说明", message)
-        self.assertNotIn("new-29 的官方说明", message)
-        self.assertIn("…其余 22 个模型的能力见完整明细", message)
-        self.assertIn("new-29 的官方说明", full)
+        for position in (0, 29):
+            self.assertIn(f"new-{position} 的官方说明", message)
+        self.assertIn("发送前需总结压缩到 3000 字内", message)
 
-    def test_a_shortened_scan_still_names_every_channel_it_scanned(self):
+    def test_an_over_budget_scan_still_names_every_channel_it_scanned(self):
         """A channel the scan reached is a fact about the scan, not a detail."""
         resolver = DescriptionResolver({"fake": NamedDescriptionSource("fake", "")})
         message = self.scan(
             resolver,
             crowded_catalogue(),
-            max_chars=700,
             extra=[
                 ScannedProvider(
                     [priced_record("base")],
@@ -411,11 +495,17 @@ class DeltaDensityTests(unittest.TestCase):
                 ),
             ],
         )
-        self.assertLessEqual(len(message), 700)
         for name in ("假渠道", "安静渠道", "坏渠道"):
             self.assertIn(name, message)
         # A channel that answered with nothing keeps its reason too.
         self.assertIn("official document changed shape", message)
+        # And what the summary has to preserve is named for whoever writes it.
+        self.assertIn("保留标题、结论、各渠道条目与全部金额", message)
+
+    def test_a_scan_that_fits_carries_no_such_note(self):
+        resolver = DescriptionResolver({"fake": NamedDescriptionSource("fake", "")})
+        message = self.scan(resolver, crowded_catalogue(1))
+        self.assertNotIn("需总结压缩", message)
 
 
 class DeltaDescriptionTests(unittest.TestCase):

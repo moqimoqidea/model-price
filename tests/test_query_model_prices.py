@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -77,13 +78,12 @@ from model_price.registry import (
     query_adapters,
     select_compare_providers,
 )
-from model_price.budget import DEFAULT_MAX_CHARS, fit_to_budget
-from model_price.messages import (
-    Detail,
-    band_lines,
-    comparison_message,
-    scan_message,
+from model_price.budget import DEFAULT_MAX_CHARS, overage
+from model_price.descriptions.core import (
+    SUMMARY_MAX_CHARS,
+    description_record,
 )
+from model_price.messages import band_lines, comparison_message, scan_message
 from model_price.reporting import (
     format_moment,
     offer_condition_text,
@@ -1336,114 +1336,104 @@ class MessageRenderingTests(unittest.TestCase):
         )
         self.assertNotIn("https://example.test/pricing", introduction)
 
-    def test_a_denser_message_keeps_the_purpose_and_drops_the_specifications(self):
-        """What the model is for is why the block is at the top; specs are not."""
-        message = comparison_message(comparison_payload(), max_chars=500)
-        self.assertIn("【模型介绍】", message)
-        self.assertIn("用途：面向代码与智能体的高吞吐模型。", message)
-        self.assertIn("主打能力：文本生成、函数调用", message)
-        self.assertNotIn("生命周期", message)
-        self.assertNotIn("规格", message)
-        # The page survives every density: an unsourced claim is not a fact.
-        self.assertIn("来源：腾讯云模型广场", message)
+    def test_an_over_long_summary_is_kept_whole_and_labelled(self):
+        """The tool has no model to ask, so it states the overrun rather than cutting.
+
+        Cutting would read as the vendor's own wording: a sentence that stops
+        mid-clause carries no sign that it was the first part of one.
+        """
+        payload = comparison_payload()
+        payload["model_descriptions"] = [
+            description_of(
+                "deepseek/deepseek-flash", "DeepSeek-V4.1-Flash", LONG_SUMMARY
+            )
+        ]
+        message = comparison_message(payload)
+        self.assertIn(f"用途（原文 {len(LONG_SUMMARY)} 字", message)
+        self.assertIn(f"超过 {SUMMARY_MAX_CHARS} 字上限", message)
+        self.assertIn("需先总结再发送", message)
+        self.assertIn(LONG_SUMMARY, message)
 
 
 class MessageBudgetTests(unittest.TestCase):
-    """A message has to fit the channel that carries it before it is sent."""
+    """The message has to fit the channel it is sent through before it is sent."""
 
-    def test_a_report_that_fits_is_sent_at_full_detail(self):
+    def test_a_report_that_fits_is_sent_as_it_stands(self):
         message = comparison_message(comparison_payload())
         self.assertLessEqual(len(message), DEFAULT_MAX_CHARS)
         self.assertIn("【渠道对比】", message)
-        self.assertIn("【差异总结】", message)
-        self.assertNotIn("已压缩", message)
+        self.assertNotIn("需总结压缩", message)
 
     def test_the_default_budget_stays_inside_the_channel_it_writes_for(self):
         """DingTalk carries 5120 characters, and a report is kept well inside it."""
         self.assertLess(DEFAULT_MAX_CHARS, 5120)
 
-    def test_a_report_over_the_budget_is_re_rendered_denser_not_cut(self):
+    def test_an_over_long_report_loses_nothing_and_says_it_must_be_summarized(self):
+        """Nothing is dropped to fit, and that is the point.
+
+        A report that comes in under the limit because a block was removed reports
+        on less than the scan covered, and the reader cannot tell an omitted block
+        from one that was never there.
+        """
         message = comparison_message(crowded_comparison_payload())
-        self.assertLessEqual(len(message), DEFAULT_MAX_CHARS)
-        # Every channel is still named, and every amount still carries its terms.
+        self.assertGreater(len(message), DEFAULT_MAX_CHARS)
         for position in range(9):
             self.assertIn(f"渠道{position + 1}", message)
         for amount in CROWDED_AMOUNTS:
             self.assertIn(amount, message)
-        # What a denser level left out, it says it left out.
-        self.assertIn("本消息已压缩至 3000 字符内", message)
-        self.assertNotIn("【差异总结】", message)
+        for heading in (
+            "【模型介绍】",
+            "【结论】",
+            "【渠道对比】",
+            "【差异总结】",
+            "【峰谷时段】",
+            "【来源检查】",
+        ):
+            self.assertIn(heading, message)
+        self.assertIn(f"需总结压缩到 {DEFAULT_MAX_CHARS} 字内", message)
 
-    def test_a_message_that_only_just_overruns_is_folded_rather_than_cut(self):
-        """The middle density folds what a reader consults, and keeps the shape.
-
-        Five channels is what the default budget affords folded rather than
-        reduced, so this is the density a full-width comparison actually lands on.
-        """
-        message = comparison_message(crowded_comparison_payload(5))
-        self.assertLessEqual(len(message), DEFAULT_MAX_CHARS)
-        self.assertIn("本消息已压缩至 3000 字符内（峰谷时段与差异总结未展开", message)
-        # Every channel keeps its own entry and its own labelled facts.
-        for position in range(5):
-            self.assertIn(f"{position + 1}. 渠道{position + 1}｜DeepSeek-V4.1-Flash", message)
-        self.assertIn("模型：deepseek/deepseek-flash", message)
-        self.assertIn("服务方式：原厂直供", message)
-        self.assertIn("地域：中国区（广州）", message)
-        # Each offer's amounts are folded onto one line rather than dropped, and
-        # the band is still the row they are folded under.
-        self.assertIn("计费方案 1：闲时", message)
-        self.assertIn(
-            "  - 输入（未命中缓存）：1 元/百万 tokens；"
-            "输入（命中缓存）：0.2 元/百万 tokens；"
-            "缓存存储：0.017 元/百万 tokens/小时；"
-            "输出：4 元/百万 tokens",
-            message,
+    def test_the_note_says_exactly_how_much_has_to_be_summarized_away(self):
+        payload = crowded_comparison_payload()
+        body = comparison_message(payload, max_chars=10_000)
+        message = comparison_message(payload)
+        reported = re.search(
+            rf"本消息 (\d+) 字，超过 {DEFAULT_MAX_CHARS} 字上限 (\d+) 字", message
         )
-        # Only the blocks a reader consults afterwards are gone.
-        self.assertNotIn("【差异总结】", message)
-        self.assertNotIn("【峰谷时段】", message)
-        self.assertIn("【来源检查】", message)
+        self.assertIsNotNone(reported, message.splitlines()[-1])
+        chars, over = (int(value) for value in reported.groups())
+        # The count is the report itself, and the overrun is what it has to shed:
+        # the sender has to take away exactly that much and no more.
+        self.assertEqual(chars, len(body))
+        self.assertEqual(over, len(body) - DEFAULT_MAX_CHARS)
 
-    def test_a_denser_message_still_states_every_amount_it_stated_before(self):
-        """A denser level re-lays-out the report; it never drops a price."""
+    def test_an_over_long_report_is_the_same_report_with_a_note_appended(self):
+        """The note is the only difference; no line of the report changes."""
         payload = crowded_comparison_payload()
-        full = comparison_message(payload, max_chars=10**9)
-        denser = comparison_message(payload)
-        self.assertLess(len(denser), len(full))
-        for amount in CROWDED_AMOUNTS:
-            self.assertEqual(
-                full.count(amount), denser.count(amount), amount
-            )
-        # Full detail is what the extra room buys, so it states the blocks the
-        # denser one names as left out.
-        self.assertIn("【差异总结】", full)
-        self.assertIn("本消息已压缩至 3000 字符内", denser)
-
-    def test_a_wider_budget_buys_back_the_richer_rendering(self):
-        """The budget is asked for per invocation rather than built in."""
-        payload = crowded_comparison_payload()
-        default = comparison_message(payload)
+        at_default = comparison_message(payload)
         wider = comparison_message(payload, max_chars=10_000)
-        self.assertLess(len(default), len(wider))
-        self.assertIn("【差异总结】", wider)
-        self.assertNotIn("已压缩", wider)
-
-    def test_a_message_that_cannot_be_made_to_fit_says_so_rather_than_pretending(self):
-        """Sending an over-long report as if it fitted reads as a complete one."""
-        message = comparison_message(crowded_comparison_payload(), max_chars=1)
-        self.assertIn("已按最精简的形式压缩，仍超过该上限", message)
-        self.assertNotIn("【差异总结】", message)
-
-    def test_the_richest_level_that_fits_is_the_one_returned(self):
-        """Full detail stays whenever it is affordable, however much is left."""
-        self.assertTrue(
-            fit_to_budget(DETAILS, by_size, limit=10**9).startswith("FULL:")
+        self.assertTrue(at_default.startswith(wider), at_default[:200])
+        self.assertEqual(
+            at_default[len(wider) :].strip().splitlines()[0],
+            next(
+                line
+                for line in at_default.splitlines()
+                if line.startswith("本消息 ")
+            ),
         )
-        self.assertTrue(fit_to_budget(DETAILS, by_size, limit=50).startswith("COMPACT:"))
 
-    def test_the_densest_level_is_returned_even_when_nothing_fits(self):
-        """It is the most honest form reachable, and it states what it left out."""
-        self.assertTrue(fit_to_budget(DETAILS, by_size, limit=1).startswith("BRIEF:"))
+    def test_the_budget_is_asked_for_per_invocation_not_built_in(self):
+        payload = crowded_comparison_payload()
+        self.assertEqual(
+            comparison_message(payload, max_chars=10_000).count("本消息 "), 0
+        )
+        self.assertGreaterEqual(
+            comparison_message(payload, max_chars=1).count("本消息 "), 1
+        )
+
+    def test_overage_is_what_a_message_has_to_shed(self):
+        self.assertEqual(overage("abcd", 4), 0)
+        self.assertEqual(overage("abcde", 4), 1)
+        self.assertEqual(overage("", 4), 0)
 
     def test_the_budget_switch_reaches_every_subcommand_that_renders_a_message(self):
         parser = query_model_prices.build_parser()
@@ -1461,14 +1451,6 @@ class MessageBudgetTests(unittest.TestCase):
             ).max_chars,
             1200,
         )
-
-
-DETAILS = (Detail.FULL, Detail.COMPACT, Detail.BRIEF)
-
-
-def by_size(level):
-    """A rendering that gets shorter as the level gets denser, by a known length."""
-    return f"{level.name}:" + "x" * (10 ** (2 - level))
 
 
 def comparison_payload():
@@ -1512,24 +1494,32 @@ def comparison_payload():
 
 
 def description_of(model_id, display_name, summary, **overrides):
-    """One vendor introduction, as the description resolver returns it."""
-    description = {
-        "model_id": model_id,
-        "display_name": display_name,
-        "status": "available",
-        "summary": summary,
-        "capabilities": ["文本生成", "函数调用"],
-        "lifecycle": "active",
-        "specifications": {"context_window": "128,000"},
-        "source": {
-            "name": "腾讯云模型广场",
-            "url": f"https://example.test/models/{model_id}",
-            "kind": "tencent_mirror",
-            "retrieved_at": "2026-09-15T00:00:00+08:00",
-        },
-    }
+    """One vendor introduction, as the description resolver returns it.
+
+    Built through the record every source funnels through, so a fixture cannot
+    drift from the shape — including whether the summary is over its limit.
+    """
+    description = description_record(
+        model_id,
+        display_name,
+        summary,
+        f"https://example.test/models/{model_id}",
+        "tencent_mirror",
+        source_name="腾讯云模型广场",
+        capabilities=("文本生成", "函数调用"),
+        lifecycle="active",
+        specifications={"context_window": "128,000"},
+    )
     description.update(overrides)
     return description
+
+
+# A vendor's announcement, which runs past what one message may carry: the page
+# DeepSeek publishes for a model is a press release rather than a summary.
+LONG_SUMMARY = (
+    "今天，我们正式发布新一代模型。这个版本在推理速度、吞吐与多模态理解上均有提升，"
+    "并针对代码与智能体任务做了专门优化。"
+) * 6
 
 
 def crowded_comparison_payload(channels=9):
