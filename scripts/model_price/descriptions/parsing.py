@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import html
 import re
-from typing import Any
 
 from ..models import normalize_model
 from ..parsing import markdown_link_text

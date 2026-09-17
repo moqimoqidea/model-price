@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 from typing import Any, Iterable
 
 from ..core import now_iso
-from ..models import normalize_model
 from ..text import clean_text
 
 AVAILABLE = "available"
@@ -100,16 +99,3 @@ class DescriptionSource(ABC):
         record: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Return an official description, or ``None`` when there is no match."""
-
-    def describe_many(
-        self, targets: Iterable[dict[str, Any]]
-    ) -> dict[str, dict[str, Any] | None]:
-        """Describe several targets; sources may override for one-fetch catalogues."""
-        return {
-            normalize_model(target["model_id"]): self.describe(
-                target["model_id"],
-                target.get("display_name", ""),
-                record=target.get("record"),
-            )
-            for target in targets
-        }
