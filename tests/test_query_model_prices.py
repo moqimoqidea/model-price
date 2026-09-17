@@ -77,14 +77,13 @@ from model_price.registry import (
     query_adapters,
     select_compare_providers,
 )
+from model_price.messages import band_lines, comparison_message, scan_message
 from model_price.reporting import (
-    delta_to_markdown,
     format_moment,
     offer_condition_text,
     offering_text,
     price_lookup,
-    time_band_sections,
-    to_markdown,
+    shared_conditions,
 )
 from model_price.snapshots import (
     SnapshotStore,
@@ -1206,7 +1205,9 @@ class ModelNameCouplingTests(unittest.TestCase):
         self.assertEqual(record["offers"][0]["name"], "priority")
 
 
-class MarkdownRenderingTests(unittest.TestCase):
+class MessageRenderingTests(unittest.TestCase):
+    """A comparison message is read on a phone before it is ever parsed."""
+
     def test_matched_model_without_parseable_prices_is_explained(self):
         payload = {
             "query": "veo-3.1",
@@ -1227,7 +1228,113 @@ class MarkdownRenderingTests(unittest.TestCase):
             ],
             "source_checks": [],
         }
-        self.assertIn("未给出本工具可解析的价格", to_markdown(payload))
+        self.assertIn("未给出本工具可解析的价格", comparison_message(payload))
+
+    def test_the_message_opens_with_what_it_is_and_what_it_covers(self):
+        message = comparison_message(comparison_payload())
+        self.assertTrue(message.startswith("模型价格对比\n"))
+        self.assertIn("时间：2026-09-15 00:00（UTC+8）", message)
+        self.assertIn("主题：deepseek-flash 在各渠道的价格与服务方式", message)
+
+    def test_the_message_states_the_conclusion_before_the_channels(self):
+        message = comparison_message(comparison_payload())
+        self.assertIn("【结论】", message)
+        self.assertIn("1 个渠道、1 个渠道版本、1 种计费方案", message)
+        self.assertLess(message.index("【结论】"), message.index("【渠道对比】"))
+        self.assertLess(message.index("【渠道对比】"), message.index("【差异总结】"))
+
+    def test_a_comparison_that_found_nothing_says_so_once(self):
+        message = comparison_message(
+            {
+                "query": "no-such-model",
+                "retrieved_at": "2026-09-15T00:00:00+08:00",
+                "results": [],
+            }
+        )
+        self.assertIn("未发现由官方来源确认提供的匹配模型或版本。", message)
+        self.assertNotIn("【渠道对比】", message)
+
+    def test_the_message_carries_no_markup_a_parser_could_reinterpret(self):
+        """DingTalk reads its own Markdown, and reads this report wrong."""
+        message = comparison_message(comparison_payload())
+        self.assertNotIn("**", message)
+        self.assertNotIn("](", message)
+        self.assertNotIn("|---", message)
+        self.assertFalse(
+            any(line.startswith("#") for line in message.splitlines()), message
+        )
+
+    def test_a_source_line_points_back_at_a_page_the_entry_already_showed(self):
+        """The channel's entry carries this page, and one message holds so much."""
+        payload = comparison_payload()
+        payload["source_checks"] = [
+            {
+                "provider": {"id": "tencent", "name": "腾讯云 TokenHub"},
+                "status": "available",
+                "source": {
+                    "kind": "official_markdown",
+                    "url": "https://example.test/pricing",
+                    "retrieved_at": "2026-09-15T00:00:00+08:00",
+                },
+                "cache": {"status": "hit", "fetched_at": "2026-09-15T00:00:00+08:00"},
+            }
+        ]
+        message = comparison_message(payload)
+        self.assertIn("- 腾讯云 TokenHub：已找到（来源见上）", message)
+        self.assertEqual(message.count("https://example.test/pricing"), 1)
+        self.assertNotIn("缓存", message.split("【来源检查】")[1])
+
+    def test_a_source_line_keeps_the_page_of_a_channel_shown_nowhere_else(self):
+        """A channel that matched nothing never got an entry to carry its page."""
+        payload = comparison_payload()
+        payload["source_checks"] = [
+            {
+                "provider": {"id": "kimi", "name": "月之暗面 Kimi"},
+                "status": "not_found",
+                "source": {
+                    "kind": "official_markdown",
+                    "url": "https://example.test/kimi",
+                    "retrieved_at": "2026-09-15T00:00:00+08:00",
+                },
+            }
+        ]
+        message = comparison_message(payload)
+        self.assertIn(
+            "- 月之暗面 Kimi：未找到匹配模型｜https://example.test/kimi", message
+        )
+
+
+def comparison_payload():
+    """One priced channel, as the comparison renderer receives it."""
+    return {
+        "query": "deepseek-flash",
+        "retrieved_at": "2026-09-15T00:00:00+08:00",
+        "results": [
+            {
+                "provider": {"id": "tencent", "name": "腾讯云 TokenHub"},
+                "model_id": "deepseek/deepseek-flash",
+                "display_name": "DeepSeek-V4.1-Flash 原厂直供",
+                "region": "中国区（广州）",
+                "delivery_mode": "upstream_direct",
+                "offers": [
+                    {
+                        "name": "online_standard",
+                        "conditions": {},
+                        "prices": [
+                            price_item("input", "输入", "2", "CNY_per_million_tokens"),
+                            price_item("output", "输出", "8", "CNY_per_million_tokens"),
+                        ],
+                    }
+                ],
+                "source": {
+                    "url": "https://example.test/pricing",
+                    "kind": "official_markdown",
+                    "retrieved_at": "2026-09-15T00:00:00+08:00",
+                },
+            }
+        ],
+        "source_checks": [],
+    }
 
 
 class AliyunAdapterTests(unittest.TestCase):
@@ -1420,23 +1527,77 @@ class TimeBandRenderingTests(unittest.TestCase):
             },
         }
 
-    def test_a_banded_row_carries_the_hours_it_covers(self):
+    def test_a_banded_row_names_its_band_without_repeating_the_window(self):
+        """Every offer of a model publishes the same hours, and 峰谷时段 prints
+        them once, so a row that carried them again said the same thing twice."""
         offer = {
             "name": "online_conditional",
             "conditions": {"time_band": "空闲时段"},
             "prices": [],
         }
-        text = offer_condition_text(offer, self.record("周一至周五 9:00–12:00"))
-        self.assertIn("time_band=空闲时段", text)
-        self.assertIn("时段规则=周一至周五 9:00–12:00", text)
+        text = offer_condition_text(offer, {})
+        self.assertEqual(text, "空闲时段")
 
-    def test_a_row_without_a_time_band_gets_no_window(self):
-        """A model billed the same all day must not inherit a neighbour's schedule."""
+    def test_a_row_without_a_time_band_names_its_offer(self):
+        """A model billed the same all day keeps whatever names its offer."""
         offer = {"name": "online_standard", "conditions": {}, "prices": []}
-        text = offer_condition_text(offer, self.record("周一至周五 9:00–12:00"))
-        self.assertNotIn("时段规则", text)
+        text = offer_condition_text(offer, {})
+        self.assertEqual(text, "online_standard")
 
-    def test_the_report_quotes_each_platforms_own_words(self):
+    def test_a_band_offer_named_like_its_band_is_not_a_stutter(self):
+        """Aliyun files 闲时 as both the offer's name and its ``time_band``."""
+        offer = {"name": "闲时", "conditions": {"time_band": "闲时"}, "prices": []}
+        self.assertEqual(offer_condition_text(offer, {}), "闲时")
+
+    def test_terms_every_offer_shares_are_read_as_the_models_own(self):
+        """Ark bills both bands the same way from the same section."""
+        record = {
+            "offers": [
+                {
+                    "name": "online_standard",
+                    "conditions": {
+                        "time_band": "空闲时段",
+                        "billing_mode": "pay_as_you_go",
+                        "release_stage": "stable",
+                    },
+                },
+                {
+                    "name": "online_standard",
+                    "conditions": {
+                        "time_band": "高峰时段",
+                        "billing_mode": "pay_as_you_go",
+                        "release_stage": "stable",
+                    },
+                },
+            ]
+        }
+        shared = shared_conditions(record)
+        self.assertEqual(
+            shared, {"billing_mode": "pay_as_you_go", "release_stage": "stable"}
+        )
+        self.assertEqual(offer_condition_text(record["offers"][0], shared), "空闲时段")
+
+    def test_a_term_only_one_offer_carries_stays_on_that_row(self):
+        """A term that tells two offers apart is the one a row has to keep."""
+        offer = {
+            "name": "按量后付费",
+            "conditions": {"time_band": "高峰时段", "release_stage": "retiring"},
+        }
+        self.assertEqual(
+            offer_condition_text(offer, {"billing_mode": "pay_as_you_go"}),
+            "高峰时段；release_stage=retiring",
+        )
+
+    def test_a_model_with_one_offer_shares_no_terms(self):
+        """Nothing is common to a set of one, and nothing is hoisted for it."""
+        record = {
+            "offers": [
+                {"name": "标准", "conditions": {"billing_mode": "pay_as_you_go"}}
+            ]
+        }
+        self.assertEqual(shared_conditions(record), {})
+
+    def test_the_message_quotes_each_platforms_own_words(self):
         payload = {
             "query": "deepseek-flash",
             "retrieved_at": "2026-09-15T00:00:00+08:00",
@@ -1459,13 +1620,13 @@ class TimeBandRenderingTests(unittest.TestCase):
             ],
             "source_checks": [],
         }
-        report = to_markdown(payload)
-        self.assertIn("## 峰谷时段", report)
-        self.assertIn("腾讯云 TokenHub", report)
-        self.assertIn("工作日（周一至周五）……其余为空闲时段。", report)
+        message = comparison_message(payload)
+        self.assertIn("【峰谷时段】", message)
+        self.assertIn("腾讯云 TokenHub", message)
+        self.assertIn("工作日（周一至周五）……其余为空闲时段。", message)
 
     def test_a_comparison_without_time_bands_has_no_window_section(self):
-        self.assertEqual(time_band_sections([{"offers": [{"conditions": {}}]}]), [])
+        self.assertEqual(band_lines([{"offers": [{"conditions": {}}]}]), [])
 
 
 def scanned_record(
@@ -1558,8 +1719,8 @@ def snapshot_of(records, captured_at="2026-09-16T10:00:00+08:00"):
 
 
 def render_scan(store, providers, captured_at):
-    """Scan these providers against the store, then render the report they make."""
-    return delta_to_markdown(
+    """Scan these providers against the store, then render the message they make."""
+    return scan_message(
         scan_providers(list(providers), store, captured_at=captured_at)
     )
 
@@ -1861,15 +2022,19 @@ class DeltaRenderingTests(unittest.TestCase):
             "online_standard；context_tier=输入长度 [0, 32]",
         )
 
-    def test_an_unchanged_channel_is_named_as_unchanged_on_the_vendors_own_word(self):
+    def test_a_scan_that_moved_nothing_says_only_that_it_ran(self):
+        """A scheduled run still reports itself; the catalogue stays out of it."""
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
             provider = ScannedProvider(
                 [scanned_record("m1", "M1", "2", "8", updated_at="2026-09-14T03:03:07Z")]
             )
             render_scan(store, [provider], "2026-09-15T10:00:00+08:00")
-            report = render_scan(store, [provider], "2026-09-16T10:00:00+08:00")
-            self.assertIn("| 假渠道 | 1 | 无变化 | — | 2026-09-14 03:03（UTC+0） |", report)
+            message = render_scan(store, [provider], "2026-09-16T10:00:00+08:00")
+            self.assertIn("1 个渠道共 1 个模型，全部无变化。", message)
+            self.assertIn("时间：2026-09-16 10:00（UTC+8）", message)
+            self.assertNotIn("【渠道概览】", message)
+            self.assertNotIn("【变化详情】", message)
 
     def test_a_channel_that_moved_lists_what_moved(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1962,10 +2127,11 @@ class DetectionReportTests(unittest.TestCase):
                 [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
                 "2026-09-16T13:37:00+08:00",
             )
-            self.assertTrue(report.startswith("# 模型价格自动检测\n"))
-            self.assertIn("扫描时间：2026-09-16 13:37（UTC+8）", report)
+            self.assertTrue(report.startswith("模型价格自动检测\n"))
+            self.assertIn("时间：2026-09-16 13:37（UTC+8）", report)
+            self.assertIn("主题：全渠道模型与计费变化", report)
 
-    def test_one_line_states_the_scan_before_the_table_is_read(self):
+    def test_one_line_states_the_scan_before_the_channels_are_read(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
             moved = ScannedProvider(
@@ -1992,16 +2158,18 @@ class DetectionReportTests(unittest.TestCase):
                 "2026-09-16T10:00:00+08:00",
             )
             self.assertIn(
-                "**本次结论**：2 个渠道共 2 个模型：1 个有变化，1 个无变化，0 个未能完成。",
+                "【结论】\n\n2 个渠道共 2 个模型：1 个有变化，1 个无变化，0 个未能完成。",
                 report,
             )
-            self.assertLess(report.index("**本次结论**"), report.index("## 各渠道模型数量"))
+            self.assertLess(report.index("【结论】"), report.index("【渠道概览】"))
 
-    def test_every_scanned_channel_gets_a_row_even_when_it_failed(self):
+    def test_every_scanned_channel_is_named_even_when_it_failed(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
             working = ScannedProvider(
-                [scanned_record("m1", "M1", "2", "8")], provider_id="ok", provider_name="好渠道"
+                [scanned_record("m1", "M1", "2", "8", updated_at="2026-09-14T03:03:07Z")],
+                provider_id="ok",
+                provider_name="好渠道",
             )
             render_scan(store, [working], "2026-09-15T10:00:00+08:00")
             report = render_scan(
@@ -2016,8 +2184,13 @@ class DetectionReportTests(unittest.TestCase):
                 ],
                 "2026-09-16T10:00:00+08:00",
             )
-            self.assertIn("| 好渠道 | 1 | 无变化 | — | — |", report)
-            self.assertIn("| 坏渠道 | — | 来源解析失败 | offline | — |", report)
+            self.assertIn("好渠道", report)
+            self.assertIn("   状态：无变化", report)
+            self.assertIn("   官方更新时间：2026-09-14 03:03（UTC+0）", report)
+            self.assertIn("坏渠道", report)
+            self.assertIn("   状态：来源解析失败", report)
+            self.assertIn("   本次变化：offline", report)
+            self.assertIn("   模型数：—", report)
 
     def test_a_channel_that_moved_is_listed_before_the_quiet_ones(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2045,18 +2218,40 @@ class DetectionReportTests(unittest.TestCase):
                 ],
                 "2026-09-16T10:00:00+08:00",
             )
-            self.assertLess(report.index("| 动了的渠道 |"), report.index("| 没动的渠道 |"))
+            self.assertLess(report.index("动了的渠道"), report.index("没动的渠道"))
 
-    def test_a_channel_that_held_still_is_a_row_rather_than_a_section(self):
+    def test_a_channel_that_held_still_has_no_block_of_its_own(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
-            provider = ScannedProvider([scanned_record("m1", "M1", "2", "8")])
-            render_scan(store, [provider], "2026-09-15T10:00:00+08:00")
-            report = render_scan(store, [provider], "2026-09-16T10:00:00+08:00")
-            self.assertNotIn("## 无变化的渠道", report)
-            self.assertNotIn("## 变化详情", report)
+            quiet = ScannedProvider(
+                [scanned_record("m1", "M1", "2", "8")],
+                provider_id="quiet",
+                provider_name="没动的渠道",
+            )
+            moved = ScannedProvider(
+                [scanned_record("m1", "M1", "2", "8")],
+                provider_id="moved",
+                provider_name="动了的渠道",
+            )
+            render_scan(store, [quiet, moved], "2026-09-15T10:00:00+08:00")
+            report = render_scan(
+                store,
+                [
+                    quiet,
+                    ScannedProvider(
+                        [scanned_record("m1", "M1", "2", "8"), scanned_record("m2", "M2", "3", "12")],
+                        provider_id="moved",
+                        provider_name="动了的渠道",
+                    ),
+                ],
+                "2026-09-16T10:00:00+08:00",
+            )
+            self.assertIn("没动的渠道", report)
+            detail = report.split("【变化详情】")[1]
+            self.assertIn("1. 动了的渠道", detail)
+            self.assertNotIn("没动的渠道", detail)
 
-    def test_a_cell_says_what_moved_rather_than_only_that_something_did(self):
+    def test_a_channel_entry_says_what_moved_rather_than_only_that_something_did(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
             render_scan(
@@ -2076,7 +2271,34 @@ class DetectionReportTests(unittest.TestCase):
                 ],
                 "2026-09-16T10:00:00+08:00",
             )
-            self.assertIn("| 假渠道 | 2 | 有变化 | 新增模型 1；价格变化 1 | — |", report)
+            self.assertIn("   本次变化：新增模型 1；价格变化 1", report)
+
+    def test_the_scan_closes_with_what_its_channels_add_up_to(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            render_scan(
+                store,
+                [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
+                "2026-09-15T10:00:00+08:00",
+            )
+            report = render_scan(
+                store,
+                [
+                    ScannedProvider(
+                        [scanned_record("m1", "M1", "1", "8"), scanned_record("m2", "M2", "3", "12")]
+                    ),
+                    ScannedProvider(
+                        error=SourceError("offline"),
+                        provider_id="bad",
+                        provider_name="坏渠道",
+                    ),
+                ],
+                "2026-09-16T10:00:00+08:00",
+            )
+            self.assertIn("【小结】", report)
+            self.assertIn("1 个渠道读取成功；1 个未能完成", report)
+            self.assertIn("1 个有变化，见上「变化详情」", report)
+            self.assertGreater(report.index("【小结】"), report.index("【变化详情】"))
 
     def test_the_scan_reports_its_own_skill_update_check(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2089,8 +2311,8 @@ class DetectionReportTests(unittest.TestCase):
                 "status": "up_to_date",
                 "checked_at": "2026-09-16T13:37:00+08:00",
             }
-            report = delta_to_markdown(payload)
-            self.assertIn("## Skill 更新检查", report)
+            report = scan_message(payload)
+            self.assertIn("【Skill 更新检查】", report)
             self.assertIn("当前 skill 已是远端版本；检查时间 2026-09-16 13:37（UTC+8）", report)
 
 

@@ -4,13 +4,17 @@
 The implementation lives in the ``model_price`` package beside this file. This
 module stays a thin, stable CLI entry point so existing invocations keep working:
 
-    python3 scripts/query_model_prices.py compare deepseek-flash --format markdown
-    python3 scripts/query_model_prices.py delta --format markdown
+    python3 scripts/query_model_prices.py compare deepseek-flash --format message
+    python3 scripts/query_model_prices.py delta --format message
+
+``message`` is a plain-text message a DingTalk channel can carry as it stands;
+``json`` is the same payload for anything that parses rather than reads it.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -20,6 +24,7 @@ if __package__ in (None, ""):
 from model_price.core import HttpClient, now_iso
 from model_price.delta import scan_providers
 from model_price.descriptions import build_description_resolver
+from model_price.messages import comparison_message, scan_message
 from model_price.paths import DEFAULT_CACHE_DIR, DEFAULT_SNAPSHOT_DIR
 from model_price.registry import (
     build_adapters,
@@ -29,11 +34,12 @@ from model_price.registry import (
     select_compare_providers,
     source_status,
 )
-from model_price.reporting import delta_to_markdown, emit, to_markdown
 from model_price.snapshots import SnapshotStore
 from model_price.updating import update_skill_before_refresh
 
 PROVIDER_OPTION_HELP = "query only this provider; repeat to compare selected providers"
+
+FORMAT_HELP = "json for machines, message for a DingTalk channel"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -71,7 +77,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="ignore fresh caches for selected providers",
     )
-    compare.add_argument("--format", choices=("json", "markdown"), default="json")
+    compare.add_argument(
+        "--format", choices=("json", "message"), default="json", help=FORMAT_HELP
+    )
 
     provider = subparsers.add_parser(
         "provider", help="query a model family from one provider"
@@ -82,7 +90,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--exact", action="store_true", help="disable model-family matching"
     )
     provider.add_argument("--refresh", action="store_true", help="ignore fresh cache")
-    provider.add_argument("--format", choices=("json", "markdown"), default="json")
+    provider.add_argument(
+        "--format", choices=("json", "message"), default="json", help=FORMAT_HELP
+    )
 
     listing = subparsers.add_parser("list", help="list model IDs from one provider")
     listing.add_argument("provider")
@@ -105,7 +115,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="also scan OpenAI, Anthropic, Google, and xAI",
     )
-    delta.add_argument("--format", choices=("json", "markdown"), default="markdown")
+    delta.add_argument(
+        "--format", choices=("json", "message"), default="message", help=FORMAT_HELP
+    )
     delta.add_argument(
         "--snapshot-dir",
         type=Path,
@@ -181,11 +193,11 @@ def main() -> int:
 
     if skill_update:
         payload["skill_update"] = skill_update
-    emit(
-        payload,
-        args.format,
-        delta_to_markdown if args.command == "delta" else to_markdown,
-    )
+    if args.format == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        render = scan_message if args.command == "delta" else comparison_message
+        print(render(payload), end="")
     return 0
 
 

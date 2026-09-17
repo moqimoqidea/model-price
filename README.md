@@ -54,17 +54,70 @@ ln -s "/path/to/this/repo" .workbuddy/skills/model-price
 在仓库（或已安装的 skill 目录）下执行：
 
 ```bash
-python3 scripts/query_model_prices.py compare MODEL --format markdown   # 跨渠道对比
+python3 scripts/query_model_prices.py compare MODEL --format message   # 跨渠道对比
 python3 scripts/query_model_prices.py compare MODEL --provider aliyun   # 限定渠道，可重复
 python3 scripts/query_model_prices.py compare MODEL --exact             # 只认官方精确 id
 python3 scripts/query_model_prices.py compare MODEL --include-overseas  # 含海外渠道
 python3 scripts/query_model_prices.py provider PROVIDER MODEL           # 单渠道查询
 python3 scripts/query_model_prices.py list PROVIDER --prefix PREFIX     # 列模型 id
-python3 scripts/query_model_prices.py delta --format markdown           # 全量扫描并与上次对比
+python3 scripts/query_model_prices.py delta --format message            # 全量扫描并与上次对比
 ```
 
-默认输出 JSON，加 `--format markdown` 得到可直接转达的报告。渠道 id 见
+`--format message` 得到一条可直接转发到钉钉的普通消息（`delta` 默认就是它），
+`--format json` 得到同样的数据，给需要解析而不是阅读的一方。渠道 id 见
 [SKILL.md](SKILL.md#model-price)。
+
+**要发 IM 就用 `--format message`。** 用户说「发给我」「发到钉钉/微信/飞书」或任何
+走即时通讯的要求，都该出 message 格式，不必再等他补一句开关。默认是 `json`，
+因为 `compare` / `provider` 的常见消费方是程序；`delta` 默认 `message`，因为它的
+常见消费方就是聊天窗口。
+
+## 输出
+
+消息按「总—分—总」排布：抬头是标题、时间与主题，随后是结论、渠道明细、
+差异总结，再往下才是峰谷时段原文、模型介绍与各渠道来源。
+
+```
+模型价格对比
+时间：2026-09-17 23:53（UTC+8）
+主题：deepseek-flash 在各渠道的价格与服务方式
+
+【结论】
+……
+【渠道对比】
+1. 阿里云百炼｜DeepSeek-V4.1-Flash
+   模型：deepseek-v4.1-flash
+   服务方式：平台托管
+   地域：中国区
+   计费方案 1：闲时
+      - 输入：1 元/百万 tokens
+【差异总结】
+……
+```
+
+**为什么不发 Markdown 文档。** 钉钉会用自家的解析器读文档，本工具的报告层级密、
+表格多，被它读回来容易串行——列错位、标题被吞、价格落到别的模型下面。所以
+消息里一个 Markdown 记号都没有：层级靠编号与缩进，段落之间空行分隔，每条来源
+URL 都写在行尾，避免被钉钉自动链接连带标点一起吃掉。
+
+**投递必须走纯文本通道。** 钉钉在渲染一条 Markdown 消息前会先解析它，那个解析
+把每个单换行都变成空格——三行抬头会挤成一行，以 URL 结尾的段落还会吞掉后面那个
+换行（`…&_v=undefined` 直接粘上下一个渠道名）。所以发送时要显式指定文本类型：
+
+```bash
+dws chat +messages-send --identity user \
+  --open-dingtalk-id <接收人 openDingTalkId> \
+  --msg-type text --text "$(cat message.txt)" -y
+```
+
+`dws chat +dm` 看着等价，但它默认走 Markdown，不能用。纯文本消息单条上限
+**5120 字符**（服务端按字符数拒绝，不是字节数），所以消息得控制篇幅：已经出现在
+渠道明细里的来源 URL 不再在「来源检查」里重复，每条计费方案也只写自己的档位，
+不再把同一个渠道的峰谷时段窗口在每一行上重抄一遍。
+
+**定时任务。** `delta` 读遍各渠道后如果全都没有变化，只输出标题和一行结论
+（如「9 个渠道共 312 个模型，全部无变化。」），让你知道任务确实跑过，而不用每天
+重复一整份目录；有渠道变化、有渠道读不到、或首次运行还没有基线时，才输出完整消息。
 
 模型介绍与价格是相互独立的数据源：介绍优先读取官方 Markdown，其次读取公开结构化
 接口，最后才解析官方 HTML。某个介绍页失效不会影响价格结果；报告会如实标记“未找到

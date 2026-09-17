@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import html
 import re
-from html.parser import HTMLParser
 from typing import Any
 
 from ..models import normalize_model
@@ -183,25 +182,6 @@ def model_link(cell: str) -> tuple[str, str]:
     """Return a table cell's model label and its first link, if present."""
     match = MARKDOWN_LINK_RE.search(cell)
     return markdown_text(markdown_link_text(cell)), match.group(2) if match else ""
-
-
-class TextCollector(HTMLParser):
-    """Collect visible text from one short rendered document fragment."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.parts: list[str] = []
-
-    def handle_data(self, data: str) -> None:
-        value = clean_text(data)
-        if value:
-            self.parts.append(value)
-
-
-def visible_text(page: str) -> str:
-    parser = TextCollector()
-    parser.feed(page.replace("\x00", ""))
-    return clean_text(" ".join(parser.parts))
 
 
 def model_mentioned(text: str, *names: str) -> bool:

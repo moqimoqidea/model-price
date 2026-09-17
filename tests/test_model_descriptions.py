@@ -24,7 +24,7 @@ from model_price.descriptions.tencent_mirror import (
 )
 from model_price.pricing import make_record, price_item
 from model_price.registry import query_adapters
-from model_price.reporting import delta_to_markdown, to_markdown
+from model_price.messages import comparison_message, scan_message
 from model_price.snapshots import SnapshotStore
 
 
@@ -262,9 +262,9 @@ class QueryIntegrationTests(unittest.TestCase):
             descriptions=DescriptionResolver({}),
         )
         self.assertEqual(payload["model_descriptions"][0]["status"], "not_found")
-        report = to_markdown(payload)
-        self.assertIn("## 模型介绍", report)
-        self.assertIn("未找到官方独立介绍", report)
+        message = comparison_message(payload)
+        self.assertIn("【模型介绍】", message)
+        self.assertIn("未找到官方独立介绍", message)
 
     def test_an_introduction_failure_keeps_prices_and_renders_the_error(self):
         class SinglePriceSource(EmptyPriceSource):
@@ -280,7 +280,7 @@ class QueryIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(len(payload["results"]), 1)
         self.assertEqual(payload["model_descriptions"][0]["status"], "source_error")
-        self.assertIn("介绍来源读取失败", to_markdown(payload))
+        self.assertIn("介绍来源读取失败", comparison_message(payload))
 
 
 def priced_record(model_id, amount="1"):
@@ -341,9 +341,9 @@ class DeltaDescriptionTests(unittest.TestCase):
             )
         descriptions = payload["providers"][0]["model_descriptions"]
         self.assertEqual([item["model_id"] for item in descriptions], ["m2"])
-        report = delta_to_markdown(payload)
-        self.assertIn("**模型介绍**", report)
-        self.assertIn("适合代码与智能体任务", report)
+        message = scan_message(payload)
+        self.assertIn("模型介绍", message)
+        self.assertIn("适合代码与智能体任务", message)
 
     def test_a_removed_model_keeps_its_introduction_in_the_delta(self):
         resolver = DescriptionResolver(
@@ -365,9 +365,9 @@ class DeltaDescriptionTests(unittest.TestCase):
             )
         descriptions = payload["providers"][0]["model_descriptions"]
         self.assertEqual([item["model_id"] for item in descriptions], ["m2"])
-        report = delta_to_markdown(payload)
-        self.assertIn("下架模型", report)
-        self.assertIn("旧型号的官方说明", report)
+        message = scan_message(payload)
+        self.assertIn("下架模型", message)
+        self.assertIn("旧型号的官方说明", message)
 
 
 if __name__ == "__main__":
