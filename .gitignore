@@ -2,15 +2,24 @@
 .DS_Store
 __MACOSX/
 
-# Python
+# Python bytecode
 __pycache__/
 *.py[cod]
+
+# Python packaging
 *.egg-info/
+build/
+dist/
 .venv/
 venv/
 
-# Node
-node_modules/
+# Python tooling caches and coverage output
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
 # Editors
 .vscode/
@@ -20,5 +29,11 @@ node_modules/
 *.log
 .env
 
-# agents
-.workbuddy
+# Agent workspace (local memory, notes, sample reports)
+.workbuddy/
+
+# Runtime state written by the script — `cache/` and `snapshots/` are deliberately
+# absent here. They must exist in a fresh clone (the script writes into them), so
+# each carries its own .gitignore that excludes its contents while keeping the
+# directory itself. Ignoring them from this file would drop the directory too.
+# See cache/.gitignore and snapshots/.gitignore.

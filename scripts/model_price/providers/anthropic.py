@@ -7,7 +7,7 @@ from typing import Any
 
 from ..core import PriceSource, now_iso
 from ..errors import SourceError
-from ..models import model_family, normalize_model
+from ..models import model_family, normalize_model, without_trailing_parenthetical
 from ..parsing import markdown_link_text, markdown_tables
 from ..pricing import make_record, usd_price
 
@@ -53,7 +53,7 @@ class AnthropicAdapter(PriceSource):
         for cells in table[1:]:
             cells += [""] * (6 - len(cells))
             display_name = markdown_link_text(cells[0])
-            model_id = normalize_model(re.sub(r"\s*\([^)]*\)\s*$", "", display_name))
+            model_id = normalize_model(without_trailing_parenthetical(display_name))
             prices = [
                 item
                 for item in (
@@ -92,9 +92,7 @@ class AnthropicAdapter(PriceSource):
             for cells in price_table[1:]:
                 cells += [""] * (3 - len(cells))
                 for name in markdown_link_text(cells[0]).split(" / "):
-                    model_id = normalize_model(
-                        re.sub(r"\s*\([^)]*\)\s*$", "", name).strip()
-                    )
+                    model_id = normalize_model(without_trailing_parenthetical(name))
                     prices = [
                         item
                         for item in (

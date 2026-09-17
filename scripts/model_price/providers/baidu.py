@@ -22,7 +22,12 @@ from urllib.parse import urljoin
 
 from ..core import PriceSource, now_iso
 from ..errors import SourceError
-from ..models import model_family, normalize_model, split_trailing_parenthetical
+from ..models import (
+    model_family,
+    normalize_model,
+    split_trailing_parenthetical,
+    trailing_parenthetical,
+)
 from ..parsing import headed_document_tables, monetary_amount, time_band_label, token_price_kind
 from ..pricing import make_record, per_million_tokens, price_item, tokens_per_price_unit
 from ..text import clean_text, first_cell_line
@@ -53,7 +58,6 @@ BAIDU_WINDOW_RE = re.compile(
     r"(高峰时段|空闲时段|低峰时段|低谷时段)[：:]\s*"
     r"(\d{1,2}:\d{2}\s*[-–—~～]\s*(?:次日\s*)?\d{1,2}:\d{2})"
 )
-TRAILING_PARENTHETICAL_RE = re.compile(r"[（(]([^（()）]*)[）)]\s*$")
 
 
 def price_data_url(page: str) -> str:
@@ -80,11 +84,10 @@ def price_note(item: str) -> str:
     distinguishing two otherwise identical settlements, so it is kept rather than
     letting one overwrite the other.
     """
-    match = TRAILING_PARENTHETICAL_RE.search(clean_text(item))
-    if not match:
+    note = trailing_parenthetical(item)
+    if not note:
         return ""
-    remainder = BAIDU_WINDOW_RE.sub("", match.group(1))
-    return clean_text(remainder).strip("，,、;； ")
+    return clean_text(BAIDU_WINDOW_RE.sub("", note)).strip("，,、;； ")
 
 
 def band_evidence(items: Iterable[str]) -> tuple[str, list[str]]:

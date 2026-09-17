@@ -12,16 +12,6 @@ from .text import clean_text, numeric_values, unescape_markdown
 
 HEADING_TAGS = ("h1", "h2", "h3", "h4")
 
-# Markdown escapes the punctuation it would otherwise interpret. Vendor cells keep
-# those backslashes in the source (``deepseek\-v4\-flash正式版``, ``输入长度 \[0, 32K)``),
-# so they have to be removed before a cell can be named or matched.
-MARKDOWN_ESCAPE_RE = re.compile(r"\\([\\`*_{}\[\]()#+.!|~>-])")
-
-
-def unescape_markdown(value: str) -> str:
-    """Drop the backslash escapes Markdown puts in front of punctuation."""
-    return MARKDOWN_ESCAPE_RE.sub(r"\1", value)
-
 
 class SpanGrid:
     """A table grid built from cells that cover several rows or columns.

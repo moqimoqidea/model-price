@@ -21,13 +21,17 @@ from model_price.diffing import (
     compare_snapshots,
 )
 from model_price.errors import SourceError
-from model_price.models import model_matches, normalize_model, strip_footnote_markers
+from model_price.models import (
+    model_matches,
+    normalize_model,
+    strip_footnote_markers,
+    trailing_parenthetical,
+    without_trailing_parenthetical,
+)
 from model_price.parsing import (
     headed_document_tables,
     markdown_tables,
-    select_time_band_rules,
     split_markdown_row,
-    time_band_rules,
     time_bands_for,
     token_price_kind,
 )
@@ -179,11 +183,17 @@ class FakeGitRunner:
         )
 
 
+# This is a single-skill repository, so it is cloned straight into a skills
+# directory and the skill directory *is* the repository root. Its pathspec is
+# therefore the whole tree, not a subdirectory.
+SKILL_ROOT = Path("/repo")
+
+
 def git_update_responses(status_output=""):
     before = "a" * 40
     after = "b" * 40
     return {
-        ("rev-parse", "--show-toplevel"): (0, "/repo\n", ""),
+        ("rev-parse", "--show-toplevel"): (0, f"{SKILL_ROOT}\n", ""),
         (
             "rev-parse",
             "--abbrev-ref",
@@ -198,7 +208,7 @@ def git_update_responses(status_output=""):
             "--quiet",
             f"{before}..{after}",
             "--",
-            "skills/model-price",
+            ".",
         ): (1, "", ""),
         ("merge-base", "--is-ancestor", before, after): (0, "", ""),
         ("status", "--porcelain"): (0, status_output, ""),
@@ -349,6 +359,22 @@ class ModelMatchingTests(unittest.TestCase):
         )
         self.assertEqual(tencent_delivery_mode("DeepSeek-V4-Pro"), "self_deployed")
 
+    def test_a_trailing_annotation_never_reaches_the_model_id(self):
+        # OpenAI and Anthropic file a status note in the name's parenthetical, so
+        # the API id is the name without it. Reading the two halves apart is one
+        # implementation shared by every adapter that meets such a label.
+        self.assertEqual(without_trailing_parenthetical("gpt-5 (deprecated)"), "gpt-5")
+        self.assertEqual(without_trailing_parenthetical("gpt-5"), "gpt-5")
+        self.assertEqual(trailing_parenthetical("gpt-5"), "")
+
+    def test_a_trailing_annotation_reads_back_as_the_note_it_carries(self):
+        # Baidu states the settlement date there, and it is the only thing telling
+        # two otherwise identical price sets apart.
+        self.assertEqual(
+            trailing_parenthetical("命中缓存（高峰时段：8:00-22:00，9月9日起生效）"),
+            "高峰时段：8:00-22:00，9月9日起生效",
+        )
+
 
 class StructuredDocumentTests(unittest.TestCase):
     def adapter(self):
@@ -496,9 +522,7 @@ class SkillUpdateTests(unittest.TestCase):
     def test_remote_skill_change_is_fetched_then_fast_forwarded(self):
         runner = FakeGitRunner(git_update_responses())
 
-        result = GitSkillUpdater(
-            Path("/repo/skills/model-price"), runner=runner
-        ).update()
+        result = GitSkillUpdater(SKILL_ROOT, runner=runner).update()
 
         self.assertEqual(result["status"], "updated")
         self.assertLess(
@@ -509,9 +533,7 @@ class SkillUpdateTests(unittest.TestCase):
     def test_local_changes_prevent_automatic_update(self):
         runner = FakeGitRunner(git_update_responses(" M local.txt\n"))
 
-        result = GitSkillUpdater(
-            Path("/repo/skills/model-price"), runner=runner
-        ).update()
+        result = GitSkillUpdater(SKILL_ROOT, runner=runner).update()
 
         self.assertEqual(result["status"], "update_skipped")
         self.assertNotIn(("merge", "--ff-only", "origin/main"), runner.commands)
@@ -521,9 +543,7 @@ class SkillUpdateTests(unittest.TestCase):
         responses[("fetch", "--quiet")] = (1, "", "network unavailable")
         runner = FakeGitRunner(responses)
 
-        result = GitSkillUpdater(
-            Path("/repo/skills/model-price"), runner=runner
-        ).update()
+        result = GitSkillUpdater(SKILL_ROOT, runner=runner).update()
 
         self.assertEqual(result["status"], "check_failed")
         self.assertIn("network unavailable", result["reason"])

@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from ..core import PriceSource, now_iso
-from ..models import model_family, normalize_model
+from ..models import model_family, normalize_model, without_trailing_parenthetical
 from ..parsing import markdown_link_text, markdown_tables
 from ..pricing import make_record, usd_price
 from ..text import clean_text
@@ -43,7 +43,7 @@ class OpenAIAdapter(PriceSource):
             for cells in table[1:]:
                 cells += [""] * (len(headers) - len(cells))
                 display_name = markdown_link_text(cells[0])
-                model_id = re.sub(r"\s*\([^)]*\)\s*$", "", display_name).strip()
+                model_id = without_trailing_parenthetical(display_name)
                 if not model_id:
                     continue
                 offers = []

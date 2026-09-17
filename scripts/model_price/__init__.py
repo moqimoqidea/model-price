@@ -2,8 +2,11 @@
 
 Responsibility split:
 
+- ``paths``      filesystem anchors (skill dir, cache, snapshots) and cache policy
+- ``errors``     the errors a price source or the updater raises
 - ``core``       HTTP access and the ``PriceSource`` contract
 - ``parsing``    document readers (HTML tables, Markdown tables, price headers)
+- ``text``       normalisation of text scraped out of vendor documents
 - ``pricing``    price and record shapes
 - ``models``     model identity, retired-name aliases, family matching
 - ``providers``  one module per vendor

@@ -46,7 +46,9 @@ def strip_footnote_markers(value: str) -> str:
 # Vendors annotate a label with something that is not part of the model's
 # identity: a context tier, a retirement notice, the date a price applies from.
 # Keeping the two halves apart lets the note survive as a condition instead of
-# leaking into the model id, where it would stop the model being findable.
+# leaking into the model id, where it would stop the model being findable. This
+# is the only reader of such an annotation: an adapter that wants just the name
+# or just the note asks for that half rather than matching the punctuation itself.
 TRAILING_PARENTHETICAL_RE = re.compile(r"[（(]([^（()）]*)[）)]\s*$")
 
 
@@ -57,6 +59,16 @@ def split_trailing_parenthetical(value: str) -> tuple[str, str]:
     if not match:
         return text, ""
     return text[: match.start()].strip(), clean_text(match.group(1))
+
+
+def without_trailing_parenthetical(value: str) -> str:
+    """Return a label's name once its trailing annotation is removed."""
+    return split_trailing_parenthetical(value)[0]
+
+
+def trailing_parenthetical(value: str) -> str:
+    """Return the note a label's trailing annotation carries, or ``""``."""
+    return split_trailing_parenthetical(value)[1]
 
 
 def normalize_model(value: str) -> str:

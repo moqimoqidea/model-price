@@ -9,7 +9,7 @@ from ..core import PriceSource, now_iso
 from ..models import model_family, normalize_model
 from ..parsing import split_markdown_row
 from ..pricing import make_record, price_item
-from ..text import clean_text, numeric_values
+from ..text import CELL_BREAK_RE, clean_text, numeric_values
 
 MINIMAX_URL = "https://platform.minimax.cn/docs/guides/pricing-paygo.md"
 
@@ -41,7 +41,7 @@ class MiniMaxAdapter(PriceSource):
             cells = split_markdown_row(line)
             if not cells or "模型" in clean_text(cells[0]):
                 continue
-            model_parts = re.split(r"<br\s*/?>", cells[0], maxsplit=1)
+            model_parts = CELL_BREAK_RE.split(cells[0], maxsplit=1)
             model_name = clean_text(model_parts[0])
             if not model_name or not numeric_values(" ".join(cells[1:])):
                 continue
