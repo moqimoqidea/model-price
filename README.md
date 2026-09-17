@@ -4,7 +4,8 @@
 并扫描各渠道的整份目录、报告自上次扫描以来的变化。单模型查询会说明模型主要用途、
 主打能力与生命周期；增量报告会为真正发生变化的模型附上同样的介绍。
 
-面向人的说明在这个文件；面向 Agent 的执行规则在 [SKILL.md](SKILL.md)。
+面向人的说明在这个文件；面向 Agent 的执行规则在 [SKILL.md](SKILL.md)，
+改代码用的项目结构与约束说明在 [AGENTS.md](AGENTS.md)。
 
 ## 支持的渠道
 
@@ -20,6 +21,7 @@
 ```
 .
 ├── SKILL.md            # Agent 加载的指令
+├── AGENTS.md           # 给维护代码的 Agent：结构、不变量、改动落点（CLAUDE.md 指向它）
 ├── scripts/
 │   ├── query_model_prices.py   # CLI 入口
 │   └── model_price/            # 实现，价格 providers 与 descriptions 分离
