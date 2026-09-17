@@ -35,10 +35,10 @@
 
 ```bash
 # 用户级：所有项目可用
-git clone https://github.com/moqimoqidea/moqi-skills.git ~/.workbuddy/skills/model-price
+git clone https://github.com/moqimoqidea/model-price.git ~/.workbuddy/skills/model-price
 
 # 项目级：只在该项目可用
-git clone https://github.com/moqimoqidea/moqi-skills.git .workbuddy/skills/model-price
+git clone https://github.com/moqimoqidea/model-price.git .workbuddy/skills/model-price
 
 # 已有工作副本时，用软链代替再克隆一份
 ln -s "/path/to/this/repo" .workbuddy/skills/model-price
