@@ -7,6 +7,8 @@ import re
 from datetime import datetime
 from typing import Any
 
+from .descriptions.core import AVAILABLE as DESCRIPTION_AVAILABLE
+from .descriptions.core import NOT_FOUND as DESCRIPTION_NOT_FOUND
 from .delta import EMPTY_SCAN, SOURCE_ERROR
 from .diffing import (
     BASELINE_CREATED,
@@ -37,6 +39,37 @@ SOURCE_STATUS_LABELS = {
     "available": "已找到",
     "not_found": "未找到匹配模型",
     "source_error": "来源解析失败",
+}
+
+DESCRIPTION_STATUS_LABELS = {
+    DESCRIPTION_AVAILABLE: "已找到官方介绍",
+    DESCRIPTION_NOT_FOUND: "未找到官方独立介绍",
+    "source_error": "介绍来源读取失败",
+}
+
+LIFECYCLE_LABELS = {
+    "active": "在用",
+    "preview": "预览/实验",
+    "legacy": "旧版",
+    "retired": "已下线",
+    "unknown": "官方未说明",
+}
+
+SPECIFICATION_LABELS = {
+    "context_window": "上下文窗口",
+    "input_token_limit": "最大输入",
+    "max_input_tokens": "最大输入",
+    "output_token_limit": "最大输出",
+    "max_output": "最大输出",
+    "max_output_tokens": "最大输出",
+    "knowledge_cutoff": "知识截止",
+    "input_modalities": "输入模态",
+    "output_modalities": "输出模态",
+    "brand": "品牌",
+    "released_at": "发布时间",
+    "sunset_note": "下线提示",
+    "official_direct_available": "提供原厂直供",
+    "badge": "标记",
 }
 
 SKILL_UPDATE_LABELS = {
@@ -199,6 +232,80 @@ def format_other_prices(offer: dict[str, Any]) -> str:
     return "；".join(items) or NO_CHANGE
 
 
+def description_source_text(description: dict[str, Any]) -> str:
+    source = description.get("source") or {}
+    if source.get("url"):
+        label = source.get("name") or "官方介绍"
+        return f"[{label}]({source['url']})"
+    attempts = description.get("attempted_sources") or []
+    names = list(
+        dict.fromkeys(
+            item.get("name", "") for item in attempts if item.get("name")
+        )
+    )
+    return "、".join(names) or "未命中可用介绍源"
+
+
+def specification_text(specifications: dict[str, Any]) -> str:
+    return "；".join(
+        f"{SPECIFICATION_LABELS.get(key, key)}="
+        f"{('是' if value else '否') if isinstance(value, bool) else value}"
+        for key, value in (specifications or {}).items()
+        if value not in (None, "", [])
+    )
+
+
+def model_description_section(descriptions: list[dict[str, Any]]) -> list[str]:
+    """Render model-level introductions before the provider price rows."""
+    if not descriptions:
+        return []
+    lines = ["## 模型介绍", ""]
+    for description in descriptions:
+        name = description.get("display_name") or description.get("model_id")
+        model_id = description.get("model_id", "")
+        lines.extend([f"### {name} (`{model_id}`)", ""])
+        if description.get("status") == DESCRIPTION_AVAILABLE:
+            lines.append(description.get("summary") or "官方页面未给出文字摘要。")
+            details = []
+            lifecycle = description.get("lifecycle", "unknown")
+            details.append(f"生命周期：{LIFECYCLE_LABELS.get(lifecycle, lifecycle)}")
+            if description.get("capabilities"):
+                details.append("主打能力：" + "、".join(description["capabilities"]))
+            if specs := specification_text(description.get("specifications") or {}):
+                details.append(f"规格：{specs}")
+            details.append(f"来源：{description_source_text(description)}")
+            lines.extend(["", *(f"- {detail}" for detail in details)])
+        else:
+            status = DESCRIPTION_STATUS_LABELS.get(
+                description.get("status"), description.get("status", "未知")
+            )
+            lines.append(f"{status}：{description.get('note', '')}")
+            lines.extend(["", f"- 已检查：{description_source_text(description)}"])
+        lines.append("")
+    return lines
+
+
+def compact_model_descriptions(descriptions: list[dict[str, Any]]) -> list[str]:
+    """Add one concise introduction per changed model to a delta block."""
+    if not descriptions:
+        return []
+    lines = ["", "**模型介绍**", ""]
+    for description in descriptions:
+        model = (
+            f"**{description.get('display_name') or description.get('model_id')}** "
+            f"(`{description.get('model_id', '')}`)"
+        )
+        if description.get("status") == DESCRIPTION_AVAILABLE:
+            summary = description.get("summary") or "官方页面未给出文字摘要"
+            source = description_source_text(description)
+            lines.append(f"- {model}：{summary}（来源：{source}）")
+        else:
+            lines.append(
+                f"- {model}：{description.get('note') or '未找到官方独立介绍'}"
+            )
+    return lines
+
+
 def to_markdown(payload: dict[str, Any]) -> str:
     lines = [
         f"# 模型价格查询：`{payload.get('query', '')}`",
@@ -206,6 +313,7 @@ def to_markdown(payload: dict[str, Any]) -> str:
         f"抓取时间：{format_moment(payload.get('retrieved_at'))}",
         "",
     ]
+    lines.extend(model_description_section(payload.get("model_descriptions", [])))
     results = payload.get("results", [])
     if results:
         lines.extend(
@@ -473,6 +581,7 @@ def changed_provider_block(report: dict[str, Any]) -> list[str]:
         f"上次扫描：{format_moment(report.get('baseline_at'))}；"
         f"本次扫描 {report.get('model_count', 0)} 个模型",
     ]
+    lines.extend(compact_model_descriptions(report.get("model_descriptions", [])))
     for field in BULLET_CHANGE_FIELDS:
         lines.extend(
             change_bullets(CHANGE_FIELD_LABELS[field], changes.get(field) or [])

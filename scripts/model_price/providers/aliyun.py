@@ -23,6 +23,27 @@ ALIYUN_URL = (
     "&_v=undefined"
 )
 
+
+def aliyun_catalog_request(client: Any, input_data: dict[str, Any]) -> dict[str, Any]:
+    """Call Bailian's anonymous model-centre gateway.
+
+    Price and description adapters share this transport so the public response
+    shape is decoded in one place.  The model-centre payload carries both prices
+    and the official summary/capability metadata.
+    """
+    params = {
+        "Api": ALIYUN_API_NAME,
+        "Data": {"input": input_data, "cornerstoneParam": {}},
+    }
+    outer = client.post_form(ALIYUN_URL, {"params": json.dumps(params)})
+    try:
+        data = outer["data"]["DataV2"]["data"]
+        if str(data.get("code")) != "200":
+            raise SourceError(f"Aliyun returned code {data.get('code')}")
+        return data["data"]
+    except (KeyError, TypeError) as exc:
+        raise SourceError("unexpected Aliyun response shape") from exc
+
 ALIYUN_PRICE_TYPES = {
     "input_token": "input",
     "output_token": "output",
@@ -96,18 +117,7 @@ class AliyunAdapter(PriceSource):
         return self._band_document
 
     def _request(self, input_data: dict[str, Any]) -> dict[str, Any]:
-        params = {
-            "Api": ALIYUN_API_NAME,
-            "Data": {"input": input_data, "cornerstoneParam": {}},
-        }
-        outer = self.client.post_form(ALIYUN_URL, {"params": json.dumps(params)})
-        try:
-            data = outer["data"]["DataV2"]["data"]
-            if str(data.get("code")) != "200":
-                raise SourceError(f"Aliyun returned code {data.get('code')}")
-            return data["data"]
-        except (KeyError, TypeError) as exc:
-            raise SourceError("unexpected Aliyun response shape") from exc
+        return aliyun_catalog_request(self.client, input_data)
 
     def list_models(self, prefix: str = "") -> list[str]:
         key = normalize_model(prefix)
@@ -213,6 +223,20 @@ class AliyunAdapter(PriceSource):
             # say whether the vendor touched it between two runs.
             source_updated_at=item.get("updateAt"),
             model_family=model_family(item["model"]),
+            model_metadata={
+                "summary": item.get("description") or item.get("shortDescription"),
+                "capabilities": item.get("capabilities") or [],
+                "features": item.get("features") or [],
+                "context_window": item.get("contextWindow"),
+                "max_input_tokens": item.get("maxInputTokens"),
+                "max_output_tokens": item.get("maxOutputTokens"),
+                "doc_url": item.get("docUrl"),
+                "lifecycle": (
+                    "preview"
+                    if str(item.get("versionTag", "")).upper() == "PREVIEW"
+                    else "active"
+                ),
+            },
             time_bands=time_bands_for(
                 self._band_text(),
                 model_id=item["model"],

@@ -1,7 +1,8 @@
 # model-price
 
-一个 [Agent Skill](https://agentskills.io/)：查询和对比主流大模型的官方价格与模型清单，
-并扫描各渠道的整份目录、报告自上次扫描以来的变化。
+一个 [Agent Skill](https://agentskills.io/)：查询和对比主流大模型的官方介绍、价格与模型清单，
+并扫描各渠道的整份目录、报告自上次扫描以来的变化。单模型查询会说明模型主要用途、
+主打能力与生命周期；增量报告会为真正发生变化的模型附上同样的介绍。
 
 面向人的说明在这个文件；面向 Agent 的执行规则在 [SKILL.md](SKILL.md)。
 
@@ -21,7 +22,7 @@
 ├── SKILL.md            # Agent 加载的指令
 ├── scripts/
 │   ├── query_model_prices.py   # CLI 入口
-│   └── model_price/            # 实现，按职责分模块
+│   └── model_price/            # 实现，价格 providers 与 descriptions 分离
 ├── tests/                      # unittest 测试
 ├── references/                 # schema 与来源维护笔记
 ├── agents/openai.yaml          # 平台特定的接口元数据
@@ -64,6 +65,17 @@ python3 scripts/query_model_prices.py delta --format markdown           # 全量
 
 默认输出 JSON，加 `--format markdown` 得到可直接转达的报告。渠道 id 见
 [SKILL.md](SKILL.md#model-price)。
+
+模型介绍与价格是相互独立的数据源：介绍优先读取官方 Markdown，其次读取公开结构化
+接口，最后才解析官方 HTML。某个介绍页失效不会影响价格结果；报告会如实标记“未找到
+官方独立介绍”或“介绍来源读取失败”。腾讯云 TokenHub 的详情需要登录，因此使用仓库内
+的 `scripts/model_price/descriptions/data/tencent-models.json` 镜像，镜像未覆盖的模型同样
+会明确标注，不会根据模型名臆测能力。
+
+更新腾讯镜像时，先从已登录的模型广场导出卡片 JSON，再执行
+`python3 scripts/update_tencent_model_mirror.py CAPTURE.json`。脚本会校验必填字段与
+生命周期、合并同一模型的“自部署/原厂直供”重复卡片，并从公开模型目录补齐 API id
+别名；无效或相互冲突的镜像不会被运行时读取。
 
 ## 自更新
 

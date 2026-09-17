@@ -84,6 +84,12 @@ def model_key(value: str) -> str:
     return RETIRED_MODEL_ALIASES.get(key, key)
 
 
+def canonical_model(value: str) -> str:
+    """Return one key for a live model across provider-specific spellings."""
+    key = model_key(value).rsplit("/", 1)[-1]
+    return CURRENT_MODEL_ALIASES.get(key, key)
+
+
 def model_family(value: str) -> str:
     """Return a comparison key while preserving meaningful model versions."""
     value = clean_text(value).lower()

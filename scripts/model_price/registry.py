@@ -8,6 +8,7 @@ from typing import Any, Iterable
 
 from .caching import CacheStore, CachedPriceSource
 from .core import HttpClient, PriceSource, now_iso
+from .descriptions import DescriptionResolver, query_targets
 from .models import normalize_model
 from .paths import DEFAULT_CACHE_DIR
 from .providers import ALL_PROVIDERS, DOMESTIC_PROVIDERS, OVERSEAS_PROVIDERS
@@ -136,7 +137,11 @@ def select_catalog_providers(
 
 
 def query_adapters(
-    adapters: Iterable[PriceSource], model: str, *, exact: bool = False
+    adapters: Iterable[PriceSource],
+    model: str,
+    *,
+    exact: bool = False,
+    descriptions: DescriptionResolver | None = None,
 ) -> dict[str, Any]:
     """Query each adapter, keeping the others usable when one source changes."""
     started = now_iso()
@@ -154,10 +159,15 @@ def query_adapters(
             )
         except Exception as exc:
             checks.append(source_status(adapter, "source_error", checked_at, str(exc)))
-    return {
+    payload = {
         "query": model,
         "match_mode": "exact" if exact else "model_family",
         "retrieved_at": started,
         "results": records,
         "source_checks": checks,
     }
+    if descriptions is not None:
+        payload["model_descriptions"] = descriptions.resolve_many(
+            query_targets(model, records)
+        )
+    return payload

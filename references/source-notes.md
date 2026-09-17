@@ -5,6 +5,36 @@ markup: its own Markdown copy when the tables are real Markdown tables, otherwis
 its public structured JSON. Parse rendered HTML only when the vendor publishes
 neither.
 
+## Model introductions
+
+Introductions live in `model_price/descriptions/`, independently of price adapters.
+The resolver first tries the model vendor and then the platform whose price record
+named it. It returns one introduction per canonical model, so provider spellings
+such as `deepseek-v4.1-flash`, `deepseek-v4-1-flash`, and `deepseek-flash` do not
+produce duplicate prose. Query failures are isolated from prices; `delta` resolves
+only models present in an actual change.
+
+- OpenAI, Anthropic, Gemini, and xAI use the official per-model Markdown variants.
+  A soft-404 page is accepted only when its body names the requested model.
+- Kimi, MiniMax, and Zhipu use the official overview Markdown tables. Section
+  headings contribute category/lifecycle information, including Kimi's explicit
+  已下线 section.
+- DeepSeek uses the official release/news pages. Their server-rendered metadata is
+  the narrowest public representation carrying the release summary; exact retired
+  ids are preferred before following a live alias.
+- Aliyun uses the same anonymous model-centre API as pricing. Its `description`,
+  `capabilities`, `features`, context limit, output limit, lifecycle, and `docUrl`
+  fields are normalized by the description package; the gateway response is decoded
+  by one shared helper rather than duplicated in two adapters.
+- Xiaomi's public HTML is parsed only because it publishes no Markdown variant.
+  Model capability and quick-selection tables are combined.
+- Volcengine's public Model Square page is used only when its server-rendered
+  metadata actually names the requested model; a generic shell description is
+  rejected as a soft miss.
+- Tencent model details require an authenticated console. The checked-in
+  `descriptions/data/tencent-models.json` file is the explicit mirror. Absence from
+  the mirror is `not_found`, never a cue to synthesize an introduction.
+
 - Aliyun Bailian: anonymous model-center JSON API in the script. The page also
   offers a "复制 MD 格式" copy, but it is a 585 KB MDX document whose tables are
   still embedded HTML `<table>` blocks, and the JSON API also carries time bands,
@@ -21,6 +51,13 @@ neither.
   documents; preserve self-deployed and “原厂直供” rows. There is no Markdown
   endpoint: the "MD" button converts this same Slate data in the browser with
   remark, so reading the Slate is reading the button's own source.
+- Tencent model introductions: the model square is authenticated and has no durable
+  anonymous description endpoint, so its 100 rendered cards were captured on
+  2026-09-17 into `descriptions/data/tencent-models.json`. Delivery-specific
+  duplicates are collapsed into 98 model-level introductions, while API ids from
+  the public catalogue are retained as aliases. `update_tencent_model_mirror.py`
+  validates captures and rejects empty, duplicate, or conflicting entries before
+  replacement.
 - Baidu Qianfan: the pricing page is a Gatsby document. Its own HTML is the whole
   portal, and the Markdown behind its "查看 MD" button is assembled in the browser
   (it opens as a `blob:` URL) rather than published as a file — so the article body

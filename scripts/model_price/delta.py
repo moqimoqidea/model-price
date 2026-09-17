@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from .core import PriceSource, now_iso
+from .descriptions import DescriptionResolver
 from .diffing import (
     BASELINE_CREATED,
     CHANGED,
@@ -17,6 +18,7 @@ from .diffing import (
     UNCHANGED,
     compare_snapshots,
 )
+from .models import normalize_model
 from .snapshots import SnapshotStore, build_snapshot
 
 SOURCE_ERROR = "source_error"
@@ -34,10 +36,14 @@ def scan_providers(
     store: SnapshotStore,
     *,
     captured_at: str | None = None,
+    descriptions: DescriptionResolver | None = None,
 ) -> dict[str, Any]:
     """Scan each provider, compare it with its baseline, and move the baseline on."""
     started = captured_at or now_iso()
-    reports = [scan_provider(adapter, store, started) for adapter in adapters]
+    reports = [
+        scan_provider(adapter, store, started, descriptions=descriptions)
+        for adapter in adapters
+    ]
     return {
         "command": "delta",
         "retrieved_at": started,
@@ -47,7 +53,11 @@ def scan_providers(
 
 
 def scan_provider(
-    adapter: PriceSource, store: SnapshotStore, captured_at: str
+    adapter: PriceSource,
+    store: SnapshotStore,
+    captured_at: str,
+    *,
+    descriptions: DescriptionResolver | None = None,
 ) -> dict[str, Any]:
     """Read one provider's catalogue, then report it against the stored baseline.
 
@@ -57,7 +67,8 @@ def scan_provider(
     """
     previous = store.read(adapter.provider_id)
     try:
-        snapshot = build_snapshot(adapter, adapter.catalog_records(), captured_at)
+        records = adapter.catalog_records()
+        snapshot = build_snapshot(adapter, records, captured_at)
     except Exception as exc:
         return failed(adapter, previous, captured_at, str(exc))
     if not snapshot["models"]:
@@ -69,7 +80,40 @@ def scan_provider(
             status=EMPTY_SCAN,
         )
     store.write(adapter.provider_id, snapshot)
-    return compare_snapshots(previous, snapshot)
+    report = compare_snapshots(previous, snapshot)
+    if descriptions is not None and report["status"] == CHANGED:
+        report["model_descriptions"] = descriptions.resolve_many(
+            changed_model_targets(report, records, adapter.provider_id)
+        )
+    return report
+
+
+def changed_model_targets(
+    report: dict[str, Any],
+    records: Iterable[dict[str, Any]],
+    provider_id: str,
+) -> list[dict[str, Any]]:
+    """Return each model touched by a delta once, with current metadata if any."""
+    current = {
+        normalize_model(record.get("model_id", "")): record for record in records
+    }
+    targets: dict[str, dict[str, Any]] = {}
+    for field in CHANGE_FIELDS:
+        for change in (report.get("changes") or {}).get(field, []):
+            model_id = change.get("model_id", "")
+            if not model_id:
+                continue
+            record = current.get(normalize_model(model_id))
+            targets.setdefault(
+                normalize_model(model_id),
+                {
+                    "model_id": model_id,
+                    "display_name": change.get("display_name") or model_id,
+                    "provider_id": provider_id,
+                    "record": record,
+                },
+            )
+    return list(targets.values())
 
 
 def failed(

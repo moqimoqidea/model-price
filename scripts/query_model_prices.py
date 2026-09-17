@@ -19,6 +19,7 @@ if __package__ in (None, ""):
 
 from model_price.core import HttpClient, now_iso
 from model_price.delta import scan_providers
+from model_price.descriptions import build_description_resolver
 from model_price.paths import DEFAULT_CACHE_DIR, DEFAULT_SNAPSHOT_DIR
 from model_price.registry import (
     build_adapters,
@@ -122,8 +123,10 @@ def main() -> int:
     # cache hit would serve the previous scan's data back as "no change".
     refresh = args.command == "delta" or getattr(args, "refresh", False)
     skill_update = update_skill_before_refresh(refresh)
-    adapters = build_adapters(
-        HttpClient(args.timeout), cache_dir=args.cache_dir, refresh=refresh
+    client = HttpClient(args.timeout)
+    adapters = build_adapters(client, cache_dir=args.cache_dir, refresh=refresh)
+    descriptions = build_description_resolver(
+        client, cache_dir=args.cache_dir, refresh=refresh
     )
     selected_provider = getattr(args, "provider", None)
     if selected_provider is not None and selected_provider not in adapters:
@@ -146,10 +149,18 @@ def main() -> int:
             requested=args.providers,
             include_overseas=args.include_overseas,
         )
-        payload = query_adapters(selected, args.model, exact=args.exact)
+        payload = query_adapters(
+            selected,
+            args.model,
+            exact=args.exact,
+            descriptions=descriptions,
+        )
     elif args.command == "provider":
         payload = query_adapters(
-            [adapters[args.provider]], args.model, exact=args.exact
+            [adapters[args.provider]],
+            args.model,
+            exact=args.exact,
+            descriptions=descriptions,
         )
     elif args.command == "delta":
         payload = scan_providers(
@@ -159,6 +170,7 @@ def main() -> int:
                 include_overseas=args.include_overseas,
             ),
             SnapshotStore(args.snapshot_dir),
+            descriptions=descriptions,
         )
     else:
         adapter = adapters[args.provider]

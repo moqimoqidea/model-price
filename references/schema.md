@@ -1,6 +1,24 @@
 # JSON output
 
-Prices are strings. A comparison contains `query`, `match_mode`, `retrieved_at`, `results`, and `source_checks`.
+Prices are strings. A comparison contains `query`, `match_mode`, `retrieved_at`,
+`model_descriptions`, `results`, and `source_checks`.
+
+`model_descriptions` contains one entry per canonical model, not one per hosting
+provider. Each entry contains:
+
+- `model_id`, `display_name`, and `canonical_model_id` when a match was found
+- `observed_model_ids[]`: the provider spellings grouped into that canonical model;
+  it is present for available and unavailable introductions
+- `status`: `available`, `not_found`, or `source_error`
+- `summary`, `capabilities[]`, `lifecycle`, and `specifications`
+- for an available introduction, `source.name`, `source.url`, `source.kind`, and
+  `source.retrieved_at`
+- for an unavailable introduction, `note` and `attempted_sources[]`
+
+`lifecycle` is `active`, `preview`, `legacy`, `retired`, or `unknown`. A missing
+introduction never changes price-source status and never removes a price result.
+When no price record matches the query, `model_descriptions` still contains one
+honest `not_found` or `source_error` entry for the requested name.
 
 Each result contains:
 
@@ -79,6 +97,10 @@ Each entry of `providers` carries `provider`, `status`, `baseline_at`,
 
 The two failure statuses omit `model_count` and `changes`. `baseline_at` is `null`
 when no baseline existed.
+
+A `changed` provider also carries `model_descriptions`, covering each unique model
+named anywhere in its changes. Unchanged and first-baseline providers omit it, so a
+daily scan never walks every model detail page merely to repeat unchanged prose.
 
 `changes` holds `models_added`, `models_removed`, `offers_added`, `offers_removed`,
 `price_changes`, and their `total`. A model entry is the snapshot model, offers and

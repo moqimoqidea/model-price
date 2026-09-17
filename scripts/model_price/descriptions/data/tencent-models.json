@@ -1,0 +1,1486 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-17T15:22:30.003Z",
+  "source_url": "https://console.cloud.tencent.com/tokenhub/models?regionId=1",
+  "models": [
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考"
+      ],
+      "display_name": "Hy4 preview",
+      "lifecycle": "active",
+      "model_id": "Hy4 preview",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-08-28"
+      },
+      "summary": "混元Hy4 preview总参数770B、激活参数49B，重点面向Agent、Coding与生产力场景优化，强化复杂任务中的理解、规划、工具调用与持续执行能力。相比上一代模型，Hy4 preview在多步骤Agent、代码开发和生产力任务上进一步提升，具备更好的任务拆解、上下文承接、指令遵循和长链路执行能力。在Coding场景中，进一步增强代码理解、生成、修改和复杂工程任务处理能力；在生产力场景中，重点提升文档处理、信息分析、办公自动化、游戏开发、网页生成及跨工具协作等能力。Hy4 preview适用于Coding Agent、复杂工具调用以及各类需要多步骤规划和持续执行的Agent工作流，为真实业务场景中的复杂任务提供更可靠的任务完成能力。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "深度思考",
+        "文本生成"
+      ],
+      "display_name": "Hy3",
+      "lifecycle": "active",
+      "model_id": "Hy3",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-07-06"
+      },
+      "summary": "Hy3 正式版面向真实业务场景打磨，采用 295B 总参数、21B 激活 MoE 架构，原生支持 256K 上下文，并提供no_think（极速响应）、think_low（快速思考）与 think_high（深度推理） 多档思考模式，兼顾极速响应、复杂推理与调用成本。相比 Preview 版本，Hy3 基于腾讯元宝、WorkBuddy、ima 、Marvis等真实业务反馈，重点提升了 Coding Agent、长文理解、多轮上下文承接、搜索问答与复杂任务执行能力，在减少幻觉、提升任务完成度和工程可用性方面表现更稳。更加适合前端任务、跨文件代码开发、长文档分析、办公自动化和多步骤 Agent 工作流等实用场景。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "视觉理解",
+        "深度思考"
+      ],
+      "display_name": "GLM-5.3-Flash",
+      "lifecycle": "active",
+      "model_id": "GLM-5.3-Flash",
+      "specifications": {
+        "brand": "智谱 AI",
+        "released_at": "2026-08-26"
+      },
+      "summary": "GLM-5.3-Flash 是智谱最新的原生多模态模型，擅长coding和agent任务",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "深度思考",
+        "文本生成"
+      ],
+      "display_name": "GLM-5.3",
+      "lifecycle": "active",
+      "model_id": "GLM-5.3",
+      "specifications": {
+        "brand": "智谱 AI",
+        "released_at": "2026-08-14"
+      },
+      "summary": "智谱最新旗舰模型，1M上下文，支持思考长度控制",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "视觉理解",
+        "深度思考"
+      ],
+      "display_name": "DeepSeek-V4.1-Flash",
+      "lifecycle": "active",
+      "model_id": "DeepSeek-V4.1-Flash",
+      "specifications": {
+        "brand": "DeepSeek",
+        "released_at": "2026-09-10",
+        "badge": "原厂直供"
+      },
+      "summary": "由 DeepSeek 直接提供的最新的 DeepSeek-Flash 多模态模型服务，TokenHub 不对该服务提供 SLA 保障。使用该模型即视为您已知晓并同意遵守 DeepSeek 的服务协议，请您在使用前务必仔细阅读相关内容（https://cdn.deepseek.com/policies/zh-CN/deepseek-terms-of-use.html），如不接受上述内容，请立即停止使用。该模型在性能、费用、速度、总用时等各项指标上已全面超越 V4 Pro",
+      "aliases": [
+        "deepseek/deepseek-flash"
+      ]
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "视觉理解",
+        "深度思考"
+      ],
+      "display_name": "DeepSeek-V4-Flash-Vision-Exp",
+      "lifecycle": "active",
+      "model_id": "DeepSeek-V4-Flash-Vision-Exp",
+      "specifications": {
+        "brand": "DeepSeek",
+        "released_at": "2026-08-21",
+        "badge": "原厂直供"
+      },
+      "summary": "由 DeepSeek 直接提供的 DeepSeek-V4-Flash-Vision-Exp模型服务，TokenHub 不对该服务提供 SLA 保障。使用该模型即视为您已知晓并同意遵守 DeepSeek 的服务协议，请您在使用前务必仔细阅读相关内容（https://cdn.deepseek.com/policies/zh-CN/deepseek-terms-of-use.html），如不接受上述内容，请立即停止使用。该模型在纯文本能力上与 V4-Flash 正式版持平，同时大幅补强了视觉理解能力，多模态 Agent 表现接近 Claude Opus-4.8。支持图片描述、OCR、图表分析等任务。",
+      "aliases": [
+        "deepseek/deepseek-v4-flash-vision-exp"
+      ]
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考"
+      ],
+      "display_name": "DeepSeek-V4-Pro 0813 正式版",
+      "lifecycle": "active",
+      "model_id": "DeepSeek-V4-Pro 0813 正式版",
+      "specifications": {
+        "brand": "DeepSeek",
+        "released_at": "2026-08-13",
+        "official_direct_available": true
+      },
+      "summary": "旗舰级 MoE 大模型，总参1.6T、激活 49B，原生支持百万级超长上下文。依托海量高质量训练数据，具备顶尖数学逻辑、复杂推理、专业代码与长文本深度解析能力，适配高阶科研、复杂办公、深度智能代理等高难度场景。版本说明：DeepSeek-V4-Pro 0813 正式版对应深度求索 DeepSeek-V4-Pro-0813 正式版（model:deepseek-v4-pro-0813）。",
+      "aliases": [
+        "deepseek-v4-pro-202606",
+        "deepseek/deepseek-v4-pro-0813",
+        "deepseek/deepseek-v4-pro",
+        "deepseek-v4-pro-0813"
+      ]
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考"
+      ],
+      "display_name": "DeepSeek-V4-Flash 0731 正式版",
+      "lifecycle": "active",
+      "model_id": "DeepSeek-V4-Flash 0731 正式版",
+      "specifications": {
+        "brand": "DeepSeek",
+        "released_at": "2026-07-31",
+        "official_direct_available": true
+      },
+      "summary": "高效轻量化MoE模型，总参284B，激活13B，原生支持百万超长上下文能力。推理速度快、延迟低、调用成本低廉，综合能力均衡，主打高并发、轻量化任务，适合日常对话、内容创作、基础 RAG、批量文案处理等普惠刚需场景。版本说明：DeepSeek-V4-Flash 0731 正式版对应深度求索 DeepSeek-V4-Flash-0731 正式版（model:deepseek-v4-flash-0731）。",
+      "aliases": [
+        "deepseek-v4-flash-202605",
+        "deepseek/deepseek-v4-flash-0731",
+        "deepseek/deepseek-v4-flash",
+        "deepseek-v4-flash-0731"
+      ]
+    },
+    {
+      "capabilities": [
+        "深度思考",
+        "文本生成",
+        "视觉理解"
+      ],
+      "display_name": "Kimi K3",
+      "lifecycle": "active",
+      "model_id": "Kimi K3",
+      "specifications": {
+        "brand": "月之暗面",
+        "released_at": "2026-07-16"
+      },
+      "summary": "Kimi K3，月之暗面迄今能力最强的SOTA模型。K3 是一个 2.8 万亿参数模型，基于 KDA 混合线性注意力机制（Kimi Delta Attention）和注意力残差（Attention Residuals）技术构建，原生支持视觉理解，并拥有 100 万 token 上下文窗口。Kimi K3 是首个开源的 3 万亿级别模型，面向软件工程、知识工作和深度推理等前沿智能场景而设计",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "深度思考",
+        "文本生成"
+      ],
+      "display_name": "GLM-5.2",
+      "lifecycle": "active",
+      "model_id": "GLM-5.2",
+      "specifications": {
+        "brand": "智谱 AI",
+        "released_at": "2026-06-16"
+      },
+      "summary": "GLM-5.2 是智谱最新旗舰模型，支持1M上下文及思考长度控制，在coding及agent场景表现优异",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考",
+        "视觉理解"
+      ],
+      "display_name": "MiniMax-M3",
+      "lifecycle": "active",
+      "model_id": "MiniMax-M3",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2026-06-01"
+      },
+      "summary": "MiniMax- M3作为MiniMax最新发布的模型，在编程和智能体等专业任务上达到了前沿的能力，它使用了全新注意力架构 MSA （MiniMax Sparse Attention），最高支持 1M 超长上下文，同时它也是一个原生多模态模型，支持图片和视频的输入。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考"
+      ],
+      "display_name": "DeepSeek-V4-Pro",
+      "lifecycle": "active",
+      "model_id": "DeepSeek-V4-Pro",
+      "specifications": {
+        "brand": "DeepSeek",
+        "released_at": "2026-04-24"
+      },
+      "summary": "DeepSeek-V4-Pro 1.6T 参数的旗舰推理模型，通过全新的 CSA+HCA 混合注意力架构，在复杂数学推理、长程代码工程及深度智能体协作领域代表了当前的行业顶尖水平。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考"
+      ],
+      "display_name": "DeepSeek-V4-Flash",
+      "lifecycle": "active",
+      "model_id": "DeepSeek-V4-Flash",
+      "specifications": {
+        "brand": "DeepSeek",
+        "released_at": "2026-04-24"
+      },
+      "summary": "DeepSeek-V4-Flash 专为高并发与低延迟设计的生产级利器，以 1M 上下文为全系标配。为确保新版本在能力与稳定性上得到充分验证，同时尽量保障您业务的平稳运行，我们对本次升级节奏作了相应优化：DeepSeek-V4-Flash（Model ID：deepseek-v4-flash）目前仍基于深度求索 DeepSeek-V4-Flash 预览版为您提供服务，此前通知中提及的自动静默升级将暂缓推进，后续以新版本上线为准。您现有的业务调用不会受到影响，模型服务能力、调用方式及计费标准均与此前保持一致，无需做任何调整。同时，考虑到新旧版本在模型能力与性能表现上存在较大差异，为避免对您的存量业务产生非预期影响，正式版模型将通过新的 Model ID 对外提供，由您按需自主切换。详情请查看产品公告(https://cloud.tencent.com/document/product/1823/130758)",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考",
+        "视觉理解"
+      ],
+      "display_name": "Kimi K2.7 Code HighSpeed",
+      "lifecycle": "active",
+      "model_id": "Kimi K2.7 Code HighSpeed",
+      "specifications": {
+        "brand": "月之暗面",
+        "released_at": "2026-06-24"
+      },
+      "summary": "与 Kimi K2.7 Code 相同但输出速度约为普通版的 5-6 倍，常规编程场景下（取输入长度中位数）输出速度约 180 Token/s，短上下文场景可达 260 Token/s ，支持 256K 上下文窗口，带来更极致的编程体验。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考",
+        "视觉理解"
+      ],
+      "display_name": "Kimi K2.7 Code",
+      "lifecycle": "active",
+      "model_id": "Kimi K2.7 Code",
+      "specifications": {
+        "brand": "月之暗面",
+        "released_at": "2026-06-12"
+      },
+      "summary": "Kimi 迄今最智能的 Coding 模型，在长上下文中更可靠地遵循指令，能以更高的成功率完成编程任务，同时支持文本、图片与视频输入，思考模式，对话与 Agent 任务。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考"
+      ],
+      "display_name": "MiMo-V2.5-Pro",
+      "lifecycle": "active",
+      "model_id": "MiMo-V2.5-Pro",
+      "specifications": {
+        "brand": "Xiaomi MIMO",
+        "released_at": "2026-04-15"
+      },
+      "summary": "Xiaomi 迄今为止功能最强大的模型，相比其前代产品 MiMo-V2-Pro，在通用智能能力、复杂软件工程和长时域任务处理方面均实现了显著提升。MiMo-V2.5-Pro 是一款拥有 102 万亿个参数的混合专家模型，其中 420 亿个活动参数，基于混合注意力架构，并配备了 100 万个 token 的上下文窗口。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "MiniMax-Video-H3",
+      "lifecycle": "active",
+      "model_id": "MiniMax-Video-H3",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2026-07-31"
+      },
+      "summary": "原生多模态理解与生成：支持文字、图片、音频、视频多种输入输出，完成一体化内容创作 多模态精准编辑与控制：支持替换、参考等细节修改，让内容调整更可控 商用级多场景内容生成：覆盖影视、广告、游戏、品牌、电商等高频场景，支持内容生产交付",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Kling-Video-V3",
+      "lifecycle": "active",
+      "model_id": "Kling-Video-V3",
+      "specifications": {
+        "brand": "可灵",
+        "released_at": "2026-02-05"
+      },
+      "summary": "最新可灵 V3 生视频模型。支持智能分镜与15秒长视频生成，最高4K Ultra画质输出，可实现场景切换与连续叙事，适用于企业广告营销与专业影视创作。",
+      "aliases": [
+        "kl-video-v3"
+      ]
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Pixverse-Video-c1",
+      "lifecycle": "active",
+      "model_id": "Pixverse-Video-c1",
+      "specifications": {
+        "brand": "pixverse",
+        "released_at": "2026-04-07"
+      },
+      "summary": "面向影视行业深度优化，支持文本、图像、首尾帧及多宫格分镜参考等多模态输入，可直出15秒1080P音画同步视频，具备工业级动作表现与影视级特效渲染能力，适用于短剧、动漫、仙侠特效与影视前期分镜制作场景。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Vidu-Video-q3.0-pro",
+      "lifecycle": "active",
+      "model_id": "Vidu-Video-q3.0-pro",
+      "specifications": {
+        "brand": "Vidu",
+        "released_at": "2026-01-27"
+      },
+      "summary": "最新Vidu-q3.0-pro生视频模型。在音视频一体生成基础上全面强化，画面保真度、音画同步精度与多角色叙事连贯性均达到更高水准，可一次生成16秒1080P音视频直出成片，适用于对画质与声音表现有极致要求的短剧、广告与专业影视内容制作。",
+      "aliases": [
+        "vidu-video-q3-pro"
+      ]
+    },
+    {
+      "capabilities": [
+        "图片生成"
+      ],
+      "display_name": "Hy-Image-3.0",
+      "lifecycle": "active",
+      "model_id": "Hy-Image-3.0",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-03-10"
+      },
+      "summary": "最新混元 Image-3.0 生图模型。基于混元大模型，能够去思考图像的布局、构图、笔触，利用世界知识去推理常识性的画面。同时可以解析千字级别的复杂语义，生成长文本文字、复杂漫画、表情包，还能生成生动有趣的科普插画。",
+      "aliases": [
+        "hy-image-v3"
+      ]
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Vidu-Video-q2.0-turbo",
+      "lifecycle": "active",
+      "model_id": "Vidu-Video-q2.0-turbo",
+      "specifications": {
+        "brand": "Vidu",
+        "released_at": "2025-09-24"
+      },
+      "summary": "最新Vidu-q2.0-turbo生视频模型。以极致生成速度与最低调用成本为核心优势，适用于大规模批量生产与快速原型验证场景。",
+      "aliases": [
+        "vidu-video-q2-turbo"
+      ]
+    },
+    {
+      "capabilities": [
+        "视觉理解"
+      ],
+      "display_name": "HY-Vision-2.0-Instruct",
+      "lifecycle": "active",
+      "model_id": "HY-Vision-2.0-Instruct",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-02-12"
+      },
+      "summary": "快思考模型，适用通用图生文场景。相比上代模型在基础感知、内容识别、知识、OCR、STEM、推理、图表理解等维度有明显提升。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "视觉理解"
+      ],
+      "display_name": "HY-Vision-1.5-Thinking",
+      "lifecycle": "active",
+      "model_id": "HY-Vision-1.5-Thinking",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2025-09-16"
+      },
+      "summary": "深度思考模型，适用通用图文问答、视觉定位、OCR、图表、拍题解题、看图创作等任务，且优化了英文及小语种能力。",
+      "aliases": [
+        "hunyuan-t1-vision-20250916"
+      ]
+    },
+    {
+      "capabilities": [
+        "视觉理解"
+      ],
+      "display_name": "HY-Vision-Video",
+      "lifecycle": "active",
+      "model_id": "HY-Vision-Video",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2025-07-28"
+      },
+      "summary": "视频理解模型，支持视频描述、视频内容问答等基本的视频理解能力。",
+      "aliases": [
+        "hunyuan-turbos-vision-video-20250728"
+      ]
+    },
+    {
+      "capabilities": [
+        "翻译"
+      ],
+      "display_name": "Hy-MT2-Pro",
+      "lifecycle": "active",
+      "model_id": "Hy-MT2-Pro",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-05-21"
+      },
+      "summary": "混元翻译旗舰模型，参数量30B-A3B，上下文窗口8K。支持语种齐全，重点支持33个语种互译，支持5种民汉/方言。业界效果领先，开源测试集Flores200、WMT25效果领先，专业领域和真实业务场景表现优秀。翻译指令遵循优秀，支持翻译场景常用的指令遵循任务，包括结构化翻译、分隔符翻译、上下文翻译、术语表翻译、风格翻译等",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "翻译"
+      ],
+      "display_name": "Hy-MT2-Plus",
+      "lifecycle": "active",
+      "model_id": "Hy-MT2-Plus",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-05-21"
+      },
+      "summary": "混元翻译模型，参数量7B，上下文窗口8K。支持语种齐全，重点支持33个语种互译，支持5种民汉/方言。业界效果领先，开源测试集Flores200、WMT25效果领先，专业领域和真实业务场景表现优秀。翻译指令遵循优秀，支持翻译场景常用的指令遵循任务，包括结构化翻译、分隔符翻译、上下文翻译、术语表翻译、风格翻译等",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "翻译"
+      ],
+      "display_name": "Hy-MT2-Lite",
+      "lifecycle": "active",
+      "model_id": "Hy-MT2-Lite",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-05-21"
+      },
+      "summary": "混元翻译轻量级模型，参数量1.8B，上下文窗口8K。支持语种齐全，重点支持33个语种互译，支持5种民汉/方言。业界效果领先，开源测试集Flores200、WMT25效果领先，专业领域和真实业务场景表现优秀。翻译指令遵循优秀，支持翻译场景常用的指令遵循任务，包括结构化翻译、分隔符翻译、上下文翻译、术语表翻译、风格翻译等",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "多模态向量"
+      ],
+      "display_name": "Kinfra-Vl-Embedding-8b",
+      "lifecycle": "active",
+      "model_id": "Kinfra-Vl-Embedding-8b",
+      "specifications": {
+        "brand": "kinfra",
+        "released_at": "2026-07-01"
+      },
+      "summary": "旗舰级图文视频通用编码模型，语义刻画细腻，胜任细粒度匹配、跨模态对齐等高质量场景。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本向量"
+      ],
+      "display_name": "Kinfra-Text-Embedding-0.6b",
+      "lifecycle": "active",
+      "model_id": "Kinfra-Text-Embedding-0.6b",
+      "specifications": {
+        "brand": "kinfra",
+        "released_at": "2026-07-01"
+      },
+      "summary": "精简型文本编码模型，轻量易部署，适合语义检索与大批量文本处理。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本向量"
+      ],
+      "display_name": "Kinfra-Text-Embedding-4b",
+      "lifecycle": "active",
+      "model_id": "Kinfra-Text-Embedding-4b",
+      "specifications": {
+        "brand": "kinfra",
+        "released_at": "2026-07-01"
+      },
+      "summary": "进阶型文本编码模型，长文本与垂直领域语义表示更精准。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "多模态向量"
+      ],
+      "display_name": "Kinfra-Vl-Embedding-2b",
+      "lifecycle": "active",
+      "model_id": "Kinfra-Vl-Embedding-2b",
+      "specifications": {
+        "brand": "kinfra",
+        "released_at": "2026-07-01"
+      },
+      "summary": "入门级图文视频通用编码模型，轻量低成本，适配大流量跨模态实时召回。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "角色扮演"
+      ],
+      "display_name": "Hy-Role",
+      "lifecycle": "active",
+      "model_id": "Hy-Role",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-06-01"
+      },
+      "summary": "混元角色扮演模型（动态更新），专注自然化角色扮演。优化人设贴合度、口语化表达与剧情推进节奏，避免平铺直叙，增强对话吸引力，支持个性化角色深度还原。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "角色扮演"
+      ],
+      "display_name": "Hy-Role-Latest",
+      "lifecycle": "active",
+      "model_id": "Hy-Role-Latest",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-04-29"
+      },
+      "summary": "原模型名称Hunyuan-role。混元角色扮演模型（动态更新），专为自然聊天场景优化。大幅提升口语化程度，消除AI味与模板感；调整回复长度、语气浓度与主动性，优化对话节奏，减少冗余，提升即时互动感。",
+      "aliases": [
+        "hunyuan-role-latest"
+      ]
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考"
+      ],
+      "display_name": "GLM-5.1",
+      "lifecycle": "legacy",
+      "model_id": "GLM-5.1",
+      "specifications": {
+        "brand": "智谱 AI",
+        "released_at": "2026-04-08",
+        "sunset_note": "10月9日下线"
+      },
+      "summary": "GLM-5.1 是智谱最新旗舰模型，代码能力大大增强，长程任务显著提升，能够在单次任务中持续、自主地工作长达 8 小时，完成从规划、执行到迭代优化的完整闭环，交付工程级成果。 在综合能力与 Coding 能力上，GLM-5.1 整体表现对齐 Claude Opus 4.6，并在长程自主执行、复杂工程优化与真实开发场景中展现出更强的持续工作能力，是构建 Autonomous Agent 与长程 Coding Agent 的理想基座。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "深度思考",
+        "文本生成"
+      ],
+      "display_name": "GLM-5",
+      "lifecycle": "legacy",
+      "model_id": "GLM-5",
+      "specifications": {
+        "brand": "智谱 AI",
+        "released_at": "2026-02-11",
+        "sunset_note": "10月9日下线"
+      },
+      "summary": "GLM-5是智谱新一代旗舰基座模型，面向Agentic Engineering打造，擅长复杂系统工程、长程Agent任务与编程，在Coding与Agent能力上取得开源SOTA表现。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考",
+        "视觉理解"
+      ],
+      "display_name": "GLM-5V-Turbo",
+      "lifecycle": "legacy",
+      "model_id": "GLM-5V-Turbo",
+      "specifications": {
+        "brand": "智谱 AI",
+        "released_at": "2026-04-02",
+        "sunset_note": "10月30日下线"
+      },
+      "summary": "GLM-5V-Turbo 是智谱首个多模态 Coding 基座模型，面向视觉编程任务打造。能够原生处理图片、视频、文本等多模态输入，同时擅长长程规划、复杂编程和动作执行；深度适配 Agent 工作流，能够与 Claude Code、OpenClaw 等 Agent 深度协同。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考"
+      ],
+      "display_name": "GLM-5-Turbo",
+      "lifecycle": "legacy",
+      "model_id": "GLM-5-Turbo",
+      "specifications": {
+        "brand": "智谱 AI",
+        "released_at": "2026-03-16",
+        "sunset_note": "10月9日下线"
+      },
+      "summary": "面向真实 Agent 长链路任务深度优化的模型，重点提升了复杂指令拆解、工具调用、定时持续执行与长任务稳定性。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考",
+        "视觉理解"
+      ],
+      "display_name": "Kimi K2.6",
+      "lifecycle": "active",
+      "model_id": "Kimi K2.6",
+      "specifications": {
+        "brand": "月之暗面",
+        "released_at": "2026-04-20"
+      },
+      "summary": "Kimi K2.6 作为Kimi最新的开源模型，带来行业领先（state-of-the-art）的代码、长程任务执行和 Agent 集群能力。 K2.6 在长程代码任务中的表现取得了突破，面对不同编程语言（如 Rust、Go、Python）和任务场景（如前端、运维、性能优化）均具备更可靠的泛化能力。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考"
+      ],
+      "display_name": "Kimi K2.5",
+      "lifecycle": "retired",
+      "model_id": "Kimi K2.5",
+      "specifications": {
+        "brand": "月之暗面",
+        "released_at": "2026-01-27",
+        "sunset_note": "8月31日下线"
+      },
+      "summary": "kimi k2.5 是 kimi 迄今最全能的模型，原生的多模态架构设计，同时支持视觉与文本输入、思考与非思考模式、对话与 Agent 任务。"
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考"
+      ],
+      "display_name": "MiniMax-M2.7",
+      "lifecycle": "active",
+      "model_id": "MiniMax-M2.7",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2026-03-18"
+      },
+      "summary": "MiniMax 推出的自我进化大语言模型，具备卓越的软件工程能力和专业办公能力，支持复杂 Agent 交互与端到端项目交付。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "图片生成"
+      ],
+      "display_name": "Vidu-Image-q2",
+      "lifecycle": "active",
+      "model_id": "Vidu-Image-q2",
+      "specifications": {
+        "brand": "Vidu",
+        "released_at": "2025-12-11"
+      },
+      "summary": "支持参考生图、文生图、图片编辑，对中英文字的精准渲染、UI/图表等设计细节的像素级还原，适合制作海报、信息图等。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Kling-Video-V3-turbo",
+      "lifecycle": "active",
+      "model_id": "Kling-Video-V3-turbo",
+      "specifications": {
+        "brand": "可灵",
+        "released_at": "2025-04-15"
+      },
+      "summary": "可灵 3.0 系列的高性价比快速版本，支持文本和图片输入，在保持稳定生成效果的同时提升生成效率，适合快速出片、营销短片、创意预览和成本敏感的视频生产场景。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "视觉理解"
+      ],
+      "display_name": "YT-VITA",
+      "lifecycle": "legacy",
+      "model_id": "YT-VITA",
+      "specifications": {
+        "brand": "优图",
+        "released_at": "2026-01-10",
+        "sunset_note": "10月15日下线"
+      },
+      "summary": "VITA是一款多模态理解模型，支持对视频和图片内容进行分析，可用于视频结构解析、图像目标检测等场景。",
+      "aliases": [
+        "youtu-vita"
+      ]
+    },
+    {
+      "capabilities": [
+        "文本生成",
+        "深度思考",
+        "视觉理解"
+      ],
+      "display_name": "Qwen3.5-Flash",
+      "lifecycle": "retired",
+      "model_id": "Qwen3.5-Flash",
+      "specifications": {
+        "brand": "通义千问",
+        "released_at": "2026-02-25",
+        "sunset_note": "9月8日下线"
+      },
+      "summary": "Qwen3.5原生视觉语言系列Flash模型，基于混合架构设计，融合了线性注意力机制与稀疏混合专家模型，实现了更高的推理效率。模型效果在纯文本与多模态方面相较3系列均实现飞跃式进步；响应速度快，兼具推理速度和性能。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "深度思考",
+        "文本生成"
+      ],
+      "display_name": "Qwen3.5-Plus",
+      "lifecycle": "retired",
+      "model_id": "Qwen3.5-Plus",
+      "specifications": {
+        "brand": "通义千问",
+        "released_at": "2026-02-16",
+        "sunset_note": "9月8日下线"
+      },
+      "summary": "Qwen3.5原生视觉语言系列Plus模型，基于混合架构设计，融合了线性注意力机制与稀疏混合专家模型，实现了更高的推理效率。在多项任务评测中，3.5系列均展现出与当前顶尖前沿模型相媲美的卓越性能，模型效果在纯文本与多模态方面相较3系列均实现飞跃式进步。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "3D生成"
+      ],
+      "display_name": "HY-3D-Express",
+      "lifecycle": "active",
+      "model_id": "HY-3D-Express",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2025-09-17"
+      },
+      "summary": "采用混元生3D 极速版模型，将生成模型时间缩短，可在较短时间内生成3D 模型文件。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Hy-Video-v1.5",
+      "lifecycle": "active",
+      "model_id": "Hy-Video-v1.5",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-01-06"
+      },
+      "summary": "支持文本、图像多模态输入生成高清视频，可实现场景切换与多角色交互，简化制作流程、降低成本，应用于企业广告营销与个人创意落地场景。"
+    },
+    {
+      "capabilities": [
+        "3D生成"
+      ],
+      "display_name": "HY-3D-Component",
+      "lifecycle": "active",
+      "model_id": "HY-3D-Component",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-07-13"
+      },
+      "summary": "输入3D 模型后，可自动识别模型结构，生成对应模型的3D 组件。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "3D生成"
+      ],
+      "display_name": "HY-3D-Format",
+      "lifecycle": "active",
+      "model_id": "HY-3D-Format",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-07-13"
+      },
+      "summary": "输入3D模型文件后，可进行3D模型文件格式转换。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "3D生成"
+      ],
+      "display_name": "HY-3D-Motion",
+      "lifecycle": "active",
+      "model_id": "HY-3D-Motion",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-07-13"
+      },
+      "summary": "输入文本后，可根据文本描述生成对应的 3D人物 动作数据，输出带动画数据的FBX文件。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "3D生成"
+      ],
+      "display_name": "HY-3D-Retopology",
+      "lifecycle": "active",
+      "model_id": "HY-3D-Retopology",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-07-13"
+      },
+      "summary": "采用 Polygon 1.5模型，输入3D 高模后，可生成布线规整，较低面数的3D 模型。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "3D生成"
+      ],
+      "display_name": "HY-3D-Rigging",
+      "lifecycle": "active",
+      "model_id": "HY-3D-Rigging",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-07-13"
+      },
+      "summary": "3D模型绑骨蒙皮接口，基于混元大模型，根据输入的人物或动物模型进行绑骨蒙皮，输出带骨骼信息的3D模型。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "3D生成"
+      ],
+      "display_name": "HY-3D-Texture",
+      "lifecycle": "active",
+      "model_id": "HY-3D-Texture",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-07-13"
+      },
+      "summary": "输入单几何模型和参考图或文字描述后，可生成对应的纹理贴图。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "3D生成"
+      ],
+      "display_name": "HY-3D-UV",
+      "lifecycle": "active",
+      "model_id": "HY-3D-UV",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-07-13"
+      },
+      "summary": "输入3D 模型后，可自动化生成高质量 UV 切线模型。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "3D生成"
+      ],
+      "display_name": "Tripo-3D-3.1",
+      "lifecycle": "active",
+      "model_id": "Tripo-3D-3.1",
+      "specifications": {
+        "brand": "Tripo",
+        "released_at": "2026-07-13"
+      },
+      "summary": "可实现高保真 3D 生成，支持最高 200 万面数（2M polygons），适用于 3D 打印、核心资产（hero assets）及高细节视觉效果。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "3D生成"
+      ],
+      "display_name": "Tripo-3D-P1",
+      "lifecycle": "active",
+      "model_id": "Tripo-3D-P1",
+      "specifications": {
+        "brand": "Tripo",
+        "released_at": "2026-07-13"
+      },
+      "summary": "一款全新的 3D 生成模型（支持图像生模型、文本生模型、多视图生模型），专为行业顶尖的低多边形（low-poly）生成效果优化。即使在面数较低的情况下，它依然能提供极其精细且精准的几何体，非常适合游戏资产、风格化资产以及轻量级 3D 工作流。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "YT-Video-HumanActor",
+      "lifecycle": "active",
+      "model_id": "YT-Video-HumanActor",
+      "specifications": {
+        "brand": "优图",
+        "released_at": "2026-01-23"
+      },
+      "summary": "单张参考照片即可驱动生成动态人像视频，精准还原表情、姿态，支持写实、二次元等多风格切换。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "音乐生成"
+      ],
+      "display_name": "MiniMax-Music-v3.0",
+      "lifecycle": "active",
+      "model_id": "MiniMax-Music-v3.0",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2026-07-16"
+      },
+      "summary": "语义理解模型升级，减少”AI 味”偏移。告别拥挤和浑浊，支持指定乐器与真实技法（滑音、连奏等），一键触达商业唱片级听感。新一代人声引擎彻底消除高频”机器嘶嘶声”，可控制旋律、咬字、呼吸与多层和声，逼近真人录音室表现"
+    },
+    {
+      "capabilities": [
+        "图片生成"
+      ],
+      "display_name": "Seedream-Image-v5.0-lite",
+      "lifecycle": "active",
+      "model_id": "Seedream-Image-v5.0-lite",
+      "specifications": {
+        "brand": "Seedream",
+        "released_at": "2026-02-13"
+      },
+      "summary": "轻量快速的 Seedream 5.0 入门版，首次搭载联网实时检索，兼具精准编辑与逻辑推理能力，适合热点时效内容、复杂指令和高并发低成本的生产场景。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "图片生成"
+      ],
+      "display_name": "Seedream-Image-v5.0-pro",
+      "lifecycle": "active",
+      "model_id": "Seedream-Image-v5.0-pro",
+      "specifications": {
+        "brand": "Seedream",
+        "released_at": "2026-07-08"
+      },
+      "summary": "Seedream-5.0-pro模型将图像创作推进到可控生产的新阶段，主要亮点是编辑更可控、生产更落地、效果更自然。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "语音识别"
+      ],
+      "display_name": "Hy-ASR-3.0-preview",
+      "lifecycle": "active",
+      "model_id": "Hy-ASR-3.0-preview",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-08-04"
+      },
+      "summary": "Hy-ASR-3.0-preview：中文普通话 + 英语 + 多方言混合引擎，除中英外，支持20种方言，包括粤语、东北话、河南话、陕西话、成都话、重庆话、武汉话、贵阳话、青岛话、济南话、长沙话、合肥话、河北话、昆明话、 兰州话、 银川话、南昌话、 北京话、 四川话、天津话等。 基于混元3.0的语言理解能力，Hy-ASR-3.0-preview 融合高精度语音识别与深度语义理解能力，在通用识别、上下文感知、多场景鲁棒性以及方言覆盖等核心维度实现全面提升，能够在更复杂的真实输入中给出准确、连贯且更接近用户意图的转写结果，减少重复输入和人工修改，让语音识别能力更容易直接进入业务流程。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "语音识别"
+      ],
+      "display_name": "WAND-ASR-V1",
+      "lifecycle": "active",
+      "model_id": "WAND-ASR-V1",
+      "specifications": {
+        "brand": "WAND",
+        "released_at": "2025-01-01"
+      },
+      "summary": "WAND-ASR-V1 是 腾讯云 WAND 语音识别模型，支持将音视频文件转写为文本。模型支持中英文等多语种自动检测，兼容常见音视频格式与 Base64 音频输入；可同步返回或异步提交任务，输出全文识别文本、分句级时间戳，并自动生成 SRT/VTT 字幕文件，适用于会议记录、字幕生成、音视频内容检索等场景。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "AI 配音"
+      ],
+      "display_name": "WAND-Dubbing-Clone-v2",
+      "lifecycle": "active",
+      "model_id": "WAND-Dubbing-Clone-v2",
+      "specifications": {
+        "brand": "WAND",
+        "released_at": "2026-07-30"
+      },
+      "summary": "WAND AI 配音 v2：视频翻译与本地化模型，V1 的升级版本。输入一段原始视频，自动输出带有目标语言配音、并压制对应译文字幕的成片，无需逐段手动处理字幕与音频。 配音采用说话人音色克隆技术——复刻原片中每位说话人的声音特征，翻译后的配音仍保持与原片一致的角色音色，听感连贯统一；同时保留说话人的情绪与语调自然度，不会变成刻板的机器朗读。面对多角色对话，模型会自动区分不同说话人并分别克隆其音色逐一配音，多人会议、剧集对白也能各角色声音分明。 相比 V1，V2 重点提升了配音的情绪表现力与情感自然度，让目标语言音色更贴合原片的语气、停顿与情绪起伏，喜怒哀乐的演绎更有感染力。不改变原片画面与背景音乐、音效，仅替换人声部分，观感连贯自然。适用于影视译制、短视频出海、课程本地化、企业宣传片等跨语言内容生产。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Pixverse-Video-v6",
+      "lifecycle": "active",
+      "model_id": "Pixverse-Video-v6",
+      "specifications": {
+        "brand": "pixverse",
+        "released_at": "2026-03-30"
+      },
+      "summary": "支持电影级摄像机控制、原生音频生成与多镜头连续输出，适用于专业影视创作与高品质广告制作。",
+      "aliases": [
+        "pixverse-video-v6.0"
+      ]
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Vidu-Video-q3.0-turbo",
+      "lifecycle": "active",
+      "model_id": "Vidu-Video-q3.0-turbo",
+      "specifications": {
+        "brand": "Vidu",
+        "released_at": "2026-02-11"
+      },
+      "summary": "最新Vidu-q3.0-turbo生视频模型。以更快生成速度和更低调用成本实现16秒音视频直出，适用于规模化内容生产与高频迭代场景。",
+      "aliases": [
+        "vidu-video-q3-turbo"
+      ]
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Kling-Video-V3-omni",
+      "lifecycle": "active",
+      "model_id": "Kling-Video-V3-omni",
+      "specifications": {
+        "brand": "可灵",
+        "released_at": "2026-02-05"
+      },
+      "summary": "Kling 3.0 Omni 是可灵 3.0 系列的全能多模态视频模型，支持文本、图片、视频等输入，具备角色语音驱动、原生音频输出和分镜叙事能力，适合复杂故事化视频、多主体一致性和音画同步创作。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Vidu-Video-q3.0",
+      "lifecycle": "active",
+      "model_id": "Vidu-Video-q3.0",
+      "specifications": {
+        "brand": "Vidu",
+        "released_at": "2026-01-30"
+      },
+      "summary": "支持参考生视频能力，可基于多张参考图和提示词生成主体一致的视频，支持智能切镜和音画同出，多机位一致性更好，适合多图参考、主体保持和复杂场景视频创作。",
+      "aliases": [
+        "vidu-video-q3"
+      ]
+    },
+    {
+      "capabilities": [
+        "AI 配音"
+      ],
+      "display_name": "WAND-Dubbing-Clone-v1",
+      "lifecycle": "active",
+      "model_id": "WAND-Dubbing-Clone-v1",
+      "specifications": {
+        "brand": "WAND",
+        "released_at": "2025-09-16"
+      },
+      "summary": "WAND AI 配音 v1：视频翻译与本地化模型。输入一段原始视频，自动输出带有目标语言配音、并压制对应译文字幕的成片，无需逐段手动处理字幕与音频。 配音采用说话人音色克隆技术——复刻原片中每位说话人的声音特征，翻译后的配音仍保持与原片一致的角色音色，听感连贯统一；同时保留说话人的情绪与语调自然度，不会变成刻板的机器朗读。面对多角色对话，模型会自动区分不同说话人并分别克隆其音色逐一配音，多人会议、剧集对白也能各角色声音分明。 不改变原片画面与背景音乐、音效，仅替换人声部分，观感连贯自然。适用于影视译制、短视频出海、课程本地化、企业宣传片等跨语言内容生产。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Pixverse-Video-v5.6",
+      "lifecycle": "active",
+      "model_id": "Pixverse-Video-v5.6",
+      "specifications": {
+        "brand": "pixverse",
+        "released_at": "2026-01-26"
+      },
+      "summary": "在电影级画面美学与人声表现力上进一步增强，动态控制更加精细，适用于对画面质感与人声效果有高要求的专业内容制作。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Kling-Video-V2.6",
+      "lifecycle": "active",
+      "model_id": "Kling-Video-V2.6",
+      "specifications": {
+        "brand": "可灵",
+        "released_at": "2025-12-03"
+      },
+      "summary": "最新可灵 V2.6 生视频模型。支持画面与语音、音效、环境音同步生成，运动控制能力增强，适用于有声广告、短视频与多媒体内容创作。",
+      "aliases": [
+        "kl-video-v2-6"
+      ]
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Kling-Video-O1",
+      "lifecycle": "active",
+      "model_id": "Kling-Video-O1",
+      "specifications": {
+        "brand": "可灵",
+        "released_at": "2025-12-01"
+      },
+      "summary": "可灵统一视频模型，支持文本、图片等多模态输入，能够通过自然语言统一理解复杂创作指令，适合多模态参考、主体一致性、复杂场景生成和高一致性视频创作。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "3D生成"
+      ],
+      "display_name": "Hy-World-2.1-scene",
+      "lifecycle": "active",
+      "model_id": "Hy-World-2.1-scene",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-08-21"
+      },
+      "summary": "混元世界模型3D场景生成，输入一段文字或一张图片，模型即可合成高保真、可漫游的 3DGS/Mesh 场景。生成的世界支持自由行走与物理碰撞，可无缝对接 Unity/UE 引擎。",
+      "aliases": [
+        "hy-world2-scene"
+      ]
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "MiniMax-Video-v2.3",
+      "lifecycle": "active",
+      "model_id": "MiniMax-Video-v2.3",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2025-10-28"
+      },
+      "summary": "最新 Minimax-v2.3生视频模型。在肢体动作自然度、风格化表现力与角色微表情刻画上大幅提升，物理运动表现逼真、复杂指令遵循能力强，适用于广告营销、创意短片与数字人内容制作。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "MiniMax-Video-v2.3-fast",
+      "lifecycle": "active",
+      "model_id": "MiniMax-Video-v2.3-fast",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2025-10-28"
+      },
+      "summary": "最新 Minimax-v2.3-fast生视频模型。通过推理优化在保持核心画质表现的同时提升生成速度、降低调用成本，适用于对时效要求高的营销素材批量生产与快速迭代场景。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "语音合成"
+      ],
+      "display_name": "MiniMax-Voice-Design",
+      "lifecycle": "active",
+      "model_id": "MiniMax-Voice-Design",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2025-06-12"
+      },
+      "summary": "MiniMax 音色设计通过自然语言描述（prompt） 即可生成全新个性化音色，产出可复用的 voice_id 音色资产，后续用于 TTS 语音合成。适用于虚拟主播、创意音色探索、品牌专属声音设计等场景。注意：创建音色不立即计费；音色费用及对应 Token 消耗，将在首次使用该音色语音合成时，随所选 TTS 模型一并收取。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "语音合成"
+      ],
+      "display_name": "MiniMax-Voice-Clone",
+      "lifecycle": "active",
+      "model_id": "MiniMax-Voice-Clone",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2025-04-02"
+      },
+      "summary": "MiniMax 音色复刻仅需数秒参考音频即可高精度复刻说话人音色特征，生成可复用的 voice_id 音色资产，后续用于 TTS 语音合成。适用于虚拟主播、IP 角色声音定制等场景。注意，创建音色不立即计费；音色费用及对应 Token 消耗，将在首次使用该音色语音合成时，随所选 TTS 模型一并收取。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "语音合成"
+      ],
+      "display_name": "MiniMax-Speech-02-Turbo",
+      "lifecycle": "active",
+      "model_id": "MiniMax-Speech-02-Turbo",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2025-04-02"
+      },
+      "summary": "MiniMax Speech 02 Turbo 在保留自然韵律的基础上进一步压缩延迟，高音色相似度与低延迟兼顾，适合对响应速度有要求但仍需一定音色质量的实时语音应用。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "语音合成"
+      ],
+      "display_name": "MiniMax-Speech-02-HD",
+      "lifecycle": "active",
+      "model_id": "MiniMax-Speech-02-HD",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2025-04-02"
+      },
+      "summary": "MiniMax Speech 02 HD 具备高音色相似度与自然韵律表现，支持多语种合成，在长文本连贯性与发音稳定性上表现稳健，适合高质量配音、有声读物制作等内容生产场景。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Kling-Video-V2.5-turbo",
+      "lifecycle": "active",
+      "model_id": "Kling-Video-V2.5-turbo",
+      "specifications": {
+        "brand": "可灵",
+        "released_at": "2025-09-26"
+      },
+      "summary": "最新可灵 V2.5-turbo 生视频模型。支持文本与图像输入，在生成稳定性与创意想象力上全面升级，兼顾高性能与高性价比，适用于大批量视频生成与企业级内容生产。",
+      "aliases": [
+        "kl-video-v2-5-turbo"
+      ]
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Vidu-Video-q2.0",
+      "lifecycle": "active",
+      "model_id": "Vidu-Video-q2.0",
+      "specifications": {
+        "brand": "Vidu",
+        "released_at": "2025-09-25"
+      },
+      "summary": "最新Vidu-q2.0生视频模型。以细腻人物表情生成为核心能力，支持图像与首尾帧输入，可实现微表情与演技级动态刻画，时长2-8秒可选，适用于数字人、人物特写与情感表达类内容创作。"
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Vidu-Video-q2.0-pro",
+      "lifecycle": "active",
+      "model_id": "Vidu-Video-q2.0-pro",
+      "specifications": {
+        "brand": "Vidu",
+        "released_at": "2025-09-24"
+      },
+      "summary": "最新Vidu-q2.0-pro生视频模型。支持文本、图像、参考图等多模态输入，在表情还原度、运镜流畅性与语义理解深度上全面增强，可呈现电影级短片效果，适用于高品质广告与专业内容创作。",
+      "aliases": [
+        "vidu-video-q2-pro"
+      ]
+    },
+    {
+      "capabilities": [
+        "语音合成"
+      ],
+      "display_name": "MiniMax-Speech-2.6-Turbo",
+      "lifecycle": "active",
+      "model_id": "MiniMax-Speech-2.6-Turbo",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2025-10-29"
+      },
+      "summary": "MiniMax Speech 2.6 Turbo 面向实时交互场景优化，端到端延时低于 250ms，在保证音质可用的前提下最大化吞吐量，适合实时语音对话、在线教育互动等需要快速响应的场景。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "语音合成"
+      ],
+      "display_name": "MiniMax-Speech-2.6-HD",
+      "lifecycle": "active",
+      "model_id": "MiniMax-Speech-2.6-HD",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2025-10-29"
+      },
+      "summary": "MiniMax Speech 2.6 HD 是成熟稳定的高保真语音合成模型，超低延时输出，音质清晰自然，支持多语种与丰富音色库，适合 Voice Agent 智能体交互、专业内容生产等需要高质量语音输出的场景。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "语音合成"
+      ],
+      "display_name": "MiniMax-Speech-2.8-Turbo",
+      "lifecycle": "active",
+      "model_id": "MiniMax-Speech-2.8-Turbo",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2026-01-23"
+      },
+      "summary": "MiniMax Speech 2.8 Turbo 基于 2.8 HD 同代架构优化，在保持高音质的同时显著降低推理延迟，支持情感语气标签与 40+ 语种，低延迟高并发，适合实时对话、直播互动等对响应速度敏感的大规模并发场景。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "语音合成"
+      ],
+      "display_name": "MiniMax-Speech-2.8-HD",
+      "lifecycle": "active",
+      "model_id": "MiniMax-Speech-2.8-HD",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2026-01-23"
+      },
+      "summary": "MiniMax Speech 2.8 HD 是 MiniMax 最新一代高保真语音合成模型，在音质细腻度、情感表达力与多语种覆盖上全面升级。支持情感语气标签控制与 40+ 语种，中文表现更自然、韵律更贴近真人，适合对音质与表现力要求高的专业场景，如有声书录制、智能客服、短视频配音等。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "音乐生成"
+      ],
+      "display_name": "MiniMax-Music-v2.6",
+      "lifecycle": "active",
+      "model_id": "MiniMax-Music-v2.6",
+      "specifications": {
+        "brand": "MiniMax",
+        "released_at": "2025-10-28"
+      },
+      "summary": "MiniMax Music 2.6 是新一代音乐生成模型，对底层生成架构深度重构，首包延迟降至 20 秒以内。支持更精准的 BPM、调性、段落结构与情绪控制，人声表现更自然，中英文表现更地道，中低频声学表现系统优化，适合歌曲创作、商业配乐、游戏音频和内容生产。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "3D生成"
+      ],
+      "display_name": "Hy-World-2.1-panorama",
+      "lifecycle": "active",
+      "model_id": "Hy-World-2.1-panorama",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-08-21"
+      },
+      "summary": "混元世界模型 360 度全景图生成。输入一段文字或一张图片，模型即可合成高保真的 360 °全景图。",
+      "aliases": [
+        "hy-world2-panorama"
+      ]
+    },
+    {
+      "capabilities": [
+        "图片生成"
+      ],
+      "display_name": "WAND-Vega-Image-1.0-Lite",
+      "lifecycle": "active",
+      "model_id": "WAND-Vega-Image-1.0-Lite",
+      "specifications": {
+        "brand": "WAND",
+        "released_at": "2026-08-28"
+      },
+      "summary": "WAND 是腾讯云面向音视频场景打造的 AI 能力品牌。音视频场景复杂多样，通用 AI 难以直接发挥效果；WAND 依托腾讯云多年音视频技术积累与海量业务实践，将多模态大模型与音视频工程经验深度结合，提供经真实场景验证的 AI 原子能力。WAND-Vega-Image-1.0-Lite 生图模型，成本更低、生成速度更快，适合电商商品图、批量素材等大规模生成场景，在可控预算下快速产出可用图像。",
+      "aliases": [
+        "wand-vega-image-lite"
+      ]
+    },
+    {
+      "capabilities": [
+        "图片生成"
+      ],
+      "display_name": "WAND-Vega-Image-1.0-Flash",
+      "lifecycle": "active",
+      "model_id": "WAND-Vega-Image-1.0-Flash",
+      "specifications": {
+        "brand": "WAND",
+        "released_at": "2026-08-28"
+      },
+      "summary": "WAND 是腾讯云面向音视频场景打造的 AI 能力品牌。音视频场景复杂多样，通用 AI 难以直接发挥效果；WAND 依托腾讯云多年音视频技术积累与海量业务实践，将多模态大模型与音视频工程经验深度结合，提供经真实场景验证的 AI 原子能力。WAND-Vega-Image-1.0-Flash 生图模型，生成速度与画面质量均衡，适合短视频封面、社交媒体配图、营销物料等日常创作场景，兼顾效率与效果。",
+      "aliases": [
+        "wand-vega-image-flash"
+      ]
+    },
+    {
+      "capabilities": [
+        "图片生成"
+      ],
+      "display_name": "WAND-Vega-Image-1.0-Pro",
+      "lifecycle": "active",
+      "model_id": "WAND-Vega-Image-1.0-Pro",
+      "specifications": {
+        "brand": "WAND",
+        "released_at": "2026-08-28"
+      },
+      "summary": "WAND 是腾讯云面向音视频场景打造的 AI 能力品牌。音视频场景复杂多样，通用 AI 难以直接发挥效果；WAND 依托腾讯云多年音视频技术积累与海量业务实践，将多模态大模型与音视频工程经验深度结合，提供经真实场景验证的 AI 原子能力。WAND-Vega-Image-1.0-Pro 生图模型，画质优先、细节表现更精，适合品牌视觉、精修主图、高质量设计素材等专业创作场景，稳定产出精细图像。",
+      "aliases": [
+        "wand-vega-image-pro"
+      ]
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Kling-Video-v2.1-master",
+      "lifecycle": "active",
+      "model_id": "Kling-Video-v2.1-master",
+      "specifications": {
+        "brand": "可灵",
+        "released_at": "2025-05-01"
+      },
+      "summary": "支持文本与图像输入，面向专业创作场景深度优化，1080P高品质输出，适用于影视级短片与精品内容制作。",
+      "aliases": [
+        "kl-video-v2-1-master"
+      ]
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Vidu-Video-q2",
+      "lifecycle": "active",
+      "model_id": "Vidu-Video-q2",
+      "specifications": {
+        "brand": "Vidu",
+        "released_at": "2025-09-25"
+      },
+      "summary": "以细腻人物表情生成为核心能力，支持图像与首尾帧输入，可实现微表情与演技级动态刻画，时长2-8秒可选，适用于数字人、人物特写与情感表达类内容创作。",
+      "aliases": [
+        "vd-video-q2"
+      ]
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Kling-Video-v2-master",
+      "lifecycle": "active",
+      "model_id": "Kling-Video-v2-master",
+      "specifications": {
+        "brand": "可灵",
+        "released_at": "2025-04-15"
+      },
+      "summary": "支持文本与图像输入，在语义理解精度、动态质量与画面美学表现上均实现显著提升，适用于高品质品牌广告与创意内容制作。",
+      "aliases": [
+        "kl-video-v2-master"
+      ]
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Kling-Video-v1.6",
+      "lifecycle": "active",
+      "model_id": "Kling-Video-v1.6",
+      "specifications": {
+        "brand": "可灵",
+        "released_at": "2024-12-19"
+      },
+      "summary": "支持文本、图像及多图参考输入，在文本响应度与画面美感上实现全面升级，提供标准与高品质双模式，适用于多角色交互与复杂场景的视频创作。",
+      "aliases": [
+        "kl-video-v1-6"
+      ]
+    },
+    {
+      "capabilities": [
+        "视频生成"
+      ],
+      "display_name": "Kling-Video-v1",
+      "lifecycle": "active",
+      "model_id": "Kling-Video-v1",
+      "specifications": {
+        "brand": "可灵",
+        "released_at": "2024-06-06"
+      },
+      "summary": "支持文本与图像输入生成最高1080P、最长2分钟视频，覆盖通用视频生成基础能力，适用于内容创作与营销素材生产。",
+      "aliases": [
+        "kl-video-v1"
+      ]
+    },
+    {
+      "capabilities": [
+        "图片生成"
+      ],
+      "display_name": "HY-Image-Lite",
+      "lifecycle": "active",
+      "model_id": "HY-Image-Lite",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2025-09-12"
+      },
+      "summary": "采用超高压缩编解码器，实现图像生成快速响应与高品质输出。支持电商商品图美化、设计工具素材生成、游戏场景迭代等场景。",
+      "aliases": []
+    },
+    {
+      "capabilities": [
+        "3D生成"
+      ],
+      "display_name": "HY-3D-3.1",
+      "lifecycle": "active",
+      "model_id": "HY-3D-3.1",
+      "specifications": {
+        "brand": "混元",
+        "released_at": "2026-03-17"
+      },
+      "summary": "采用混元生3D 3.1模型，可生成更高精度以及更高质量的3D 模型，支持文生3D、图生3D、八视图生3D、单几何生成（白模）、草图生3D、智能拓扑生3D 功能。",
+      "aliases": []
+    }
+  ]
+}
