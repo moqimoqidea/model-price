@@ -52,6 +52,7 @@ Standard library only, Python 3, no install step, no build step.
 │       ├── delta.py             the scan-every-catalogue run
 │       ├── reporting.py         the shared wording: one value, written once
 │       ├── messages.py          the two plain-text messages those values are laid into
+│       ├── budget.py            how much of a message fits the channel carrying it
 │       ├── registry.py          wiring, provider selection, cross-provider queries
 │       ├── providers/           one module per vendor, registered in its __init__.py
 │       └── descriptions/        the independent model-introduction subsystem
@@ -100,10 +101,33 @@ its two entry points are the only things that know how a message is laid out:
 
 - `reporting.py` — one value, one wording: labels for every enum a source can
   publish, an amount in the unit it was billed in, a moment with its offset.
-- `messages.py` — the layout: headings, numbering, indentation, blank lines.
+- `messages.py` — the layout: headings, numbering, indentation, blank lines, and
+  which block each density keeps.
+- `budget.py` — how much of a message fits, decided and nothing else: it measures
+  a rendering and picks a density, never a line of text.
 
-Never move a value formatter into `messages.py`, and never let `reporting.py`
-decide where a line goes.
+Never move a value formatter into `messages.py`, never let `reporting.py` decide
+where a line goes, and never let `budget.py` know what a message says.
+
+### How a message is shortened
+
+One report, three densities, one decision — each piece doing one thing:
+
+- `Detail` (`messages.py`) names how much of a report a reader gets, richest
+  first: `FULL`, `COMPACT`, `BRIEF`.
+- `Section` (`messages.py`) is one block plus the density at which it stops being
+  printed. `dropped_at=None` marks a block every density keeps — part of what the
+  message is for rather than a detail of it.
+- `comparison_sections` / `scan_sections` return those blocks as one declarative
+  list, so which density keeps what is read in a single place instead of being
+  spread through the rendering functions.
+- `budget.fit_to_budget` measures the renderings and returns the richest that
+  fits. It reports the densest one even when nothing fits, because a message that
+  says it was compacted is more honest than one that pretends it was complete.
+
+Adding a block means adding one `Section` to that list, not an `if` inside a
+renderer. A block that renders to nothing drops out by itself (`section` already
+leaves out an empty body), so a conditional block needs no branch of its own.
 
 ## Invariants
 
@@ -146,16 +170,30 @@ even when the tests still pass.
     parser or source change requires the cache bump, or stale parsed data is served
     for the rest of its TTL; a baseline written by an older shape is treated as
     absent rather than diffed against.
-11. **The message carries no Markdown and fits 5120 characters.** No `**`, no
-    `#`, no tables, no links — hierarchy is numbering and indentation, and each
-    source URL is written last on its line. This is not cosmetic: DingTalk reads a
-    document back through its own parser, which mangles a report this dense. The
-    length limit is why a page already printed under a channel is not repeated
-    under 来源检查.
-12. **Statuses are reported, never softened.** `source_error`, `not_found`,
+11. **The message carries no Markdown and fits the channel's character budget.**
+    No `**`, no `#`, no tables, no links — hierarchy is numbering and indentation,
+    and each source URL is written last on its line. This is not cosmetic:
+    DingTalk reads a document back through its own parser, which mangles a report
+    this dense. On length, the rule is that a message is **re-rendered denser,
+    never truncated**: a cut price loses its decimal point and the reader cannot
+    tell what was left out. `messages` describes one report at three densities
+    and `budget` sends the richest that fits `--max-chars` (default 3000, well
+    inside DingTalk's 5120-character text limit). A compacted message states that
+    it was compacted, and one that even the densest rendering cannot bring under
+    the limit says so rather than arriving as if it were complete. Nothing in
+    `messages` may measure or slice a string.
+12. **The model introduction opens every message.** Both `comparison_sections`
+    and `scan_sections` put it first, after the header and before the conclusion:
+    a reader who does not know what a model is for cannot judge what it costs.
+    Never move it below a price, and never print it per channel — what a model
+    does is a property of the model, so a scan introduces each moved model once
+    from `changed_descriptions` rather than once per channel that reported it.
+    Its source line survives every density: an unsourced capability claim is not
+    a fact.
+13. **Statuses are reported, never softened.** `source_error`, `not_found`,
     `empty_scan`, `update_skipped`, `check_failed` all reach the reader. A provider
     that held still is still named, because that is what shows the scan covered it.
-13. **No credentials, ever.** The only authenticated path is refreshing the
+14. **No credentials, ever.** The only authenticated path is refreshing the
     explicit Tencent mirror through a user-owned logged-in session, offline.
 
 ## Where a change goes
@@ -167,6 +205,8 @@ even when the tests still pass.
 | Add a model-introduction source | `descriptions/sources.py` and `DESCRIPTION_SOURCE_CLASSES`; routing in `descriptions/resolver.py` |
 | Change how one value reads | `reporting.py` |
 | Change how a message is laid out | `messages.py` |
+| Change which blocks a density keeps, or what opens a message | the section list in `messages.py` (`comparison_sections` / `scan_sections`) |
+| Change the character budget or how a density is chosen | `budget.py`, plus `DEFAULT_MAX_CHARS` callers in `query_model_prices.py` |
 | Change which providers a query covers | `registry.py` |
 | Change the cache or snapshot shape | `paths.py` version, then the reader and writer together |
 | Refresh the Tencent mirror | `scripts/update_tencent_model_mirror.py` |
@@ -238,6 +278,7 @@ python3 -m unittest discover -s tests                          # full suite, off
 python3 scripts/query_model_prices.py --help
 python3 scripts/query_model_prices.py compare deepseek-flash --format json
 python3 scripts/query_model_prices.py delta --format message
+python3 scripts/query_model_prices.py compare deepseek-flash --format message --max-chars 1200
 python3 scripts/update_tencent_model_mirror.py CAPTURE.json
 ```
 
@@ -280,6 +321,9 @@ and the other fast-forwards.
   tidier, or reporting a price of zero for a model that is only billed per
   request, per second, or on a free tier. Say it is unpriced.
 - Letting a missing source become an empty row or a silent omission.
+- Truncating a message to fit a channel, or letting a length rule live anywhere
+  but `budget.py` and the two `Section` lists.
+- Printing a model's introduction once per channel, or below the price.
 - Caching anything `delta` reads.
 - Growing the CLI entry point past argument parsing and dispatch.
 - Adding a dependency.
