@@ -77,7 +77,13 @@ from model_price.registry import (
     query_adapters,
     select_compare_providers,
 )
-from model_price.messages import band_lines, comparison_message, scan_message
+from model_price.budget import DEFAULT_MAX_CHARS, fit_to_budget
+from model_price.messages import (
+    Detail,
+    band_lines,
+    comparison_message,
+    scan_message,
+)
 from model_price.reporting import (
     format_moment,
     offer_condition_text,
@@ -91,6 +97,8 @@ from model_price.snapshots import (
     offer_identity,
 )
 from model_price.updating import GitSkillUpdater
+
+import query_model_prices
 
 
 VOLC_MARKDOWN = """# 大语言模型
@@ -1303,6 +1311,165 @@ class MessageRenderingTests(unittest.TestCase):
             "- 月之暗面 Kimi：未找到匹配模型｜https://example.test/kimi", message
         )
 
+    def test_the_comparison_leads_with_what_the_model_is_for(self):
+        """A reader who does not know what the model does cannot price it."""
+        message = comparison_message(comparison_payload())
+        self.assertIn("【模型介绍】", message)
+        self.assertIn("用途：面向代码与智能体的高吞吐模型。", message)
+        self.assertIn("主打能力：文本生成、函数调用", message)
+        self.assertLess(message.index("【模型介绍】"), message.index("【结论】"))
+        self.assertLess(message.index("【模型介绍】"), message.index("【渠道对比】"))
+        # The header states what the message is; the introduction opens the blocks.
+        headings = [
+            line for line in message.splitlines() if line.startswith("【")
+        ]
+        self.assertEqual(headings[0], "【模型介绍】")
+
+    def test_the_introduction_names_the_page_it_came_from(self):
+        """A claim about what a model does is worth the page it was read from."""
+        message = comparison_message(comparison_payload())
+        introduction = message.split("【结论】")[0]
+        self.assertIn(
+            "来源：腾讯云模型广场："
+            "https://example.test/models/deepseek/deepseek-flash",
+            introduction,
+        )
+        self.assertNotIn("https://example.test/pricing", introduction)
+
+    def test_a_denser_message_keeps_the_purpose_and_drops_the_specifications(self):
+        """What the model is for is why the block is at the top; specs are not."""
+        message = comparison_message(comparison_payload(), max_chars=500)
+        self.assertIn("【模型介绍】", message)
+        self.assertIn("用途：面向代码与智能体的高吞吐模型。", message)
+        self.assertIn("主打能力：文本生成、函数调用", message)
+        self.assertNotIn("生命周期", message)
+        self.assertNotIn("规格", message)
+        # The page survives every density: an unsourced claim is not a fact.
+        self.assertIn("来源：腾讯云模型广场", message)
+
+
+class MessageBudgetTests(unittest.TestCase):
+    """A message has to fit the channel that carries it before it is sent."""
+
+    def test_a_report_that_fits_is_sent_at_full_detail(self):
+        message = comparison_message(comparison_payload())
+        self.assertLessEqual(len(message), DEFAULT_MAX_CHARS)
+        self.assertIn("【渠道对比】", message)
+        self.assertIn("【差异总结】", message)
+        self.assertNotIn("已压缩", message)
+
+    def test_the_default_budget_stays_inside_the_channel_it_writes_for(self):
+        """DingTalk carries 5120 characters, and a report is kept well inside it."""
+        self.assertLess(DEFAULT_MAX_CHARS, 5120)
+
+    def test_a_report_over_the_budget_is_re_rendered_denser_not_cut(self):
+        message = comparison_message(crowded_comparison_payload())
+        self.assertLessEqual(len(message), DEFAULT_MAX_CHARS)
+        # Every channel is still named, and every amount still carries its terms.
+        for position in range(9):
+            self.assertIn(f"渠道{position + 1}", message)
+        for amount in CROWDED_AMOUNTS:
+            self.assertIn(amount, message)
+        # What a denser level left out, it says it left out.
+        self.assertIn("本消息已压缩至 3000 字符内", message)
+        self.assertNotIn("【差异总结】", message)
+
+    def test_a_message_that_only_just_overruns_is_folded_rather_than_cut(self):
+        """The middle density folds what a reader consults, and keeps the shape.
+
+        Five channels is what the default budget affords folded rather than
+        reduced, so this is the density a full-width comparison actually lands on.
+        """
+        message = comparison_message(crowded_comparison_payload(5))
+        self.assertLessEqual(len(message), DEFAULT_MAX_CHARS)
+        self.assertIn("本消息已压缩至 3000 字符内（峰谷时段与差异总结未展开", message)
+        # Every channel keeps its own entry and its own labelled facts.
+        for position in range(5):
+            self.assertIn(f"{position + 1}. 渠道{position + 1}｜DeepSeek-V4.1-Flash", message)
+        self.assertIn("模型：deepseek/deepseek-flash", message)
+        self.assertIn("服务方式：原厂直供", message)
+        self.assertIn("地域：中国区（广州）", message)
+        # Each offer's amounts are folded onto one line rather than dropped, and
+        # the band is still the row they are folded under.
+        self.assertIn("计费方案 1：闲时", message)
+        self.assertIn(
+            "  - 输入（未命中缓存）：1 元/百万 tokens；"
+            "输入（命中缓存）：0.2 元/百万 tokens；"
+            "缓存存储：0.017 元/百万 tokens/小时；"
+            "输出：4 元/百万 tokens",
+            message,
+        )
+        # Only the blocks a reader consults afterwards are gone.
+        self.assertNotIn("【差异总结】", message)
+        self.assertNotIn("【峰谷时段】", message)
+        self.assertIn("【来源检查】", message)
+
+    def test_a_denser_message_still_states_every_amount_it_stated_before(self):
+        """A denser level re-lays-out the report; it never drops a price."""
+        payload = crowded_comparison_payload()
+        full = comparison_message(payload, max_chars=10**9)
+        denser = comparison_message(payload)
+        self.assertLess(len(denser), len(full))
+        for amount in CROWDED_AMOUNTS:
+            self.assertEqual(
+                full.count(amount), denser.count(amount), amount
+            )
+        # Full detail is what the extra room buys, so it states the blocks the
+        # denser one names as left out.
+        self.assertIn("【差异总结】", full)
+        self.assertIn("本消息已压缩至 3000 字符内", denser)
+
+    def test_a_wider_budget_buys_back_the_richer_rendering(self):
+        """The budget is asked for per invocation rather than built in."""
+        payload = crowded_comparison_payload()
+        default = comparison_message(payload)
+        wider = comparison_message(payload, max_chars=10_000)
+        self.assertLess(len(default), len(wider))
+        self.assertIn("【差异总结】", wider)
+        self.assertNotIn("已压缩", wider)
+
+    def test_a_message_that_cannot_be_made_to_fit_says_so_rather_than_pretending(self):
+        """Sending an over-long report as if it fitted reads as a complete one."""
+        message = comparison_message(crowded_comparison_payload(), max_chars=1)
+        self.assertIn("已按最精简的形式压缩，仍超过该上限", message)
+        self.assertNotIn("【差异总结】", message)
+
+    def test_the_richest_level_that_fits_is_the_one_returned(self):
+        """Full detail stays whenever it is affordable, however much is left."""
+        self.assertTrue(
+            fit_to_budget(DETAILS, by_size, limit=10**9).startswith("FULL:")
+        )
+        self.assertTrue(fit_to_budget(DETAILS, by_size, limit=50).startswith("COMPACT:"))
+
+    def test_the_densest_level_is_returned_even_when_nothing_fits(self):
+        """It is the most honest form reachable, and it states what it left out."""
+        self.assertTrue(fit_to_budget(DETAILS, by_size, limit=1).startswith("BRIEF:"))
+
+    def test_the_budget_switch_reaches_every_subcommand_that_renders_a_message(self):
+        parser = query_model_prices.build_parser()
+        for argv in (
+            ["compare", "deepseek-flash"],
+            ["provider", "tencent", "deepseek-flash"],
+            ["delta"],
+        ):
+            with self.subTest(argv=argv):
+                args = parser.parse_args(argv)
+                self.assertEqual(args.max_chars, DEFAULT_MAX_CHARS)
+        self.assertEqual(
+            parser.parse_args(
+                ["compare", "deepseek-flash", "--max-chars", "1200"]
+            ).max_chars,
+            1200,
+        )
+
+
+DETAILS = (Detail.FULL, Detail.COMPACT, Detail.BRIEF)
+
+
+def by_size(level):
+    """A rendering that gets shorter as the level gets denser, by a known length."""
+    return f"{level.name}:" + "x" * (10 ** (2 - level))
+
 
 def comparison_payload():
     """One priced channel, as the comparison renderer receives it."""
@@ -1334,7 +1501,109 @@ def comparison_payload():
             }
         ],
         "source_checks": [],
+        "model_descriptions": [
+            description_of(
+                "deepseek/deepseek-flash",
+                "DeepSeek-V4.1-Flash",
+                "面向代码与智能体的高吞吐模型。",
+            )
+        ],
     }
+
+
+def description_of(model_id, display_name, summary, **overrides):
+    """One vendor introduction, as the description resolver returns it."""
+    description = {
+        "model_id": model_id,
+        "display_name": display_name,
+        "status": "available",
+        "summary": summary,
+        "capabilities": ["文本生成", "函数调用"],
+        "lifecycle": "active",
+        "specifications": {"context_window": "128,000"},
+        "source": {
+            "name": "腾讯云模型广场",
+            "url": f"https://example.test/models/{model_id}",
+            "kind": "tencent_mirror",
+            "retrieved_at": "2026-09-15T00:00:00+08:00",
+        },
+    }
+    description.update(overrides)
+    return description
+
+
+def crowded_comparison_payload(channels=9):
+    """The same model priced by many channels, as a wide comparison arrives.
+
+    Each channel publishes what a real catalogue does — two time bands, an input
+    and an output rate, a cache-hit rate and a cache-storage rate — because it is
+    how much each channel prices rather than how many channels there are that
+    makes the first rendering too long for one message.
+
+    Every channel is also checked, so the report carries the source blocks a real
+    one does. The pages are distinct per channel because a shared one would be
+    printed once and the report would come in shorter than a real one.
+    """
+    results = []
+    checks = []
+    for position in range(channels):
+        price_pages = {
+            "kind": "official_markdown",
+            "url": f"https://example.test/p{position}/pricing",
+            "retrieved_at": "2026-09-15T00:00:00+08:00",
+        }
+        results.append(
+            {
+                "provider": {"id": f"p{position}", "name": f"渠道{position + 1}"},
+                "model_id": "deepseek/deepseek-flash",
+                "display_name": "DeepSeek-V4.1-Flash",
+                "region": "中国区（广州）",
+                "delivery_mode": "upstream_direct",
+                "offers": [
+                    {
+                        "name": "闲时",
+                        "conditions": {"time_band": "闲时"},
+                        "prices": [
+                            price_item("input", "输入（未命中缓存）", "1", "CNY_per_million_tokens"),
+                            price_item("cache_hit", "输入（命中缓存）", "0.2", "CNY_per_million_tokens"),
+                            price_item("cache_storage", "缓存存储", "0.017", "CNY_per_million_tokens_per_hour"),
+                            price_item("output", "输出", "4", "CNY_per_million_tokens"),
+                        ],
+                    },
+                    {
+                        "name": "忙时",
+                        "conditions": {"time_band": "忙时"},
+                        "prices": [
+                            price_item("input", "输入（未命中缓存）", "2", "CNY_per_million_tokens"),
+                            price_item("cache_hit", "输入（命中缓存）", "0.4", "CNY_per_million_tokens"),
+                            price_item("cache_storage", "缓存存储", "0.017", "CNY_per_million_tokens_per_hour"),
+                            price_item("output", "输出", "8", "CNY_per_million_tokens"),
+                        ],
+                    },
+                ],
+                "time_bands": {
+                    "window": "00:30-08:30",
+                    "statements": ["每日 00:30 至 08:30 为闲时时段"],
+                    "source_url": f"https://example.test/p{position}/bands",
+                },
+                "source": price_pages,
+            }
+        )
+        checks.append(
+            {
+                "provider": {"id": f"p{position}", "name": f"渠道{position + 1}"},
+                "status": "available",
+                "source": dict(price_pages),
+            }
+        )
+    payload = comparison_payload()
+    payload["results"] = results
+    payload["source_checks"] = checks
+    return payload
+
+
+# One amount each density has to keep saying, and the terms it is billed under.
+CROWDED_AMOUNTS = ("输入（未命中缓存）：1 元/百万 tokens", "输出：4 元/百万 tokens")
 
 
 class AliyunAdapterTests(unittest.TestCase):

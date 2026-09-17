@@ -22,6 +22,7 @@ from model_price.descriptions.tencent_mirror import (
     build_tencent_mirror,
     validate_tencent_mirror,
 )
+from model_price.errors import SourceError
 from model_price.pricing import make_record, price_item
 from model_price.registry import query_adapters
 from model_price.messages import comparison_message, scan_message
@@ -308,16 +309,113 @@ def priced_record(model_id, amount="1"):
 
 
 class ScannedProvider:
-    provider_id = "fake"
-    provider_name = "假渠道"
-    source_url = "https://example.test/prices"
+    """A provider that serves a fixed catalogue, or fails on demand."""
+
     source_kind = "test"
 
-    def __init__(self, records):
-        self.records = records
+    def __init__(
+        self, records=(), error=None, provider_id="fake", provider_name="假渠道"
+    ):
+        self.records = list(records)
+        self.error = error
+        self.provider_id = provider_id
+        self.provider_name = provider_name
+        self.source_url = f"https://example.test/{provider_id}"
 
     def catalog_records(self):
-        return self.records
+        if self.error:
+            raise self.error
+        return list(self.records)
+
+
+class NamedDescriptionSource(FakeDescriptionSource):
+    """An introduction whose words name the model they belong to."""
+
+    def describe(self, model_id, display_name="", *, record=None):
+        return description_record(
+            model_id,
+            display_name or model_id,
+            f"{model_id} 的官方说明",
+            self.source_url,
+            self.source_kind,
+            source_name=self.source_name,
+            lifecycle="active",
+        )
+
+
+def crowded_catalogue(count=30):
+    """A catalogue that grew by ``count`` models since the baseline."""
+    return [
+        *[priced_record("base")],
+        *[priced_record(f"new-{position}") for position in range(count)],
+    ]
+
+
+class DeltaDensityTests(unittest.TestCase):
+    """A scan sent to a channel is re-rendered to fit it, never cut to fit it."""
+
+    def scan(self, resolver, catalogue, *, max_chars=None, extra=()):
+        """Build a scan that moved, then render it for a channel."""
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            scan_providers(
+                [ScannedProvider([priced_record("base")]), *extra],
+                store,
+                captured_at="2026-09-16T00:00:00+08:00",
+                descriptions=resolver,
+            )
+            payload = scan_providers(
+                [ScannedProvider(catalogue), *extra],
+                store,
+                captured_at="2026-09-17T00:00:00+08:00",
+                descriptions=resolver,
+            )
+        if max_chars is None:
+            return scan_message(payload)
+        return scan_message(payload, max_chars=max_chars)
+
+    def test_a_crowded_scan_still_opens_with_what_the_models_moved_are_for(self):
+        """Thirty new models cannot all be introduced; the first ones still are."""
+        resolver = DescriptionResolver({"fake": NamedDescriptionSource("fake", "")})
+        full = self.scan(resolver, crowded_catalogue(), max_chars=10**9)
+        message = self.scan(resolver, crowded_catalogue())
+        self.assertLess(len(message), len(full))
+        self.assertIn("本消息已压缩至 3000 字符内", message)
+        self.assertIn("【变化模型能力】", message)
+        self.assertLess(message.index("【变化模型能力】"), message.index("【结论】"))
+        # The opening block is bounded like any other list, and what the bound
+        # cut is stated as a count, so an absent model reads as left out rather
+        # than as never having existed.
+        self.assertIn("new-0 的官方说明", message)
+        self.assertNotIn("new-29 的官方说明", message)
+        self.assertIn("…其余 22 个模型的能力见完整明细", message)
+        self.assertIn("new-29 的官方说明", full)
+
+    def test_a_shortened_scan_still_names_every_channel_it_scanned(self):
+        """A channel the scan reached is a fact about the scan, not a detail."""
+        resolver = DescriptionResolver({"fake": NamedDescriptionSource("fake", "")})
+        message = self.scan(
+            resolver,
+            crowded_catalogue(),
+            max_chars=700,
+            extra=[
+                ScannedProvider(
+                    [priced_record("base")],
+                    provider_id="quiet",
+                    provider_name="安静渠道",
+                ),
+                ScannedProvider(
+                    error=SourceError("official document changed shape"),
+                    provider_id="broken",
+                    provider_name="坏渠道",
+                ),
+            ],
+        )
+        self.assertLessEqual(len(message), 700)
+        for name in ("假渠道", "安静渠道", "坏渠道"):
+            self.assertIn(name, message)
+        # A channel that answered with nothing keeps its reason too.
+        self.assertIn("official document changed shape", message)
 
 
 class DeltaDescriptionTests(unittest.TestCase):
@@ -342,8 +440,13 @@ class DeltaDescriptionTests(unittest.TestCase):
         descriptions = payload["providers"][0]["model_descriptions"]
         self.assertEqual([item["model_id"] for item in descriptions], ["m2"])
         message = scan_message(payload)
-        self.assertIn("模型介绍", message)
+        self.assertIn("【变化模型能力】", message)
         self.assertIn("适合代码与智能体任务", message)
+        # What a model is for is a property of the model, not of the channel that
+        # reported the change, so the scan opens with it. The channel's own block
+        # then carries the before-and-after without repeating the introduction.
+        self.assertLess(message.index("【变化模型能力】"), message.index("【结论】"))
+        self.assertEqual(message.count("适合代码与智能体任务"), 1)
 
     def test_a_removed_model_keeps_its_introduction_in_the_delta(self):
         resolver = DescriptionResolver(

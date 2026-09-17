@@ -21,6 +21,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from model_price.budget import DEFAULT_MAX_CHARS
 from model_price.core import HttpClient, now_iso
 from model_price.delta import scan_providers
 from model_price.descriptions import build_description_resolver
@@ -40,6 +41,31 @@ from model_price.updating import update_skill_before_refresh
 PROVIDER_OPTION_HELP = "query only this provider; repeat to compare selected providers"
 
 FORMAT_HELP = "json for machines, message for a DingTalk channel"
+
+MAX_CHARS_HELP = (
+    "character budget for message output; a report longer than this is re-rendered "
+    "at a denser level rather than truncated"
+)
+
+
+def add_message_options(
+    parser: argparse.ArgumentParser, *, default_format: str = "json"
+) -> None:
+    """Add the output switches shared by every subcommand that renders a message.
+
+    ``--max-chars`` is stated once per subcommand that can render one, because the
+    budget belongs to the format rather than to the command: a comparison sent to
+    a channel and a scan sent to a channel face the same limit.
+    """
+    parser.add_argument(
+        "--format",
+        choices=("json", "message"),
+        default=default_format,
+        help=FORMAT_HELP,
+    )
+    parser.add_argument(
+        "--max-chars", type=int, default=DEFAULT_MAX_CHARS, help=MAX_CHARS_HELP
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -77,9 +103,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="ignore fresh caches for selected providers",
     )
-    compare.add_argument(
-        "--format", choices=("json", "message"), default="json", help=FORMAT_HELP
-    )
+    add_message_options(compare)
 
     provider = subparsers.add_parser(
         "provider", help="query a model family from one provider"
@@ -90,9 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--exact", action="store_true", help="disable model-family matching"
     )
     provider.add_argument("--refresh", action="store_true", help="ignore fresh cache")
-    provider.add_argument(
-        "--format", choices=("json", "message"), default="json", help=FORMAT_HELP
-    )
+    add_message_options(provider)
 
     listing = subparsers.add_parser("list", help="list model IDs from one provider")
     listing.add_argument("provider")
@@ -115,9 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="also scan OpenAI, Anthropic, Google, and xAI",
     )
-    delta.add_argument(
-        "--format", choices=("json", "message"), default="message", help=FORMAT_HELP
-    )
+    add_message_options(delta, default_format="message")
     delta.add_argument(
         "--snapshot-dir",
         type=Path,
@@ -197,7 +217,7 @@ def main() -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         render = scan_message if args.command == "delta" else comparison_message
-        print(render(payload), end="")
+        print(render(payload, max_chars=args.max_chars), end="")
     return 0
 
 

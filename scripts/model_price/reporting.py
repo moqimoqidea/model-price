@@ -32,6 +32,18 @@ DELIVERY_LABELS = {
     "first_party": "原厂",
 }
 
+# Condition terms that restate something the message already says, so printing them
+# costs characters in a message that has to fit a channel and tells the reader
+# nothing. ``billing_mode`` is written as ``pay_as_you_go`` on every row every
+# table adapter produces, which is what a 计费方案 already is; ``source_section`` is
+# where the vendor filed the row rather than how it is charged, which is why the
+# snapshot layer already keeps it out of an offer's identity.
+#
+# They stay in the data and are filtered only here. Dropping them from the records
+# would change every offer's identity against the baselines already on disk, and
+# the next scan would read as every offer having been replaced.
+UNPRINTED_CONDITIONS = frozenset({"billing_mode", "source_section"})
+
 UNIT_LABELS = {
     "CNY_per_million_tokens": "元/百万 tokens",
     "CNY_per_million_tokens_per_hour": "元/百万 tokens/小时",
@@ -203,8 +215,16 @@ def delivery_text(record: dict[str, Any]) -> str:
 
 
 def conditions_text(conditions: dict[str, Any]) -> str:
-    """Every term a billing condition carries, as the source published it."""
-    return "；".join(f"{key}={value}" for key, value in (conditions or {}).items())
+    """Every term a billing condition carries, as the source published it.
+
+    Terms that restate something the message already says are left out; see
+    ``UNPRINTED_CONDITIONS``.
+    """
+    return "；".join(
+        f"{key}={value}"
+        for key, value in (conditions or {}).items()
+        if key not in UNPRINTED_CONDITIONS
+    )
 
 
 def condition_text(name: str, conditions: dict[str, Any]) -> str:
@@ -302,16 +322,20 @@ def specification_text(specifications: dict[str, Any]) -> str:
     )
 
 
-def compact_description(description: dict[str, Any]) -> str:
-    """One model's introduction as a single line, for a scan's change detail."""
-    model = (
-        f"{description.get('display_name') or description.get('model_id')}"
-        f"（{description.get('model_id', '')}）"
-    )
-    if description.get("status") != DESCRIPTION_AVAILABLE:
-        return f"{model}：{description.get('note') or '未找到官方独立介绍'}"
-    summary = description.get("summary") or NO_SUMMARY
-    return f"{model}：{summary}（来源：{description_source_text(description)}）"
+def changed_descriptions(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every model a scan reports as moved, introduced once for the whole scan.
+
+    A scan resolves introductions only for the models named in a change, so what
+    this returns is exactly the set that needs one. The same model can be named by
+    two channels, and what it is for does not vary by channel, so the repeats are
+    dropped and the model is introduced once rather than once per channel.
+    """
+    seen: dict[str, dict[str, Any]] = {}
+    for report in payload.get("providers", []):
+        for description in report.get("model_descriptions") or []:
+            key = description.get("model_id") or description.get("display_name", "")
+            seen.setdefault(key, description)
+    return list(seen.values())
 
 
 def skill_update_text(payload: dict[str, Any]) -> str:
