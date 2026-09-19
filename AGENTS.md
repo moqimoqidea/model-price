@@ -28,7 +28,7 @@ Standard library only, Python 3, no install step, no build step.
 .
 ├── SKILL.md                     runtime contract the skill host loads
 ├── README.md                    the person-facing document
-├── AGENTS.md / CLAUDE.md        this file, and a one-line import of it
+├── AGENTS.md                    code structure, invariants, and change locations
 ├── agents/openai.yaml           platform interface metadata (display name, default prompt, policy)
 ├── references/
 │   ├── schema.md                the JSON payload, field by field

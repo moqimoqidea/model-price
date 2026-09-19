@@ -21,7 +21,7 @@
 ```
 .
 ├── SKILL.md            # Agent 加载的指令
-├── AGENTS.md           # 给维护代码的 Agent：结构、不变量、改动落点（CLAUDE.md 指向它）
+├── AGENTS.md           # 给维护代码的 Agent：结构、不变量、改动落点
 ├── scripts/
 │   ├── query_model_prices.py   # CLI 入口
 │   └── model_price/            # 实现，价格 providers 与 descriptions 分离
