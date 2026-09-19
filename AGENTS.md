@@ -16,9 +16,10 @@ This file deliberately does not restate the other documents.
 ## What this is
 
 A single-skill repository whose root **is** the skill directory. It queries public,
-credential-free model catalogues and official price documents across 13 providers
-and two output modes: a cross-provider comparison for one model, and a whole-catalogue
-scan that reports what moved since the previous scan.
+credential-free model catalogues, introductions, capabilities, specifications, and
+official price documents across 13 providers. Its two output modes are a model and
+cross-provider comparison, and a whole-catalogue scan that reports launches,
+withdrawals, billing changes, and price moves since the previous scan.
 
 Standard library only, Python 3, no install step, no build step.
 
@@ -199,12 +200,18 @@ even when the tests still pass.
     does is a property of the model, so a scan introduces each moved model once
     from `changed_descriptions` rather than once per channel that reported it.
     Its source line is never optional: an unsourced capability claim is not a
-    fact.
+    fact. The message omits an `active` lifecycle because a newly listed model is
+    necessarily available; preview, legacy, retired, and unknown remain visible.
 14. **Statuses are reported, never softened.** `source_error`, `not_found`,
     `empty_scan`, `update_skipped`, `check_failed` all reach the reader. A provider
     that held still is still named, because that is what shows the scan covered it.
 15. **No credentials, ever.** The only authenticated path is refreshing the
     explicit Tencent mirror through a user-owned logged-in session, offline.
+16. **An official update time needs official evidence.** A vendor-labelled date or
+    a matching official DeepSeek news page may populate `source_updated_at`. When
+    no such evidence exists, the message labels the previous successful snapshot's
+    `captured_at` as 上次更新时间; it never calls that fallback 官方更新时间. A
+    date-only source remains date-only rather than acquiring an invented midnight.
 
 ## Where a change goes
 

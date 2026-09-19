@@ -50,7 +50,9 @@ only models present in an actual change.
 - Tencent Cloud TokenHub: embedded Slate JSON from the official catalog and pricing
   documents; preserve self-deployed and “原厂直供” rows. There is no Markdown
   endpoint: the "MD" button converts this same Slate data in the browser with
-  remark, so reading the Slate is reading the button's own source.
+  remark, so reading the Slate is reading the button's own source. The same article
+  payload carries `recentReleaseTime`, which is the price page's official update
+  time and is stored with every parsed record.
 - Tencent model introductions: the model square is authenticated and has no durable
   anonymous description endpoint, so its 100 rendered cards were captured on
   2026-09-17 into `descriptions/data/tencent-models.json`. Delivery-specific
@@ -75,8 +77,23 @@ only models present in an actual change.
   ERNIE alongside third-party families (DeepSeek, GLM, Qwen, Kimi); it does **not**
   serve DeepSeek-V4.1-Flash, only the superseded `DeepSeek-V4-Flash-0731`, which is
   filed as a model of its own and must never be merged into a `deepseek-flash`
-  comparison.
-- DeepSeek: `https://api-docs.deepseek.com/zh-cn/quick_start/pricing/`; the model table is keyed by a `模型` header. Model columns carry footnote markers such as `deepseek-flash(1)`, so markers are stripped before matching. The current model is `deepseek-flash`; retired names (`deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`) resolve through `RETIRED_MODEL_ALIASES`. Aliyun files the same live generation as `deepseek-v4.1-flash` and Ark as `deepseek-v4-1-flash`, so those go in `CURRENT_MODEL_ALIASES`, which is matched in both directions — a live-model label must never pull a superseded generation's price rows into the comparison, and `--exact` ignores it.
+  comparison. The rendered page's labelled 更新时间 is retained as the catalogue's
+  official update date; it is metadata beside the structured article, not a price
+  parsed from the shell.
+- DeepSeek: `https://api-docs.deepseek.com/zh-cn/quick_start/pricing/`; the
+  model table is keyed by a `模型` header. Model columns carry footnote markers
+  such as `deepseek-flash(1)`, so markers are stripped before matching. The current
+  model is `deepseek-flash`; retired names (`deepseek-v4-flash`,
+  `deepseek-v4-flash-vision-exp`) resolve through `RETIRED_MODEL_ALIASES`. Aliyun
+  files the same live generation as `deepseek-v4.1-flash` and Ark as
+  `deepseek-v4-1-flash`, so those go in `CURRENT_MODEL_ALIASES`, which is matched
+  in both directions — a live-model label must never pull a superseded generation's
+  price rows into the comparison, and `--exact` ignores it. The pricing page has no
+  update stamp, so a scan checks the latest seven date-shaped official news URLs.
+  Missing Docusaurus routes render the docs home page with HTTP 200; a page counts
+  only when its canonical URL or document id matches the candidate date. With no
+  recent news hit, the message uses the previous successful snapshot time and
+  labels it 上次更新时间.
 - Kimi: `https://platform.kimi.com/docs/llms.txt` indexes the chat pricing document as `pricing/chat.md`; dated variants such as `chat-k3.md` have also been served, so the whole `chat*` family is matched. Rows are JSON arrays shaped `[model, unit, cache hit, cache miss, output, context]`. The sibling documents (`batch`, `tools`, `limits`) are not per-model token tables and must stay out of the catalogue.
 - Zhipu BigModel: `https://docs.bigmodel.cn/cn/guide/start/pricing.md`. The anonymous
   config API that used to be read only publishes the five promoted flagship cards,
@@ -84,7 +101,14 @@ only models present in an actual change.
   far broader. Only headers naming a per-million-token rate are read; the
   per-request (`单价`) and per-character speech tables are skipped.
 - MiniMax: `https://platform.minimax.cn/docs/guides/pricing-paygo.md`, split into the language-model and speech sections. `platform.minimaxi.com` serves the identical document.
-- Xiaomi MiMo: `https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go`. The table's first column is the product line (`MiMo-V2.5 系列`), not a generic `Model` header, so the model column falls back to the leftmost non-price column. The page publishes the same models twice — `模型国内定价` in CNY and `模型海外定价` in USD — and only the CNY tables are read. The ASR table (billed per audio hour) and the plugin pricing section are not token pricing and are skipped.
+- Xiaomi MiMo: `https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go`. The
+  table's first column is the product line (`MiMo-V2.5 系列`), not a generic
+  `Model` header, so the model column falls back to the leftmost non-price column.
+  The page publishes the same models twice — `模型国内定价` in CNY and
+  `模型海外定价` in USD — and only the CNY tables are read. The ASR table (billed
+  per audio hour) and the plugin pricing section are not token pricing and are
+  skipped. The labelled 更新时间 in the rendered page is retained as the
+  catalogue's official update date.
 - OpenAI: `https://developers.openai.com/api/docs/pricing`; no public pricing JSON is exposed, so use its official `.md` representation.
 - Anthropic: `https://platform.claude.com/docs/en/about-claude/pricing`; no public pricing JSON is exposed, so use its official `.md` representation.
 - Google Gemini: `https://ai.google.dev/gemini-api/docs/pricing.md.txt`. The page
@@ -113,11 +137,14 @@ Two catalogue-level traps:
 - A scan must read the sources afresh. Serving a scan from the 3-hour cache would
   compare the previous scan's own data with itself and report "no change" for a
   vendor that did move, so `delta` always refreshes.
-- Some vendors date their catalogue and most do not. Aliyun publishes a per-model
-  `updateAt` and Ark a document-level `UpdatedTime`; both are kept as
-  `source_updated_at`, and a scan that finds no price movement repeats the newest
-  one as evidence. An absent stamp means the vendor publishes none — never that its
-  prices are stale.
+- Vendor update evidence stays separate from scan time. Aliyun publishes per-model
+  `updateAt`, Ark publishes document-level `UpdatedTime`, Tencent publishes
+  `recentReleaseTime`, and Baidu and Xiaomi label a page date; these are kept as
+  `source_updated_at`, and a scan repeats the newest one as official evidence.
+  DeepSeek contributes a date only when an official news page exists in the latest
+  seven-day window. For Kimi, Zhipu, MiniMax, and any other source with no official
+  stamp, the message uses the previous successful snapshot's `captured_at` and
+  labels it 上次更新时间. An absent official stamp never means the prices are stale.
 
 ## Time bands
 

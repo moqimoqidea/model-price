@@ -30,6 +30,7 @@ from model_price.models import (
     without_trailing_parenthetical,
 )
 from model_price.parsing import (
+    document_update_stamp,
     headed_document_tables,
     markdown_tables,
     split_markdown_row,
@@ -54,7 +55,12 @@ from model_price.providers.baidu import (
     price_data_url,
 )
 from model_price.providers.anthropic import ANTHROPIC_MARKDOWN_URL, AnthropicAdapter
-from model_price.providers.deepseek import DEEPSEEK_URL, DeepSeekAdapter
+from model_price.providers.deepseek import (
+    DEEPSEEK_URL,
+    DeepSeekAdapter,
+    deepseek_news_url,
+    recent_news_update,
+)
 from model_price.providers.google import (
     GEMINI_MARKDOWN_URL,
     GEMINI_URL,
@@ -62,7 +68,14 @@ from model_price.providers.google import (
 )
 from model_price.providers.kimi import KIMI_INDEX_URL, KimiAdapter
 from model_price.providers.openai import OPENAI_MARKDOWN_URL, OpenAIAdapter
-from model_price.providers.tencent import expand_slate_table, tencent_delivery_mode
+from model_price.providers.tencent import (
+    TENCENT_PRICE_URL,
+    TencentAdapter,
+    article_slate,
+    expand_slate_table,
+    extract_tencent_article,
+    tencent_delivery_mode,
+)
 from model_price.providers.volcengine import (
     VOLCENGINE_DOC_API,
     VOLCENGINE_PAGE_URL,
@@ -145,6 +158,8 @@ class MappingClient:
         self.values = values
 
     def get_text(self, url):
+        if url not in self.values:
+            raise SourceError(f"unmapped test URL: {url}")
         value = self.values[url]
         if isinstance(value, Exception):
             raise value
@@ -380,6 +395,67 @@ class ModelMatchingTests(unittest.TestCase):
         self.assertEqual(
             trailing_parenthetical("命中缓存（高峰时段：8:00-22:00，9月9日起生效）"),
             "高峰时段：8:00-22:00，9月9日起生效",
+        )
+
+
+class OfficialUpdateStampTests(unittest.TestCase):
+    def test_rendered_html_dates_share_one_parser(self):
+        self.assertEqual(
+            document_update_stamp(
+                "<div>最近更新时间：2026-09-18 22:04:00</div>",
+                utc_offset="+08:00",
+            ),
+            "2026-09-18T22:04:00+08:00",
+        )
+        self.assertEqual(
+            document_update_stamp(
+                "<div>更新时间<!-- -->：<!-- -->2026-09-16</div>",
+                utc_offset="+08:00",
+            ),
+            "2026-09-16",
+        )
+        self.assertEqual(
+            document_update_stamp(
+                "<div>更新时间 2026 年 08 月 06 日</div>",
+                utc_offset="+08:00",
+            ),
+            "2026-08-06",
+        )
+
+    def test_tencent_article_keeps_its_recent_release_time(self):
+        slate = [{"type": "paragraph", "children": [{"text": "价格"}]}]
+        state = {
+            "loaderData": {
+                "product-article": {
+                    "data": {
+                        "article": {
+                            "content": {
+                                "slate": json.dumps(slate),
+                                "recentReleaseTime": "2026-09-18 22:04:00",
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        quoted = json.dumps(json.dumps(state))
+        article = extract_tencent_article(
+            f"window.__staticRouterHydrationData = JSON.parse({quoted})"
+        )
+        self.assertEqual(article["recentReleaseTime"], "2026-09-18 22:04:00")
+        self.assertEqual(article_slate(article), slate)
+        adapter = TencentAdapter(
+            MappingClient(
+                {
+                    TENCENT_PRICE_URL: (
+                        f"window.__staticRouterHydrationData = JSON.parse({quoted})"
+                    )
+                }
+            )
+        )
+        self.assertEqual(
+            adapter.source_updated_at(),
+            "2026-09-18T22:04:00+08:00",
         )
 
 
@@ -770,7 +846,8 @@ class GeminiAdapterTests(unittest.TestCase):
         self.assertEqual(adapter.query("notes"), [])
 
 
-XIAOMI_HTML = """<h2>模型国内定价</h2>
+XIAOMI_HTML = """<div>更新时间<!-- --> <!-- -->2026 年 08 月 06 日</div>
+<h2>模型国内定价</h2>
 <table>
 <tr><th>MiMo-V2.5 系列</th><th>输入（命中缓存）</th><th>输入（未命中缓存）</th><th>输出</th></tr>
 <tr><td>mimo-v2.5-pro</td><td>¥0.025</td><td>¥3.00</td><td>¥6.00</td></tr>
@@ -822,6 +899,12 @@ class XiaomiAdapterTests(unittest.TestCase):
 
     def test_plugin_pricing_section_is_ignored(self):
         self.assertEqual(self.adapter().query("国内联网服务"), [])
+
+    def test_the_page_update_date_is_kept_on_every_record(self):
+        self.assertEqual(
+            self.adapter().query("mimo-v2.5")[0]["source_updated_at"],
+            "2026-08-06",
+        )
 
 
 class PriceUnitTests(unittest.TestCase):
@@ -884,6 +967,7 @@ BAIDU_HTML = """<h2>模型价格</h2>
 
 
 BAIDU_PAGE = (
+    '<div class="post__date">更新时间<!-- -->：<!-- -->2026-09-16</div>'
     '<link rel="preload" as="fetch" '
     'href="/doc/qianfan/s/page-data/wsv6ya/page-data.json"/>'
 )
@@ -902,6 +986,9 @@ class BaiduAdapterTests(unittest.TestCase):
     def test_the_article_body_is_read_from_the_pages_own_data_file(self):
         self.assertEqual(BaiduAdapter.source_kind, "official_json")
         self.assertEqual(self.adapter().list_models(), ["flash-test-0731"])
+
+    def test_the_page_update_date_is_kept_on_every_record(self):
+        self.assertEqual(self.record()["source_updated_at"], "2026-09-16")
 
     def test_a_price_per_thousand_tokens_is_restated_per_million(self):
         peak = self.record()["offers"][0]
@@ -1155,6 +1242,28 @@ class DeepSeekAdapterTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["model_id"], "deepseek-flash")
 
+    def test_recent_news_uses_page_identity_instead_of_http_success(self):
+        today = datetime(2026, 9, 19).date()
+        news_day = datetime(2026, 9, 18).date()
+        client = MappingClient(
+            {
+                deepseek_news_url(today): "<h1>Your First API Call</h1>",
+                deepseek_news_url(news_day): (
+                    '<html class="docs-doc-id-news/news260918">'
+                    '<link rel="canonical" '
+                    f'href="{deepseek_news_url(news_day)}"></html>'
+                ),
+            }
+        )
+        self.assertEqual(
+            recent_news_update(client, today=today),
+            "2026-09-18",
+        )
+
+    def test_prices_survive_when_no_recent_news_page_exists(self):
+        record = self.adapter().query("deepseek-flash")[0]
+        self.assertIsNone(record["source_updated_at"])
+
 
 class ModelNameCouplingTests(unittest.TestCase):
     def test_footnote_markers_are_not_part_of_model_identity(self):
@@ -1241,8 +1350,8 @@ class MessageRenderingTests(unittest.TestCase):
     def test_the_message_opens_with_what_it_is_and_what_it_covers(self):
         message = comparison_message(comparison_payload())
         self.assertTrue(message.startswith("模型价格对比\n"))
-        self.assertIn("时间：2026-09-15 00:00（UTC+8）", message)
-        self.assertIn("主题：deepseek-flash 在各渠道的价格与服务方式", message)
+        self.assertIn("时间：2026-09-15 00:00（UTC+8）。", message)
+        self.assertIn("主题：deepseek-flash 在各渠道的价格与服务方式。", message)
 
     def test_the_message_states_the_conclusion_before_the_channels(self):
         message = comparison_message(comparison_payload())
@@ -1316,7 +1425,8 @@ class MessageRenderingTests(unittest.TestCase):
         message = comparison_message(comparison_payload())
         self.assertIn("【模型介绍】", message)
         self.assertIn("用途：面向代码与智能体的高吞吐模型。", message)
-        self.assertIn("主打能力：文本生成、函数调用", message)
+        self.assertIn("主打能力：文本生成、函数调用。", message)
+        self.assertNotIn("生命周期：在用", message)
         self.assertLess(message.index("【模型介绍】"), message.index("【结论】"))
         self.assertLess(message.index("【模型介绍】"), message.index("【渠道对比】"))
         # The header states what the message is; the introduction opens the blocks.
@@ -1324,6 +1434,11 @@ class MessageRenderingTests(unittest.TestCase):
             line for line in message.splitlines() if line.startswith("【")
         ]
         self.assertEqual(headings[0], "【模型介绍】")
+
+    def test_an_exceptional_lifecycle_is_still_visible(self):
+        payload = comparison_payload()
+        payload["model_descriptions"][0]["lifecycle"] = "preview"
+        self.assertIn("生命周期：预览/实验。", comparison_message(payload))
 
     def test_the_introduction_names_the_page_it_came_from(self):
         """A claim about what a model does is worth the page it was read from."""
@@ -2372,6 +2487,9 @@ class MomentFormattingTests(unittest.TestCase):
     def test_a_stamp_this_parser_cannot_read_is_passed_through(self):
         self.assertEqual(format_moment("2026年9月16日更新"), "2026年9月16日更新")
 
+    def test_a_date_only_stamp_does_not_invent_midnight(self):
+        self.assertEqual(format_moment("2026-09-16"), "2026-09-16")
+
     def test_an_absent_stamp_reads_as_unknown(self):
         self.assertEqual(format_moment(None), "未知")
 
@@ -2387,8 +2505,8 @@ class DetectionReportTests(unittest.TestCase):
                 "2026-09-16T13:37:00+08:00",
             )
             self.assertTrue(report.startswith("模型价格自动检测\n"))
-            self.assertIn("时间：2026-09-16 13:37（UTC+8）", report)
-            self.assertIn("主题：全渠道模型与计费变化", report)
+            self.assertIn("时间：2026-09-16 13:37（UTC+8）。", report)
+            self.assertIn("主题：全渠道模型与计费变化。", report)
 
     def test_one_line_states_the_scan_before_the_channels_are_read(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2444,12 +2562,36 @@ class DetectionReportTests(unittest.TestCase):
                 "2026-09-16T10:00:00+08:00",
             )
             self.assertIn("好渠道", report)
-            self.assertIn("   状态：无变化", report)
-            self.assertIn("   官方更新时间：2026-09-14 03:03（UTC+0）", report)
+            self.assertIn("   状态：无变化。", report)
+            self.assertIn("   官方更新时间：2026-09-14 03:03（UTC+0）。", report)
             self.assertIn("坏渠道", report)
             self.assertIn("   状态：来源解析失败", report)
             self.assertIn("   本次变化：offline", report)
             self.assertIn("   模型数：—", report)
+            self.assertNotIn("本次变化：—", report)
+
+    def test_a_source_without_an_official_stamp_uses_the_previous_snapshot_time(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            provider = ScannedProvider([scanned_record("m1", "M1", "2", "8")])
+            render_scan(store, [provider], "2026-09-15T10:00:00+08:00")
+            # Force the expanded report while this provider itself stays unchanged.
+            report = render_scan(
+                store,
+                [
+                    provider,
+                    ScannedProvider(
+                        error=SourceError("offline"),
+                        provider_id="bad",
+                        provider_name="坏渠道",
+                    ),
+                ],
+                "2026-09-16T10:00:00+08:00",
+            )
+            self.assertIn(
+                "上次更新时间：2026-09-15 10:00（UTC+8）。",
+                report,
+            )
 
     def test_a_channel_that_moved_is_listed_before_the_quiet_ones(self):
         with tempfile.TemporaryDirectory() as directory:

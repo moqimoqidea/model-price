@@ -1,8 +1,9 @@
 # model-price
 
-一个 [Agent Skill](https://agentskills.io/)：查询和对比主流大模型的官方介绍、价格与模型清单，
-并扫描各渠道的整份目录、报告自上次扫描以来的变化。单模型查询会把模型主要用途、
-主打能力与生命周期放在报告开头；增量报告会为真正发生变化的模型同样先列一份。
+一个 [Agent Skill](https://agentskills.io/)：查询和对比主流大模型的官方介绍、主要用途、
+主打能力、规格、服务方式与官方价格，并扫描各渠道的整份目录，报告模型上新下架、
+计费方式和价格变化。单模型查询先介绍模型能力，再对比各渠道；增量报告也会为真正
+发生变化的模型先列用途与主打能力，便于判断新旧模型的定位变化。
 
 面向人的说明在这个文件；面向 Agent 的执行规则在 [SKILL.md](SKILL.md)，
 改代码用的项目结构与约束说明在 [AGENTS.md](AGENTS.md)。
@@ -82,9 +83,9 @@ python3 scripts/query_model_prices.py compare MODEL --format message --max-chars
 
 | 你会怎么说 | 跑什么 | 报告里得到什么 |
 | --- | --- | --- |
-| 详细介绍一下 deepseek-flash 模型。 | `compare deepseek-flash --format message` | 开头的「模型介绍」：用途、主打能力、生命周期、来源 |
-| 查找哪些平台提供 deepseek-flash，并比较各平台的模型版本、服务方式和官方价格。 | `compare deepseek-flash` | 「结论」与「渠道对比」：各渠道的模型 id、服务方式、地域、每个计费方案的金额 |
-| 分析这一次所有渠道的模型变更。 | `delta --format message` | 「变化模型能力」＋各渠道的前后对比，以及无变化、读不到的渠道 |
+| 详细介绍一下 deepseek-flash 模型。 | `compare deepseek-flash --format message` | 开头的「模型介绍」：用途、主打能力、规格、异常生命周期状态与来源 |
+| 比较 deepseek-flash 的能力定位、服务方式和各平台官方价格。 | `compare deepseek-flash` | 模型能力介绍，以及各渠道的模型 id、服务方式、地域与每个计费方案的金额 |
+| 分析这一次所有渠道的模型变更。 | `delta --format message` | 「变化模型能力」＋模型上新下架、计费变化、无变化及读不到的渠道 |
 
 第一种问的是模型本身，所以报告把介绍放在价格之前；第二种问的是跨渠道口径差异，
 所以重点是逐条列出的模型版本、服务方式与计费方案；第三种问的是「这次变了什么」，
@@ -99,23 +100,23 @@ python3 scripts/query_model_prices.py compare MODEL --format message --max-chars
 
 ```
 模型价格对比
-时间：2026-09-17 23:53（UTC+8）
-主题：deepseek-flash 在各渠道的价格与服务方式
+时间：2026-09-17 23:53（UTC+8）。
+主题：deepseek-flash 在各渠道的价格与服务方式。
 
 【模型介绍】
-1. DeepSeek-V4.1-Flash（deepseek-flash）
+1. DeepSeek-V4.1-Flash（deepseek-flash）。
    用途：面向代码与智能体的高吞吐模型。
-   主打能力：文本生成、函数调用
+   主打能力：文本生成、函数调用。
    来源：……
 【结论】
 ……
 【渠道对比】
-1. 阿里云百炼｜DeepSeek-V4.1-Flash
-   模型：deepseek-v4.1-flash
-   服务方式：平台托管
-   地域：中国区
-   计费方案 1：闲时
-      - 输入：1 元/百万 tokens
+1. 阿里云百炼｜DeepSeek-V4.1-Flash。
+   模型：deepseek-v4.1-flash。
+   服务方式：平台托管。
+   地域：中国区。
+   计费方案 1：闲时。
+      - 输入：1 元/百万 tokens。
 【差异总结】
 ……
 ```
@@ -143,6 +144,12 @@ python3 scripts/query_model_prices.py compare MODEL --format message --max-chars
 
 **delta 的报告同样以「变化模型能力」开头**，把这次扫描报告有变化的模型各介绍一次，
 放在任何渠道的前后对比之前——模型能做什么是模型的属性，不随报出这个变化的渠道改变。
+活跃是新上架模型的默认事实，因此消息不重复输出“生命周期：在用”；预览、旧版、已下线
+或官方未说明等会影响判断的状态仍会显示。
+
+渠道概览优先显示价格页公布的官方更新时间。腾讯、百度和小米从各自页面读取时间，
+DeepSeek 会检查最近 7 天的官方新闻地址；页面未公布时间或近期没有公告时，报告改为
+显示“上次更新时间”，其值是上一次成功读取并写入快照的时间，不再用破折号占位。
 
 **为什么不发 Markdown 文档。** 钉钉会用自家的解析器读文档，本工具的报告层级密、
 表格多，被它读回来容易串行——列错位、标题被吞、价格落到别的模型下面。所以

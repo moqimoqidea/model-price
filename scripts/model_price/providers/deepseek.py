@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from ..core import PriceSource, now_iso
@@ -17,6 +18,44 @@ from ..parsing import TextTableParser, time_bands_for
 from ..pricing import make_record, price_item
 
 DEEPSEEK_URL = "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/"
+DEEPSEEK_NEWS_URL = "https://api-docs.deepseek.com/zh-cn/news/news{stamp}"
+DEEPSEEK_NEWS_LOOKBACK_DAYS = 7
+CHINA_TIMEZONE = timezone(timedelta(hours=8))
+
+
+def deepseek_news_url(day: date) -> str:
+    return DEEPSEEK_NEWS_URL.format(stamp=day.strftime("%y%m%d"))
+
+
+def is_deepseek_news_page(page: str, day: date) -> bool:
+    """Reject the docs home page returned with HTTP 200 for a missing news URL."""
+    stamp = day.strftime("%y%m%d")
+    return (
+        f"docs-doc-id-news/news{stamp}" in page
+        or f'rel="canonical" href="{deepseek_news_url(day)}"' in page
+    )
+
+
+def recent_news_update(
+    client: Any, *, today: date | None = None, days: int = DEEPSEEK_NEWS_LOOKBACK_DAYS
+) -> str | None:
+    """Return the newest official DeepSeek news date in the recent scan window.
+
+    Missing news routes render the documentation home page with HTTP 200, so the
+    page identity is checked rather than treating a successful request as a hit.
+    The check is auxiliary metadata: an unavailable news route must never discard
+    prices already read from the pricing page.
+    """
+    current = today or datetime.now(CHINA_TIMEZONE).date()
+    for offset in range(days):
+        candidate = current - timedelta(days=offset)
+        try:
+            page = client.get_text(deepseek_news_url(candidate))
+        except SourceError:
+            continue
+        if is_deepseek_news_page(page, candidate):
+            return candidate.isoformat()
+    return None
 
 
 class DeepSeekAdapter(PriceSource):
@@ -29,6 +68,8 @@ class DeepSeekAdapter(PriceSource):
     def __init__(self, client: Any) -> None:
         super().__init__(client)
         self._document: str | None = None
+        self._news_checked = False
+        self._news_updated_at: str | None = None
 
     def document_text(self) -> str:
         """Return the pricing page once, so the table and its footnote agree."""
@@ -52,6 +93,13 @@ class DeepSeekAdapter(PriceSource):
         if not table:
             raise SourceError("DeepSeek pricing table was not found")
         return table
+
+    def source_updated_at(self) -> str | None:
+        """Check recent official news once; the scan supplies fallback wording."""
+        if not self._news_checked:
+            self._news_updated_at = recent_news_update(self.client)
+            self._news_checked = True
+        return self._news_updated_at
 
     def _models(self, table: list[list[str]]) -> list[str]:
         # Model columns carry footnote markers such as "deepseek-flash(1)".
@@ -130,6 +178,7 @@ class DeepSeekAdapter(PriceSource):
                 now_iso(),
                 delivery_mode="first_party",
                 model_family=model_family(models[model_index]),
+                source_updated_at=self.source_updated_at(),
                 time_bands=time_bands_for(
                     self.document_text(),
                     model_id=models[model_index],

@@ -26,6 +26,8 @@ Each result contains:
 - `delivery_mode`, `region`, `currency`
 - `offers[]`, each with an independent `name`, `conditions`, and `prices[]`
 - `source.url`, `source.kind`, and `source.retrieved_at`
+- optional `source_updated_at`, when the official price page or recent official
+  release page publishes a date for that catalogue
 
 Price fields are `type`, `label`, `amount`, `unit`, and optional `display`, `list_amount`, or `discount`. Common units are `CNY_per_million_tokens`, `USD_per_million_tokens`, their `_per_hour` storage variants, `CNY_per_10k_characters`, and `CNY_per_request`.
 
@@ -97,6 +99,11 @@ Each entry of `providers` carries `provider`, `status`, `baseline_at`,
 
 The two failure statuses omit `model_count` and `changes`. `baseline_at` is `null`
 when no baseline existed.
+
+`source.updated_at` is official vendor evidence copied into the snapshot; it is
+`null` when the source publishes none. The plain-text report then displays
+`baseline_at` as 上次更新时间, rather than presenting a scan timestamp as an
+official vendor update. Date-only official values remain date-only.
 
 A `changed` provider also carries `model_descriptions`, covering each unique model
 named anywhere in its changes. Unchanged and first-baseline providers omit it, so a

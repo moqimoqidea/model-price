@@ -141,6 +141,12 @@ SUMMARY_OVER_LIMIT_LABEL = (
 )
 
 
+def sentence_text(value: Any) -> str:
+    """Close one factual value so folded message lines remain readable."""
+    text = str(value)
+    return text if text.endswith(("。", "！", "？", ".", "!", "?")) else f"{text}。"
+
+
 def summary_label(description: dict[str, Any]) -> str:
     """The label the 用途 line carries, saying so when the prose is over the limit."""
     if not description.get("summary_needs_condensing"):
@@ -161,6 +167,10 @@ def format_moment(value: Any) -> str:
     text = str(value or "")
     if not text:
         return UNKNOWN
+    # Several official pages publish a date without a clock. Keep it that way:
+    # rendering midnight would claim a precision the vendor never supplied.
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text
     try:
         moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
@@ -373,7 +383,7 @@ def skill_update_text(payload: dict[str, Any]) -> str:
     reason = str(skill_update.get("reason", ""))
     reason_text = f"；{reason}" if reason else ""
     status = SKILL_UPDATE_LABELS.get(skill_update["status"], skill_update["status"])
-    return (
+    return sentence_text(
         f"{status}；检查时间 {format_moment(skill_update.get('checked_at'))}"
         f"{revision_text}{reason_text}"
     )

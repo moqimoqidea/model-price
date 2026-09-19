@@ -9,7 +9,7 @@ from typing import Any, Iterable
 from ..core import PriceSource, now_iso
 from ..errors import SourceError
 from ..models import model_family, model_matches, normalize_model
-from ..parsing import SpanGrid, time_bands_for
+from ..parsing import SpanGrid, normalize_update_stamp, time_bands_for
 from ..pricing import make_record, price_item
 from ..text import clean_text
 
@@ -22,7 +22,8 @@ TENCENT_PRICE_URL = "https://cloud.tencent.com/document/product/1823/130055"
 TENCENT_BAND_LABELS = ("原厂直供",)
 
 
-def extract_tencent_slate(page: str) -> list[dict[str, Any]]:
+def extract_tencent_article(page: str) -> dict[str, Any]:
+    """Return the official article payload embedded in a Tencent document page."""
     match = re.search(
         r"window\.__staticRouterHydrationData\s*=\s*JSON\.parse\s*\("
         r"(?P<quoted>\"(?:\\.|[^\"\\])*\")\s*\)",
@@ -32,9 +33,20 @@ def extract_tencent_slate(page: str) -> list[dict[str, Any]]:
         raise SourceError("Tencent document state was not found")
     try:
         state = json.loads(json.loads(match.group("quoted")))
-        slate: Any = state["loaderData"]["product-article"]["data"]["article"][
+        article = state["loaderData"]["product-article"]["data"]["article"][
             "content"
-        ]["slate"]
+        ]
+        if not isinstance(article, dict):
+            raise SourceError("Tencent article content was not an object")
+        return article
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise SourceError("unexpected Tencent document state") from exc
+
+
+def article_slate(article: dict[str, Any]) -> list[dict[str, Any]]:
+    """Decode the Slate node list carried by one Tencent article payload."""
+    try:
+        slate: Any = article["slate"]
         for _ in range(3):
             if not isinstance(slate, str):
                 break
@@ -44,6 +56,11 @@ def extract_tencent_slate(page: str) -> list[dict[str, Any]]:
         return slate
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise SourceError("unexpected Tencent document state") from exc
+
+
+def extract_tencent_slate(page: str) -> list[dict[str, Any]]:
+    """Compatibility entry point for callers that only need the Slate nodes."""
+    return article_slate(extract_tencent_article(page))
 
 
 def object_text(node: Any) -> str:
@@ -110,16 +127,30 @@ class TencentAdapter(PriceSource):
 
     def __init__(self, client: Any) -> None:
         super().__init__(client)
+        self._article: dict[str, Any] | None = None
         self._slate: list[dict[str, Any]] | None = None
         self._band_text: str | None = None
+
+    def _price_article(self) -> dict[str, Any]:
+        """Return the price article once, including its official update stamp."""
+        if self._article is None:
+            self._article = extract_tencent_article(
+                self.client.get_text(TENCENT_PRICE_URL)
+            )
+        return self._article
 
     def _price_slate(self) -> list[dict[str, Any]]:
         """Return the price page's slate once, for both tables and prose."""
         if self._slate is None:
-            self._slate = extract_tencent_slate(
-                self.client.get_text(TENCENT_PRICE_URL)
-            )
+            self._slate = article_slate(self._price_article())
         return self._slate
+
+    def source_updated_at(self) -> str | None:
+        """Return the price article's labelled recent-release moment."""
+        return normalize_update_stamp(
+            str(self._price_article().get("recentReleaseTime") or ""),
+            utc_offset="+08:00",
+        )
 
     def _band_document(self) -> str:
         """Return the page's prose, where the peak/off-peak window is written."""
@@ -283,6 +314,7 @@ class TencentAdapter(PriceSource):
                     model_aliases=aliases,
                     delivery_mode=delivery_mode,
                     model_family=model_family(display_name),
+                    source_updated_at=self.source_updated_at(),
                     time_bands=time_bands_for(
                         self._band_document(),
                         model_id=aliases[0],

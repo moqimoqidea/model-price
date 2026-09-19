@@ -12,6 +12,48 @@ from .text import clean_text, numeric_values, unescape_markdown
 
 HEADING_TAGS = ("h1", "h2", "h3", "h4")
 
+# Chinese vendor pages use either an ISO-like date or a spaced Chinese date after
+# the same label. The markup between the label and digits varies, so callers hand
+# the whole official document here instead of duplicating one fragile regex per
+# provider.
+UPDATE_VALUE_PATTERN = (
+    r"(?P<year>\d{4})\s*(?:年\s*|[-/])"
+    r"(?P<month>\d{1,2})\s*(?:月\s*|[-/])"
+    r"(?P<day>\d{1,2})(?:\s*日)?"
+    r"(?:\s+(?P<time>\d{1,2}:\d{2}(?::\d{2})?))?"
+)
+UPDATE_VALUE_RE = re.compile(UPDATE_VALUE_PATTERN)
+UPDATE_STAMP_RE = re.compile(
+    r"(?:最近)?更新时间\s*[：:]?\s*" + UPDATE_VALUE_PATTERN
+)
+
+
+def normalize_update_stamp(value: str, *, utc_offset: str = "") -> str | None:
+    """Normalize one official update stamp without inventing a time of day.
+
+    Date-only pages stay date-only. A page that states a local clock but omits its
+    offset can supply the documented offset, which keeps the moment unambiguous in
+    a report that also contains UTC timestamps.
+    """
+    match = UPDATE_VALUE_RE.search(clean_text(value).replace("T", " "))
+    if not match:
+        return None
+    stamp = (
+        f"{int(match.group('year')):04d}-"
+        f"{int(match.group('month')):02d}-"
+        f"{int(match.group('day')):02d}"
+    )
+    clock = match.group("time")
+    return f"{stamp}T{clock}{utc_offset}" if clock else stamp
+
+
+def document_update_stamp(document: str, *, utc_offset: str = "") -> str | None:
+    """Read a labelled update date from an official HTML or Markdown document."""
+    match = UPDATE_STAMP_RE.search(clean_text(document))
+    if not match:
+        return None
+    return normalize_update_stamp(match.group(0), utc_offset=utc_offset)
+
 
 class SpanGrid:
     """A table grid built from cells that cover several rows or columns.

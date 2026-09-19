@@ -64,6 +64,7 @@ from .reporting import (
     provider_name,
     scan_conclusion,
     scan_summary,
+    sentence_text,
     shared_conditions,
     skill_update_text,
     specification_text,
@@ -125,7 +126,7 @@ def note(text: str, depth: int = FIELD) -> str:
 
 def entry(position: int, title: str, fields: Iterable[str] = ()) -> list[str]:
     """A numbered entry: what it is, then the labelled facts ``field`` wrote."""
-    return [f"{position}. {title}", *fields]
+    return [f"{position}. {sentence_text(title)}", *fields]
 
 
 def group(heading: str, lines: Sequence[str]) -> list[str]:
@@ -159,8 +160,8 @@ def header(title: str, subject: str, payload: dict[str, Any]) -> list[str]:
     """Open the message with what it is, when it ran, and what it covers."""
     return [
         title,
-        f"时间：{format_moment(payload.get('retrieved_at'))}",
-        f"主题：{subject}",
+        f"时间：{sentence_text(format_moment(payload.get('retrieved_at')))}",
+        f"主题：{sentence_text(subject)}",
     ]
 
 
@@ -240,22 +241,22 @@ def provider_entry(position: int, record: dict[str, Any]) -> list[str]:
         position,
         f"{provider_name(record)}｜{display_name}",
         [
-            field("模型", record.get("model_id", "")),
-            field("服务方式", delivery_text(record)),
-            field("地域", record.get("region") or UNKNOWN),
+            field("模型", sentence_text(record.get("model_id", ""))),
+            field("服务方式", sentence_text(delivery_text(record))),
+            field("地域", sentence_text(record.get("region") or UNKNOWN)),
         ],
     )
     if not offers:
-        lines.append(field("价格", UNPRICED))
+        lines.append(field("价格", sentence_text(UNPRICED)))
     shared = shared_conditions(record)
     # Tested after filtering, not before: a channel whose shared terms are all
     # unprinted ones has nothing to state here, and an empty label reads as a
     # value the source withheld.
     if shared_text := conditions_text(shared):
-        lines.append(field("计费条件", shared_text))
+        lines.append(field("计费条件", sentence_text(shared_text)))
     for offer_position, offer in enumerate(offers, start=1):
         terms = offer_condition_text(offer, shared)
-        lines.append(field(f"计费方案 {offer_position}", terms))
+        lines.append(field(f"计费方案 {offer_position}", sentence_text(terms)))
         lines.extend(price_lines(offer))
     source = record.get("source") or {}
     lines.append(field("来源", source.get("url") or UNKNOWN))
@@ -280,7 +281,7 @@ def price_text(price: dict[str, Any]) -> str:
     value = format_price(price)
     if price.get("discount") is not None:
         value += f"；折扣 {price['discount']}"
-    return f"{label}：{value}"
+    return sentence_text(f"{label}：{value}")
 
 
 def band_lines(results: list[dict[str, Any]]) -> list[str]:
@@ -297,11 +298,11 @@ def band_lines(results: list[dict[str, Any]]) -> list[str]:
         block = [
             bullet(
                 f"{provider_name(record)}（{name}）："
-                f"{bands.get('window') or NO_WINDOW}"
+                f"{sentence_text(bands.get('window') or NO_WINDOW)}"
             )
         ]
         block.extend(
-            note(f"官方原文：{statement}")
+            note(f"官方原文：{sentence_text(statement)}")
             for statement in bands.get("statements", [])
         )
         if bands.get("source_url"):
@@ -343,20 +344,34 @@ def description_fields(description: dict[str, Any]) -> list[str]:
             description.get("status"), description.get("status", UNKNOWN)
         )
         note_text = description.get("note")
-        state = field("状态", f"{status}；{note_text}" if note_text else status)
+        state = field(
+            "状态", sentence_text(f"{status}；{note_text}" if note_text else status)
+        )
         return [state, field("已检查", description_source_text(description))]
     lifecycle = description.get("lifecycle", "unknown")
     lines = [
         field(
             summary_label(description),
-            description.get("summary") or NO_SUMMARY,
+            sentence_text(description.get("summary") or NO_SUMMARY),
         ),
-        field("生命周期", LIFECYCLE_LABELS.get(lifecycle, lifecycle)),
     ]
+    # A newly listed model being active is implicit. Exceptional states remain
+    # visible because preview, legacy, retirement, and an unknown state affect a
+    # reader's decision even when the price source still lists the model.
+    if lifecycle != "active":
+        lines.append(
+            field(
+                "生命周期", sentence_text(LIFECYCLE_LABELS.get(lifecycle, lifecycle))
+            )
+        )
     if description.get("capabilities"):
-        lines.append(field("主打能力", "、".join(description["capabilities"])))
+        lines.append(
+            field(
+                "主打能力", sentence_text("、".join(description["capabilities"]))
+            )
+        )
     if specs := specification_text(description.get("specifications") or {}):
-        lines.append(field("规格", specs))
+        lines.append(field("规格", sentence_text(specs)))
     lines.append(field("来源", description_source_text(description)))
     return lines
 
@@ -385,7 +400,7 @@ def source_line_text(check: dict[str, Any], printed: set[str | None]) -> str:
     status = source_status_text(check)
     url = (check.get("source") or {}).get("url")
     if url and url in printed:
-        return f"{name}：{status}（来源见上）"
+        return sentence_text(f"{name}：{status}（来源见上）")
     return f"{name}：{status}｜{url or UNKNOWN}"
 
 
@@ -461,16 +476,27 @@ def channel_entry(position: int, report: dict[str, Any]) -> list[str]:
     updated_at = (report.get("source") or {}).get("updated_at")
     status = DELTA_STATUS_LABELS.get(report["status"], report["status"])
     model_count = report.get("model_count") or NO_CHANGE
-    updated = format_moment(updated_at) if updated_at else NO_CHANGE
+    facts = [
+        field("状态", sentence_text(status)),
+        field("模型数", sentence_text(model_count)),
+    ]
+    if report["status"] != UNCHANGED:
+        facts.append(field("本次变化", sentence_text(change_digest(report))))
+    if updated_at:
+        facts.append(
+            field("官方更新时间", sentence_text(format_moment(updated_at)))
+        )
+    elif report.get("baseline_at"):
+        facts.append(
+            field(
+                "上次更新时间",
+                sentence_text(format_moment(report["baseline_at"])),
+            )
+        )
     return entry(
         position,
         report["provider"]["name"],
-        [
-            field("状态", status),
-            field("模型数", model_count),
-            field("本次变化", change_digest(report)),
-            field("官方更新时间", updated),
-        ],
+        facts,
     )
 
 
@@ -496,8 +522,12 @@ def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
         position,
         report["provider"]["name"],
         [
-            field("上次扫描", format_moment(report.get("baseline_at"))),
-            field("本次扫描", f"{report.get('model_count', 0)} 个模型"),
+            field(
+                "上次扫描", sentence_text(format_moment(report.get("baseline_at")))
+            ),
+            field(
+                "本次扫描", sentence_text(f"{report.get('model_count', 0)} 个模型")
+            ),
         ],
     )
     for field_name in BULLET_CHANGE_FIELDS:
@@ -526,7 +556,7 @@ def change_text(change: dict[str, Any]) -> str:
         digest = model_digest(change)
     else:
         digest = offering_text(offer.get("name", ""), offer.get("conditions", {}))
-    return f"{model}：{digest}" if digest else model
+    return sentence_text(f"{model}：{digest}" if digest else model)
 
 
 def price_change_text(change: dict[str, Any]) -> str:
@@ -537,7 +567,9 @@ def price_change_text(change: dict[str, Any]) -> str:
     )
     condition = offering_text(change.get("offer", ""), change.get("conditions", {}))
     label = change.get("label") or change.get("type", "")
-    return f"{model}：{condition}；{label} {price_movement(change)}"
+    return sentence_text(
+        f"{model}：{condition}；{label} {price_movement(change)}"
+    )
 
 
 def failed_lines(reports: list[dict[str, Any]]) -> list[str]:
@@ -558,4 +590,4 @@ def failed_text(report: dict[str, Any]) -> str:
         if baseline
         else ""
     )
-    return f"{report['provider']['name']}：{status}；{reason}{kept}"
+    return sentence_text(f"{report['provider']['name']}：{status}；{reason}{kept}")

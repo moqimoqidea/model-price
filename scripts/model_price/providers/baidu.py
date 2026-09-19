@@ -28,7 +28,13 @@ from ..models import (
     split_trailing_parenthetical,
     trailing_parenthetical,
 )
-from ..parsing import headed_document_tables, monetary_amount, time_band_label, token_price_kind
+from ..parsing import (
+    document_update_stamp,
+    headed_document_tables,
+    monetary_amount,
+    time_band_label,
+    token_price_kind,
+)
 from ..pricing import make_record, per_million_tokens, price_item, tokens_per_price_unit
 from ..text import clean_text, first_cell_line
 
@@ -124,11 +130,15 @@ class BaiduAdapter(PriceSource):
         super().__init__(client)
         self._document: str | None = None
         self._catalogue: list[dict[str, Any]] | None = None
+        self._source_updated_at: str | None = None
 
     def document_text(self) -> str:
         """Return the article body the page keeps beside the rendered portal."""
         if self._document is None:
             page = self.client.get_text(BAIDU_PAGE_URL)
+            self._source_updated_at = document_update_stamp(
+                page, utc_offset="+08:00"
+            )
             try:
                 payload = json.loads(self.client.get_text(price_data_url(page)))
                 body = payload["result"]["data"]["markdownRemark"]["html"]
@@ -301,6 +311,7 @@ class BaiduAdapter(PriceSource):
             currency=self.currency,
             delivery_mode=self.delivery_mode,
             model_family=model_family(model_id),
+            source_updated_at=self._source_updated_at,
             time_bands=self._time_bands(group),
         )
 

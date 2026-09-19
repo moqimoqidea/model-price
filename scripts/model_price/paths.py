@@ -14,7 +14,7 @@ DEFAULT_SNAPSHOT_DIR = SKILL_DIR / "snapshots"
 CACHE_TTL = timedelta(hours=3)
 # Bumped whenever a provider's source or parsing changes, so entries written by an
 # older version are ignored instead of being served for the rest of their TTL.
-CACHE_SCHEMA_VERSION = 6
+CACHE_SCHEMA_VERSION = 7
 
 # Snapshots are the baseline a later scan is compared against. They never expire —
 # an expired baseline would turn every run into a first run — so they are versioned

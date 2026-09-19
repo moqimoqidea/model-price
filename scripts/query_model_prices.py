@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Query public model catalogs and prices, with sources, without credentials.
+"""Compare public model capabilities, catalogues, and prices without credentials.
 
 The implementation lives in the ``model_price`` package beside this file. This
 module stays a thin, stable CLI entry point so existing invocations keep working:
@@ -43,8 +43,7 @@ PROVIDER_OPTION_HELP = "query only this provider; repeat to compare selected pro
 FORMAT_HELP = "json for machines, message for a DingTalk channel"
 
 MAX_CHARS_HELP = (
-    "character budget for message output; a report longer than this is re-rendered "
-    "at a denser level rather than truncated"
+    "character budget for message output; an overrun is reported without truncation"
 )
 
 
@@ -70,7 +69,10 @@ def add_message_options(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Query official model catalogs and prices with sources"
+        description=(
+            "Compare official model capabilities, catalogues, service variants, "
+            "and prices with sources"
+        )
     )
     parser.add_argument(
         "--timeout", type=int, default=30, help="HTTP timeout in seconds"
@@ -81,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     compare = subparsers.add_parser(
-        "compare", help="compare a model family across all providers"
+        "compare", help="explain a model family and compare it across providers"
     )
     compare.add_argument("model")
     compare.add_argument(
