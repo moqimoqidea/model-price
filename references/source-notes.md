@@ -94,7 +94,7 @@ only models present in an actual change.
   only when its canonical URL or document id matches the candidate date. With no
   recent news hit, the message uses the previous successful snapshot time and
   labels it 上次更新时间.
-- Kimi: `https://platform.kimi.com/docs/llms.txt` indexes the chat pricing document as `pricing/chat.md`; dated variants such as `chat-k3.md` have also been served, so the whole `chat*` family is matched. Rows are JSON arrays shaped `[model, unit, cache hit, cache miss, output, context]`. The sibling documents (`batch`, `tools`, `limits`) are not per-model token tables and must stay out of the catalogue.
+- Kimi: `https://platform.kimi.com/docs/llms.txt` indexes the chat pricing document as `pricing/chat.md`; dated variants such as `chat-k3.md` have also been served, so the whole `chat*` family is matched. The Markdown embeds JSX `DocTable` blocks whose columns are declarations and whose rows are JSON arrays. Prices are mapped by those column titles because K3 inserted two cache-write TTL columns ahead of cache-hit input; assigning by the old positions would turn `20 / 40 / 2` into a false cache/input/output move. Headerless legacy captures still use the former `[model, unit, cache hit, cache miss, output, context]` shape. The sibling documents (`batch`, `tools`, `limits`) are not per-model token tables and must stay out of the catalogue.
 - Zhipu BigModel: `https://docs.bigmodel.cn/cn/guide/start/pricing.md`. The anonymous
   config API that used to be read only publishes the five promoted flagship cards,
   while this page carries the whole catalogue, so the Markdown is both simpler and

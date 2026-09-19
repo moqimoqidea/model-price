@@ -1177,16 +1177,35 @@ KIMI_CHAT = """# 对话模型价格
 ["kimi-k3-mini", "1M tokens", "¥0.50", "¥5.00", "¥25.00", "262,144 tokens"],
 """
 
+KIMI_CHAT_WITH_CACHE_WRITES = '''# 模型推理价格说明
+
+<DocTable
+  columns={[
+{ title: "模型", width: "12%" },
+{ title: "计费单位", width: "10%" },
+{ title: "缓存写入（TTL 5min）", width: "13%" },
+{ title: "缓存写入（TTL 1h）", width: "13%" },
+{ title: "输入价格（缓存命中）", width: "13%" },
+{ title: "输入价格（缓存未命中）", width: "13%" },
+{ title: "输出价格", width: "10%" },
+{ title: "上下文窗口", width: "16%" },
+]}
+  rows={[
+["kimi-k3", "1M tokens", "¥20.00", "¥40.00", "¥2.00", "¥20.00", "¥100.00", "1,048,576 tokens"],
+]}
+/>
+'''
+
 
 class KimiAdapterTests(unittest.TestCase):
-    def adapter(self):
+    def adapter(self, document=KIMI_CHAT):
         # Only the chat document is mapped: any other URL would raise, so this
         # also proves the sibling pricing documents are never fetched.
         return KimiAdapter(
             MappingClient(
                 {
                     KIMI_INDEX_URL: KIMI_INDEX,
-                    "https://platform.kimi.com/docs/pricing/chat.md": KIMI_CHAT,
+                    "https://platform.kimi.com/docs/pricing/chat.md": document,
                 }
             )
         )
@@ -1199,6 +1218,24 @@ class KimiAdapterTests(unittest.TestCase):
         self.assertEqual(price_lookup(offer, "cache_hit")["amount"], "2.00")
         self.assertEqual(price_lookup(offer, "input")["amount"], "20.00")
         self.assertEqual(price_lookup(offer, "output")["amount"], "100.00")
+
+    def test_doc_table_headers_keep_new_cache_write_columns_separate(self):
+        offer = self.adapter(KIMI_CHAT_WITH_CACHE_WRITES).query("kimi-k3")[0][
+            "offers"
+        ][0]
+        self.assertEqual(price_lookup(offer, "cache_hit")["amount"], "2.00")
+        self.assertEqual(price_lookup(offer, "input")["amount"], "20.00")
+        self.assertEqual(price_lookup(offer, "output")["amount"], "100.00")
+        cache_writes = [
+            price for price in offer["prices"] if price["type"] == "cache_write"
+        ]
+        self.assertEqual(
+            [(price["label"], price["amount"]) for price in cache_writes],
+            [
+                ("缓存写入（TTL 5min）", "20.00"),
+                ("缓存写入（TTL 1h）", "40.00"),
+            ],
+        )
 
 
 DEEPSEEK_HTML = """

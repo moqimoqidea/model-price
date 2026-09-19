@@ -263,6 +263,41 @@ def markdown_json_rows(document: str) -> list[list[str]]:
     return rows
 
 
+DOC_TABLE_RE = re.compile(r"<DocTable\b(?P<body>.*?)/>", re.DOTALL)
+DOC_TABLE_COLUMNS_RE = re.compile(
+    r"columns\s*=\s*\{\[(?P<columns>.*?)\]\}", re.DOTALL
+)
+DOC_TABLE_ROWS_RE = re.compile(r"rows\s*=\s*\{\[(?P<rows>.*?)\]\}", re.DOTALL)
+DOC_TABLE_TITLE_RE = re.compile(
+    r"\btitle\s*:\s*(?P<title>\"(?:\\.|[^\"\\])*\")"
+)
+
+
+def markdown_doc_tables(document: str) -> list[list[list[str]]]:
+    """Read the header and rows of JSX ``DocTable`` blocks in Markdown.
+
+    Some documentation sites publish their source Markdown with table columns as
+    JavaScript objects and rows as JSON arrays. Keeping the header beside each row
+    lets an adapter locate prices by meaning after the vendor inserts or reorders
+    columns instead of assigning an amount by its old position.
+    """
+    tables = []
+    for match in DOC_TABLE_RE.finditer(document):
+        body = match.group("body")
+        columns_match = DOC_TABLE_COLUMNS_RE.search(body)
+        rows_match = DOC_TABLE_ROWS_RE.search(body)
+        if not columns_match or not rows_match:
+            continue
+        headers = [
+            json.loads(title.group("title"))
+            for title in DOC_TABLE_TITLE_RE.finditer(columns_match.group("columns"))
+        ]
+        rows = markdown_json_rows(rows_match.group("rows"))
+        if headers and rows:
+            tables.append([headers, *rows])
+    return tables
+
+
 def headed_document_tables(document: str) -> list[tuple[list[str], list[list[str]]]]:
     """Read pricing tables from either rendered HTML or official Markdown."""
     parser = TextTableParser()
