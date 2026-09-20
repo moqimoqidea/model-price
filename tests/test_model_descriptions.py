@@ -17,6 +17,7 @@ from model_price.descriptions.core import (
 )
 from model_price.descriptions.resolver import DescriptionResolver
 from model_price.descriptions.sources import (
+    AliyunDescriptionSource,
     KIMI_MODELS_URL,
     KimiDescriptionSource,
     OpenAIDescriptionSource,
@@ -29,6 +30,11 @@ from model_price.descriptions.tencent_mirror import (
 )
 from model_price.errors import SourceError
 from model_price.pricing import make_record, price_item
+from model_price.providers.aliyun import (
+    ALIYUN_API_URL,
+    qianwen_model_metadata,
+    qianwen_model_url,
+)
 from model_price.registry import query_adapters
 from model_price.messages import comparison_message, scan_message
 from model_price.snapshots import SnapshotStore
@@ -40,6 +46,22 @@ class MappingClient:
 
     def get_text(self, url):
         return self.mapping[url]
+
+
+class QianwenDescriptionClient:
+    def __init__(self, items=()):
+        self.items = list(items)
+        self.requests = []
+
+    def post_form(self, url, fields):
+        self.requests.append((url, dict(fields), json.loads(fields["params"])))
+        return {
+            "code": "200",
+            "data": {
+                "Data": [{"Items": self.items}],
+                "Ext": {"totalCount": 1},
+            },
+        }
 
 
 class FakeDescriptionSource(DescriptionSource):
@@ -123,6 +145,66 @@ Model ID: `gpt-test`
         retired = source.describe("kimi-k2.5")
         self.assertEqual(retired["lifecycle"], "retired")
         self.assertEqual(retired["summary"], "已下线")
+
+    def test_aliyun_record_metadata_avoids_a_second_catalogue_request(self):
+        item = {
+            "Model": "qwen/test",
+            "Description": "面向长文档理解的模型。",
+            "Capabilities": ["TG"],
+            "Features": ["function-calling"],
+            "ModelInfo": {
+                "ContextWindow": 1000000,
+                "MaxInputTokens": 991808,
+                "MaxOutputTokens": 8192,
+            },
+            "InferenceMetadata": {
+                "RequestModality": ["Text", "Image"],
+                "ResponseModality": ["Text"],
+            },
+            "VersionTag": "PREVIEW",
+        }
+        client = QianwenDescriptionClient()
+        result = AliyunDescriptionSource(client).describe(
+            "qwen/test",
+            "Qwen Test",
+            record={"model_metadata": qianwen_model_metadata(item)},
+        )
+
+        self.assertEqual(client.requests, [])
+        self.assertEqual(result["display_name"], "Qwen Test")
+        self.assertEqual(result["summary"], "面向长文档理解的模型。")
+        self.assertEqual(result["capabilities"], ["TG", "function-calling"])
+        self.assertEqual(result["lifecycle"], "preview")
+        self.assertEqual(result["specifications"]["context_window"], 1000000)
+        self.assertEqual(result["specifications"]["input_modalities"], "Text、Image")
+        self.assertEqual(result["source"]["url"], qianwen_model_url("qwen/test"))
+
+    def test_aliyun_description_fallback_searches_the_public_catalogue(self):
+        client = QianwenDescriptionClient(
+            [
+                {
+                    "Model": "qwen3.8-flash",
+                    "Name": "Qwen3.8-Flash",
+                    "Description": "高吞吐多模态模型。",
+                    "ModelInfo": {"MaxOutputTokens": 131072},
+                }
+            ]
+        )
+        result = AliyunDescriptionSource(client).describe("qwen3.8-flash")
+
+        self.assertEqual(len(client.requests), 1)
+        url, fields, params = client.requests[0]
+        self.assertEqual(url, ALIYUN_API_URL)
+        self.assertEqual(fields["product"], "AliyunDeliveryService")
+        self.assertEqual(fields["action"], "ListModelSeries")
+        self.assertNotIn("sec_token", fields)
+        self.assertEqual(params["Query"], "qwen3.8-flash")
+        self.assertEqual(params["Language"], "zh-CN")
+        self.assertEqual(result["display_name"], "Qwen3.8-Flash")
+        self.assertEqual(result["specifications"]["max_output_tokens"], 131072)
+        self.assertEqual(
+            result["source"]["url"], qianwen_model_url("qwen3.8-flash")
+        )
 
 
 class TencentMirrorTests(unittest.TestCase):

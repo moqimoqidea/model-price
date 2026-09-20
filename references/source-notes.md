@@ -22,10 +22,11 @@ only models present in an actual change.
 - DeepSeek uses the official release/news pages. Their server-rendered metadata is
   the narrowest public representation carrying the release summary; exact retired
   ids are preferred before following a live alias.
-- Aliyun uses the same anonymous model-centre API as pricing. Its `description`,
-  `capabilities`, `features`, context limit, output limit, lifecycle, and `docUrl`
-  fields are normalized by the description package; the gateway response is decoded
-  by one shared helper rather than duplicated in two adapters.
+- Aliyun uses the same public Qianwen model-market catalogue as pricing. Its
+  `Description`, `Capabilities`, `Features`, context limits, modalities, and
+  scheduled withdrawal are normalized by one shared helper. The introduction's
+  source is the model's public `qianwenai.com/models/<id>` page; older documentation
+  URLs carried in catalogue metadata are not used.
 - Xiaomi's public HTML is parsed only because it publishes no Markdown variant.
   Model capability and quick-selection tables are combined.
 - Volcengine's public Model Square page is used only when its server-rendered
@@ -35,10 +36,22 @@ only models present in an actual change.
   `descriptions/data/tencent-models.json` file is the explicit mirror. Absence from
   the mirror is `not_found`, never a cue to synthesize an introduction.
 
-- Aliyun Bailian: anonymous model-center JSON API in the script. The page also
-  offers a "复制 MD 格式" copy, but it is a 585 KB MDX document whose tables are
-  still embedded HTML `<table>` blocks, and the JSON API also carries time bands,
-  discounts, batch prices and the inference provider. The JSON stays the source.
+- Aliyun Bailian: `https://www.qianwenai.com/models` and its public
+  `ListModelSeries` POST endpoint at `platform-home.qianwenai.com`. The endpoint
+  accepts `PageNo`, `PageSize`, `Language`, and an optional `Query`; it returns the
+  series in `Data[]` and independently priced models in each series' `Items[]`.
+  Requests made without cookies, `sec_token`, or any authorization header return
+  the full catalogue. A page size of 200 currently reads every series at once, and
+  the adapter retains pagination so later catalogue growth is not cut off.
+  `Prices[]` carries direct prices and `MultiPrices[]` carries input-length or other
+  tiers, each of which remains a separate offer. `Discount` is a multiplier: the
+  effective amount is `Price × Discount`, while `Price` and `Discount` remain as
+  `list_amount` and `discount` for auditability. `BuiltInToolMultiPrices` describes
+  optional tool calls rather than model inference, so those charges are not folded
+  into a model's token or generation offers. Model detail URLs percent-encode the
+  literal model id; their server-rendered tooltip is the official source for the
+  peak/off-peak window. Catalogue fields also supply the model introduction,
+  capabilities, modalities, limits, update time, and scheduled withdrawal.
 - Volcengine Ark: the page's `getDocDetail` JSON, reading `Result.MDContent` — the
   Markdown its "复制markdown" button produces. `Result.Content` is the same
   document as Slate JSON and is no longer parsed. Markdown table headings keep the
@@ -138,7 +151,7 @@ Two catalogue-level traps:
   compare the previous scan's own data with itself and report "no change" for a
   vendor that did move, so `delta` always refreshes.
 - Vendor update evidence stays separate from scan time. Aliyun publishes per-model
-  `updateAt`, Ark publishes document-level `UpdatedTime`, Tencent publishes
+  `UpdateAt`, Ark publishes document-level `UpdatedTime`, Tencent publishes
   `recentReleaseTime`, and Baidu and Xiaomi label a page date; these are kept as
   `source_updated_at`, and a scan repeats the newest one as official evidence.
   DeepSeek contributes a date only when an official news page exists in the latest
@@ -158,7 +171,7 @@ For `deepseek-flash` the platforms currently disagree:
 | Volcengine Ark | 周一至周五 09:00–12:00、14:00–18:00 | 其余（含整个周末） |
 | Tencent (原厂直供) | 工作日 9:00–12:00、14:00–18:00 | 其余（含周末全天） |
 | Tencent (0731/0813 self-hosted) | 周一至周日 9:00–12:00、14:00–18:00 | 其余 |
-| Aliyun Bailian | 08:00–22:00（其余时段为忙时） | 22:00–次日 08:00 |
+| Aliyun Bailian | 此外为忙时 | 东八区 22 点至次日 8 点 |
 | Baidu Qianfan (`DeepSeek-V4-Flash-0731`, not `deepseek-flash`) | 08:00–22:00 | 22:00–次日 08:00 |
 
 The first three therefore agree, and Aliyun is the outlier: its cheap window is overnight only, so midday (12:00–14:00), evening (18:00–22:00) and the whole weekend cost double there but are off-peak everywhere else. Baidu happens to draw the same window as Aliyun, on a different generation of the model — the two are independent statements that happen to coincide, never a rule to apply to one another.
@@ -172,15 +185,12 @@ Identify rows by content — parsed prices, table headers, or section anchors �
 A whole-catalogue scan reads each vendor once, so an adapter that already parses its
 entire document exposes it through `catalog_records()` rather than being walked model
 by model; `PriceSource` still provides a walking fallback so an adapter that only
-knows how to answer a single model scans correctly without changes. Aliyun is the
-one adapter whose `query` is itself an HTTP request, so it overrides `catalog_records`
-to page its catalogue instead — asking that endpoint for a page of models with
-`queryPrice` returns each model with its prices, turning 511 requests into 11.
-Bailian's gateway throttles a burst of those pages, so every page after the first
-waits a random pause of 1–3 seconds (`CATALOG_PAGE_PAUSE_SECONDS`); the jitter keeps
-the walk off a fixed rhythm a throttle could lock onto. That pause is why a full
-scan takes tens of seconds, and it is deliberate rather than a stall.
-`CachedPriceSource` caches a scan as a single `catalog` entry, not one per model.
+knows how to answer a single model scans correctly without changes. Aliyun reads the
+Qianwen model-market catalogue once per adapter instance and reuses those items for
+listing, exact queries, descriptions carried with price records, and full scans.
+Only a model that publishes time-band prices adds one read of its own public detail
+page, because that page's tooltip is where the hours are stated. `CachedPriceSource`
+caches a scan as a single `catalog` entry, not one per model.
 
 Two conventions apply to every table-driven adapter:
 

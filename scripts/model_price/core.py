@@ -114,7 +114,7 @@ class PriceSource(ABC):
         one pass should override this, but one that only knows how to answer a
         single model still scans correctly by walking its own catalogue. The
         fallback costs one ``query`` per model, so an adapter whose ``query`` makes
-        its own HTTP request (Aliyun) overrides this rather than paying that.
+        its own HTTP request should override this rather than paying that.
         """
         records: dict[str, dict[str, Any]] = {}
         for model in self.list_models():

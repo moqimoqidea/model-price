@@ -11,7 +11,11 @@ from urllib.parse import urljoin
 from ..errors import SourceError
 from ..models import model_matches, normalize_model
 from ..parsing import headed_document_tables, markdown_tables
-from ..providers.aliyun import ALIYUN_URL, aliyun_catalog_request
+from ..providers.aliyun import (
+    ALIYUN_MODELS_URL,
+    qianwen_catalogue,
+    qianwen_model_metadata,
+)
 from ..text import CELL_BREAK_RE, clean_text
 from .core import (
     ACTIVE,
@@ -427,16 +431,8 @@ class DeepSeekDescriptionSource(DescriptionSource):
 class AliyunDescriptionSource(DescriptionSource):
     source_id = "aliyun"
     source_name = "阿里云百炼"
-    source_url = ALIYUN_URL
+    source_url = ALIYUN_MODELS_URL
     source_kind = "anonymous_api"
-
-    @staticmethod
-    def _items(payload: dict[str, Any]) -> list[dict[str, Any]]:
-        return [
-            item
-            for group in payload.get("list", [])
-            for item in (group.get("items") or [group])
-        ]
 
     def describe(
         self,
@@ -447,60 +443,31 @@ class AliyunDescriptionSource(DescriptionSource):
     ) -> dict[str, Any] | None:
         metadata = (record or {}).get("model_metadata") or {}
         item: dict[str, Any] = {}
-        if metadata.get("summary"):
-            item = {
-                "model": model_id,
-                "name": display_name or model_id,
-                "description": metadata.get("summary"),
-                "capabilities": metadata.get("capabilities") or [],
-                "features": metadata.get("features") or [],
-                "contextWindow": metadata.get("context_window"),
-                "maxInputTokens": metadata.get("max_input_tokens"),
-                "maxOutputTokens": metadata.get("max_output_tokens"),
-                "docUrl": metadata.get("doc_url"),
-                "versionTag": metadata.get("lifecycle"),
-            }
-        else:
-            payload = aliyun_catalog_request(
-                self.client, {"queryPrice": False, "model": model_id}
-            )
+        if not metadata.get("summary"):
             key = normalize_model(model_id)
             item = next(
                 (
                     value
-                    for value in self._items(payload)
-                    if normalize_model(value.get("model", "")) == key
+                    for value in qianwen_catalogue(
+                        self.client, query=model_id, page_size=20
+                    )
+                    if normalize_model(str(value.get("Model") or "")) == key
                 ),
                 {},
             )
-        summary = item.get("description") or item.get("shortDescription")
-        if not summary:
+            metadata = qianwen_model_metadata(item) if item else {}
+        if not metadata.get("summary"):
             return None
-        specifications = {
-            key: value
-            for key, value in {
-                "context_window": item.get("contextWindow"),
-                "max_input_tokens": item.get("maxInputTokens"),
-                "max_output_tokens": item.get("maxOutputTokens"),
-            }.items()
-            if value is not None
-        }
-        lifecycle = str(item.get("versionTag") or "").lower()
-        if lifecycle not in {ACTIVE, PREVIEW, RETIRED}:
-            lifecycle = ACTIVE
         return description_record(
             model_id,
-            item.get("name") or display_name or model_id,
-            summary,
-            item.get("docUrl") or self.source_url,
+            item.get("Name") or display_name or model_id,
+            metadata["summary"],
+            metadata.get("source_url") or self.source_url,
             self.source_kind,
             source_name=self.source_name,
-            capabilities=[
-                *(item.get("capabilities") or []),
-                *(item.get("features") or []),
-            ],
-            lifecycle=lifecycle,
-            specifications=specifications,
+            capabilities=metadata.get("capabilities") or [],
+            lifecycle=metadata.get("lifecycle") or ACTIVE,
+            specifications=metadata.get("specifications") or {},
         )
 
 

@@ -44,9 +44,11 @@ from model_price.pricing import (
     tokens_per_price_unit,
 )
 from model_price.providers.aliyun import (
-    ALIYUN_BAND_DOC_URL,
+    ALIYUN_API_URL,
+    CATALOG_PAGE_SIZE,
     AliyunAdapter,
-    pause_before_next_page,
+    qianwen_lifecycle,
+    qianwen_model_url,
     time_band_label,
 )
 from model_price.providers.baidu import (
@@ -1749,87 +1751,213 @@ CROWDED_AMOUNTS = ("输入（未命中缓存）：1 元/百万 tokens", "输出�
 
 
 class AliyunAdapterTests(unittest.TestCase):
-    """Bailian keys its bands in English but publishes the window only in prose."""
+    """The Qianwen market keeps every public price and model detail anonymous."""
 
     def test_the_api_key_is_reported_in_the_pages_own_words(self):
         self.assertEqual(time_band_label("offpeak"), "闲时")
         self.assertEqual(time_band_label("peak"), "忙时")
         self.assertEqual(time_band_label("standard"), "standard")
 
-    def test_the_window_comes_from_the_pricing_page(self):
-        page = "错峰时段为东八区 22:00 至次日 8:00，其余时段为忙时，以账单时间为准。"
+    def test_the_window_comes_from_the_model_detail_tooltip(self):
+        page = """<div><span>闲时</span><span class="tooltip">
+错峰时段指东八区22点至次日8点，此外为忙时</span></div>"""
         self.assertEqual(
-            time_bands_for(
-                page, model_id="deepseek-v4.1-flash", source_url=ALIYUN_BAND_DOC_URL
-            )["window"],
-            "22:00至次日8:00、其余时段为忙时",
+            time_bands_for(page, model_id="deepseek-v4.1-flash")["window"],
+            "22点至次日8点、此外为忙时",
         )
 
-    def test_an_unreachable_page_leaves_the_window_empty(self):
-        class UnreachableClient:
-            def get_text(self, url):
-                raise SourceError("request failed")
+    def test_model_urls_encode_literal_ids(self):
+        self.assertEqual(
+            qianwen_model_url("ZHIPU/GLM-5.3"),
+            "https://www.qianwenai.com/models/ZHIPU%2FGLM-5.3",
+        )
 
-        self.assertEqual(AliyunAdapter(UnreachableClient())._band_text(), "")
+    def test_scheduled_withdrawals_are_legacy_then_retired(self):
+        item = {
+            "OfflineInfo": {"Inference": {"OfflineTime": "2026-10-10 00:00:00"}}
+        }
+        self.assertEqual(
+            qianwen_lifecycle(item, at=datetime(2026, 9, 20)), "legacy"
+        )
+        self.assertEqual(
+            qianwen_lifecycle(item, at=datetime(2026, 10, 11)), "retired"
+        )
+        self.assertEqual(
+            qianwen_lifecycle(
+                {
+                    "OfflineInfo": {
+                        "Inference": {"OfflineTime": "2026-10-09T16:00:00Z"}
+                    }
+                },
+                at=datetime(2026, 10, 10),
+            ),
+            "retired",
+        )
 
 
-class BailianPagingClient:
-    """A catalogue API that answers one page per request, recording each ask."""
+class QianwenPagingClient:
+    """A public market API that answers pages and records every anonymous request."""
 
-    def __init__(self, pages):
+    def __init__(self, pages, details=None):
         self.pages = list(pages)
         self.requests = []
+        self.details = dict(details or {})
 
     def get_text(self, url):
-        return ""
+        if url not in self.details:
+            raise SourceError("request failed")
+        return self.details[url]
 
     def post_form(self, url, fields):
-        self.requests.append(json.loads(fields["params"])["Data"]["input"])
+        self.requests.append((url, dict(fields), json.loads(fields["params"])))
         page = self.pages[min(len(self.requests) - 1, len(self.pages) - 1)]
-        return {"data": {"DataV2": {"data": {"code": "200", "data": page}}}}
+        return {"code": "200", "data": page}
 
 
-def bailian_page(models, total):
+def qianwen_page(items, total, page=1):
     return {
-        "list": [{"items": [{"model": model}]} for model in models],
-        "total": total,
+        "Data": [{"Items": items}],
+        "Ext": {"pageNo": page, "pageSize": CATALOG_PAGE_SIZE, "totalCount": total},
     }
 
 
-class AliyunPagingPauseTests(unittest.TestCase):
-    """Bailian throttles a burst of paged requests, so a scan is spaced out."""
-
-    def test_a_pause_is_a_random_wait_between_one_and_three_seconds(self):
-        with mock.patch("model_price.providers.aliyun.time.sleep") as sleep:
-            waited = pause_before_next_page()
-        self.assertGreaterEqual(waited, 1.0)
-        self.assertLessEqual(waited, 3.0)
-        sleep.assert_called_once_with(waited)
-
-    def test_the_first_request_is_not_delayed_and_the_rest_are(self):
-        client = BailianPagingClient(
+class QianwenCatalogueTests(unittest.TestCase):
+    def test_catalogue_pages_use_the_new_public_request_without_a_security_token(self):
+        client = QianwenPagingClient(
             [
-                bailian_page(["m1"], 150),
-                bailian_page(["m2"], 150),
-                bailian_page(["m3"], 150),
+                qianwen_page([{"Model": "m1"}], 201),
+                qianwen_page([{"Model": "m2"}], 201, page=2),
             ]
         )
-        with mock.patch("model_price.providers.aliyun.time.sleep") as sleep, mock.patch(
-            "model_price.providers.aliyun.random.uniform", return_value=2.0
-        ) as uniform:
-            models = AliyunAdapter(client).list_models()
-        self.assertEqual(models, ["m1", "m2", "m3"])
-        self.assertEqual([ask["pageNo"] for ask in client.requests], [1, 2, 3])
-        self.assertEqual(sleep.call_count, 2)
-        sleep.assert_called_with(2.0)
-        uniform.assert_called_with(1.0, 3.0)
+        adapter = AliyunAdapter(client)
+        self.assertEqual(adapter.list_models(), ["m1", "m2"])
+        self.assertEqual([request[2]["PageNo"] for request in client.requests], [1, 2])
+        for url, fields, params in client.requests:
+            self.assertEqual(url, ALIYUN_API_URL)
+            self.assertEqual(fields["product"], "AliyunDeliveryService")
+            self.assertEqual(fields["action"], "ListModelSeries")
+            self.assertNotIn("sec_token", fields)
+            self.assertEqual(params["PageSize"], CATALOG_PAGE_SIZE)
+            self.assertEqual(params["Language"], "zh-CN")
 
-    def test_a_catalogue_that_fits_in_one_page_never_waits(self):
-        client = BailianPagingClient([bailian_page(["m1"], 1)])
-        with mock.patch("model_price.providers.aliyun.time.sleep") as sleep:
-            models = AliyunAdapter(client).list_models()
-        self.assertEqual(models, ["m1"])
-        sleep.assert_not_called()
+        # One adapter instance reuses the catalogue for exact price lookups.
+        self.assertEqual(adapter.query("m2")[0]["model_id"], "m2")
+        self.assertEqual(len(client.requests), 2)
+
+    def test_multi_price_tiers_and_discounts_stay_separate(self):
+        item = {
+            "Model": "qwen-tiered",
+            "Name": "Qwen Tiered",
+            "Description": "分档测试模型。",
+            "VersionTag": "MAJOR",
+            "InferenceProvider": "aliyun-bailian",
+            "InferenceMetadata": {
+                "RequestModality": ["Text"],
+                "ResponseModality": ["Text"],
+            },
+            "ModelInfo": {"ContextWindow": 1000000, "MaxOutputTokens": 8192},
+            "MultiPrices": [
+                {
+                    "RangeName": "输入<=32k",
+                    "Prices": [
+                        {
+                            "TimeBand": "standard",
+                            "Type": "input_token",
+                            "PriceUnit": "每百万tokens",
+                            "Price": "2",
+                            "Discount": "0.8",
+                            "PriceName": "输入",
+                        }
+                    ],
+                },
+                {
+                    "RangeName": "32k<输入<=128k",
+                    "Prices": [
+                        {
+                            "TimeBand": "standard",
+                            "Type": "input_token",
+                            "PriceUnit": "每百万tokens",
+                            "Price": "6",
+                            "PriceName": "输入",
+                        }
+                    ],
+                },
+            ],
+        }
+        record = AliyunAdapter(
+            QianwenPagingClient([qianwen_page([item], 1)])
+        ).query("qwen-tiered")[0]
+        self.assertEqual(len(record["offers"]), 2)
+        self.assertEqual(
+            record["offers"][0]["conditions"], {"context_tier": "输入<=32k"}
+        )
+        discounted = record["offers"][0]["prices"][0]
+        self.assertEqual(discounted["amount"], "1.6")
+        self.assertEqual(discounted["list_amount"], "2")
+        self.assertEqual(discounted["discount"], "0.8")
+        self.assertEqual(
+            record["model_metadata"]["specifications"]["input_modalities"],
+            "Text",
+        )
+
+    def test_a_formatted_zero_is_not_reported_as_a_model_price(self):
+        item = {
+            "Model": "free-entitlement",
+            "Prices": [
+                {
+                    "Type": "image_number",
+                    "PriceUnit": "每张",
+                    "Price": "0.00",
+                    "PriceName": "免费额度",
+                }
+            ],
+        }
+        record = AliyunAdapter(
+            QianwenPagingClient([qianwen_page([item], 1)])
+        ).query("free-entitlement")[0]
+        self.assertEqual(record["offers"], [])
+
+    def test_time_bands_use_each_models_derived_market_page(self):
+        model_id = "deepseek-v4.1-flash"
+        item = {
+            "Model": model_id,
+            "Name": "DeepSeek-V4.1-Flash",
+            "Description": "高吞吐模型。",
+            "InferenceProvider": "aliyun-bailian",
+            "Prices": [
+                {
+                    "TimeBand": "offpeak",
+                    "Type": "input_token",
+                    "PriceUnit": "每百万tokens",
+                    "Price": "1",
+                    "PriceName": "输入",
+                },
+                {
+                    "TimeBand": "peak",
+                    "Type": "input_token",
+                    "PriceUnit": "每百万tokens",
+                    "Price": "2",
+                    "PriceName": "输入",
+                },
+            ],
+        }
+        detail_url = qianwen_model_url(model_id)
+        client = QianwenPagingClient(
+            [
+                qianwen_page([item], 1),
+            ],
+            {
+                detail_url: (
+                    "<span>错峰时段指东八区22点至次日8点，此外为忙时</span>"
+                )
+            },
+        )
+        record = AliyunAdapter(client).query(model_id)[0]
+        self.assertEqual([offer["name"] for offer in record["offers"]], ["闲时", "忙时"])
+        self.assertEqual(
+            record["time_bands"]["window"], "22点至次日8点、此外为忙时"
+        )
+        self.assertEqual(record["time_bands"]["source_url"], detail_url)
 
 
 class TimeBandWindowTests(unittest.TestCase):

@@ -1,11 +1,18 @@
-"""Aliyun Model Studio (百炼) anonymous model catalogue API."""
+"""Qianwen model-market catalogue and per-model detail pages.
+
+The market's public JSON keeps every model variant and price tier separate, while
+the derived detail page carries the prose that explains a time-band window. This
+adapter reads both without credentials and preserves those distinctions in the
+shared price shape.
+"""
 
 from __future__ import annotations
 
 import json
-import random
-import time
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any, Iterator
+from urllib.parse import quote
 
 from ..core import PriceSource, now_iso
 from ..errors import SourceError
@@ -13,36 +20,13 @@ from ..models import model_family, normalize_model
 from ..parsing import time_bands_for
 from ..pricing import make_record, price_item, unit_code
 
-ALIYUN_API_NAME = (
-    "zeldaHttp.dashscopeModel./zelda/api/v1/modelCenter/listFoundationModels"
+ALIYUN_MODELS_URL = "https://www.qianwenai.com/models"
+ALIYUN_API_PRODUCT = "AliyunDeliveryService"
+ALIYUN_API_ACTION = "ListModelSeries"
+ALIYUN_API_URL = (
+    "https://platform-home.qianwenai.com/data/api.json"
+    f"?product={ALIYUN_API_PRODUCT}&action={ALIYUN_API_ACTION}"
 )
-ALIYUN_URL = (
-    "https://bailian-cs.console.aliyun.com/data/api.json"
-    "?action=BroadScopeAspnGateway&product=sfm_bailian"
-    f"&api={ALIYUN_API_NAME}"
-    "&_v=undefined"
-)
-
-
-def aliyun_catalog_request(client: Any, input_data: dict[str, Any]) -> dict[str, Any]:
-    """Call Bailian's anonymous model-centre gateway.
-
-    Price and description adapters share this transport so the public response
-    shape is decoded in one place.  The model-centre payload carries both prices
-    and the official summary/capability metadata.
-    """
-    params = {
-        "Api": ALIYUN_API_NAME,
-        "Data": {"input": input_data, "cornerstoneParam": {}},
-    }
-    outer = client.post_form(ALIYUN_URL, {"params": json.dumps(params)})
-    try:
-        data = outer["data"]["DataV2"]["data"]
-        if str(data.get("code")) != "200":
-            raise SourceError(f"Aliyun returned code {data.get('code')}")
-        return data["data"]
-    except (KeyError, TypeError) as exc:
-        raise SourceError("unexpected Aliyun response shape") from exc
 
 ALIYUN_PRICE_TYPES = {
     "input_token": "input",
@@ -56,191 +40,320 @@ ALIYUN_PRICE_TYPES = {
     "output_token_batch_chat": "batch_chat_output",
 }
 
-# The catalogue keys its bands in English while the Model Studio pricing page calls
-# them 忙时/闲时. The vendor's own wording is what a reader can match against the
-# page, so the record carries that instead of the API enum.
+# The API keys its bands in English while the market page labels them 忙时/闲时.
+# Keep the market's wording so a reader can match a report to the source page.
 ALIYUN_TIME_BANDS = {"peak": "忙时", "offpeak": "闲时"}
 
-# The JSON carries no window — it only says a band exists. Bailian states the hours
-# only in prose on the Model Studio pricing page ("错峰时段为东八区 22:00 至次日
-# 8:00，其余时段为忙时"), and the same rule is repeated in its announcement
-# (https://www.aliyun.com/notice/118555, "空闲时段为北京时间 22:00 - 8:00､其余为
-# 高峰时段"). The window is read from there; prices still come from the JSON.
-ALIYUN_BAND_DOC_URL = "https://www.alibabacloud.com/help/zh/model-studio/model-pricing"
-
-# The catalogue API pages at 50 items and, with ``queryPrice``, returns each page's
-# models complete with their prices. A whole scan is therefore a handful of
-# requests rather than one per model.
-CATALOG_PAGE_SIZE = 50
+# The market accepts the whole current series catalogue in one request. Paging
+# remains in place so catalogue growth does not silently cut off later models.
+CATALOG_PAGE_SIZE = 200
 CATALOG_PAGE_LIMIT = 100
+ALIYUN_TIMEZONE = timezone(timedelta(hours=8))
 
-# Bailian's gateway throttles a burst of paged requests, and a whole scan is many
-# pages — hundreds of models at fifty a page. Every request after the first waits
-# a random pause: long enough to stay under the limit, and jittered so the walk
-# never settles into a fixed rhythm a throttle could lock onto.
-CATALOG_PAGE_PAUSE_SECONDS = (1.0, 3.0)
+
+def qianwen_model_url(model_id: str) -> str:
+    """Return the public market detail URL for one literal model id."""
+    return f"{ALIYUN_MODELS_URL}/{quote(model_id, safe='')}"
+
+
+def qianwen_catalog_request(
+    client: Any, input_data: dict[str, Any]
+) -> dict[str, Any]:
+    """Read one page from the model market's credential-free catalogue API."""
+    params = {"Language": "zh-CN", **input_data}
+    outer = client.post_form(
+        ALIYUN_API_URL,
+        {
+            "product": ALIYUN_API_PRODUCT,
+            "action": ALIYUN_API_ACTION,
+            "params": json.dumps(
+                params, ensure_ascii=False, separators=(",", ":")
+            ),
+        },
+    )
+    try:
+        if str(outer.get("code")) != "200":
+            raise SourceError(f"Aliyun returned code {outer.get('code')}")
+        data = outer["data"]
+        if not isinstance(data.get("Data"), list) or not isinstance(
+            data.get("Ext"), dict
+        ):
+            raise SourceError("unexpected Aliyun response shape")
+        return data
+    except (AttributeError, KeyError, TypeError) as exc:
+        raise SourceError("unexpected Aliyun response shape") from exc
+
+
+def qianwen_catalog_items(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Flatten model series into the independently priced models they contain."""
+    for series in payload.get("Data", []):
+        if not isinstance(series, dict):
+            raise SourceError("unexpected Aliyun model-series shape")
+        for item in series.get("Items") or [series]:
+            if not isinstance(item, dict):
+                raise SourceError("unexpected Aliyun model shape")
+            yield item
+
+
+def qianwen_catalogue(
+    client: Any, *, query: str = "", page_size: int = CATALOG_PAGE_SIZE
+) -> Iterator[dict[str, Any]]:
+    """Walk every matching series while keeping transport and paging in one place."""
+    for page in range(1, CATALOG_PAGE_LIMIT + 1):
+        request: dict[str, Any] = {"PageNo": page, "PageSize": page_size}
+        if query:
+            request["Query"] = query
+        data = qianwen_catalog_request(client, request)
+        series = data.get("Data") or []
+        try:
+            total = int(data["Ext"]["totalCount"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SourceError("unexpected Aliyun pagination shape") from exc
+        yield from qianwen_catalog_items(data)
+        if not series or page * page_size >= total:
+            return
+    raise SourceError("Aliyun pagination exceeded safety limit")
+
+
+def qianwen_lifecycle(
+    item: dict[str, Any], *, at: datetime | None = None
+) -> str:
+    """Translate the market's preview and scheduled-withdrawal evidence."""
+    if str(item.get("VersionTag", "")).upper() == "PREVIEW":
+        return "preview"
+    offline = ((item.get("OfflineInfo") or {}).get("Inference") or {}).get(
+        "OfflineTime"
+    )
+    if not offline:
+        return "active"
+    try:
+        sunset = datetime.fromisoformat(str(offline).replace("Z", "+00:00"))
+        if sunset.tzinfo is None:
+            sunset = sunset.replace(tzinfo=ALIYUN_TIMEZONE)
+        observed = at or datetime.now(ALIYUN_TIMEZONE)
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=ALIYUN_TIMEZONE)
+        return "retired" if sunset <= observed else "legacy"
+    except ValueError:
+        return "legacy"
+
+
+def qianwen_model_metadata(item: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the introduction fields shared by price and description reads."""
+    model_info = item.get("ModelInfo") or {}
+    inference = item.get("InferenceMetadata") or {}
+
+    def first_value(name: str) -> Any:
+        value = item.get(name)
+        return model_info.get(name) if value is None else value
+
+    specifications = {
+        key: value
+        for key, value in {
+            "context_window": first_value("ContextWindow"),
+            "max_input_tokens": first_value("MaxInputTokens"),
+            "max_output_tokens": first_value("MaxOutputTokens"),
+            "input_modalities": "、".join(inference.get("RequestModality") or []),
+            "output_modalities": "、".join(inference.get("ResponseModality") or []),
+        }.items()
+        if value not in (None, "")
+    }
+    offline = ((item.get("OfflineInfo") or {}).get("Inference") or {}).get(
+        "OfflineTime"
+    )
+    if offline:
+        specifications["sunset_note"] = f"{offline} 下线"
+    model_id = str(item.get("Model") or "")
+    return {
+        "summary": item.get("Description") or item.get("ShortDescription"),
+        "capabilities": [
+            *(item.get("Capabilities") or []),
+            *(item.get("Features") or []),
+        ],
+        "lifecycle": qianwen_lifecycle(item),
+        "specifications": specifications,
+        "source_url": qianwen_model_url(model_id) if model_id else ALIYUN_MODELS_URL,
+    }
 
 
 def time_band_label(value: str) -> str:
-    """Return Bailian's own wording for an API band key."""
+    """Return the market page's own wording for an API band key."""
     return ALIYUN_TIME_BANDS.get(value.lower(), value)
 
 
-def pause_before_next_page() -> float:
-    """Wait a random pause between two catalogue pages, and report how long."""
-    seconds = random.uniform(*CATALOG_PAGE_PAUSE_SECONDS)
-    time.sleep(seconds)
-    return seconds
+def discounted_amount(
+    amount: Any, discount: Any
+) -> tuple[str | None, str | None]:
+    """Return the effective amount and its list amount when a discount applies."""
+    if amount is None:
+        return None, None
+    listed = str(amount)
+    if discount is None:
+        return listed, None
+    try:
+        ratio = Decimal(str(discount))
+        if ratio == 1:
+            return listed, None
+        current = Decimal(listed) * ratio
+    except InvalidOperation:
+        return listed, None
+    return format(current.normalize(), "f"), listed
+
+
+def is_zero_amount(value: str | None) -> bool:
+    """Identify a free entitlement regardless of how its zero is formatted."""
+    if value is None:
+        return False
+    try:
+        return Decimal(value) == 0
+    except InvalidOperation:
+        return False
+
+
+def price_groups(item: dict[str, Any]) -> Iterator[tuple[str, list[dict[str, Any]]]]:
+    """Yield direct prices or each independently conditioned multi-price tier."""
+    tiers = [
+        tier
+        for tier in item.get("MultiPrices") or []
+        if any(price.get("Price") is not None for price in tier.get("Prices") or [])
+    ]
+    if tiers:
+        for tier in tiers:
+            yield str(tier.get("RangeName") or ""), tier.get("Prices") or []
+        return
+    yield "", item.get("Prices") or []
 
 
 class AliyunAdapter(PriceSource):
     provider_id = "aliyun"
     provider_name = "阿里云百炼"
-    source_url = ALIYUN_URL
+    source_url = ALIYUN_API_URL
+    catalog_url = ALIYUN_MODELS_URL
     source_kind = "anonymous_api"
 
     def __init__(self, client: Any) -> None:
         super().__init__(client)
-        self._band_document: str | None = None
+        self._items: list[dict[str, Any]] | None = None
+        self._detail_documents: dict[str, str] = {}
 
-    def _band_text(self) -> str:
-        """Return the pricing page's prose, which is where the window is written.
+    def _catalogue_items(self) -> list[dict[str, Any]]:
+        if self._items is None:
+            self._items = list(qianwen_catalogue(self.client))
+        return self._items
 
-        Fetched lazily and only once per run; a page that cannot be read leaves the
-        record's window empty rather than failing an otherwise good price query.
-        """
-        if self._band_document is None:
+    def _detail_text(self, model_id: str) -> str:
+        """Read one market detail page, where time-band hours are explained."""
+        url = qianwen_model_url(model_id)
+        if url not in self._detail_documents:
             try:
-                self._band_document = self.client.get_text(ALIYUN_BAND_DOC_URL)
+                self._detail_documents[url] = self.client.get_text(url)
             except SourceError:
-                self._band_document = ""
-        return self._band_document
-
-    def _request(self, input_data: dict[str, Any]) -> dict[str, Any]:
-        return aliyun_catalog_request(self.client, input_data)
+                self._detail_documents[url] = ""
+        return self._detail_documents[url]
 
     def list_models(self, prefix: str = "") -> list[str]:
         key = normalize_model(prefix)
-        models: set[str] = set()
-        for item in self._catalogue():
-            model = item.get("model")
-            if model and (not key or normalize_model(model).startswith(key)):
-                models.add(model)
+        models = {
+            str(item["Model"])
+            for item in self._catalogue_items()
+            if item.get("Model")
+            and (not key or normalize_model(str(item["Model"])).startswith(key))
+        }
         return sorted(models, key=str.lower)
 
     def catalog_records(self) -> list[dict[str, Any]]:
-        """Read the whole catalogue with its prices, page by page."""
+        """Build every record from the market catalogue already read in one pass."""
         records: dict[str, dict[str, Any]] = {}
-        for item in self._catalogue(query_price=True):
-            key = normalize_model(item.get("model", ""))
+        for item in self._catalogue_items():
+            key = normalize_model(str(item.get("Model") or ""))
             if key:
                 records.setdefault(key, self._record_for(item))
         return [records[key] for key in sorted(records)]
 
     def query(self, model: str) -> list[dict[str, Any]]:
         key = normalize_model(model)
-        data = self._request({"queryPrice": True, "model": model})
         return [
             self._record_for(item)
-            for item in self._catalogue_items(data)
-            if normalize_model(item.get("model", "")) == key
+            for item in self._catalogue_items()
+            if normalize_model(str(item.get("Model") or "")) == key
         ]
 
-    # --- catalogue paging -------------------------------------------------
-
-    def _catalogue(self, *, query_price: bool = False) -> Iterator[dict[str, Any]]:
-        """Walk the catalogue page by page, yielding one model at a time.
-
-        Consecutive pages are spaced by a random pause (see
-        ``CATALOG_PAGE_PAUSE_SECONDS``). The first request is never delayed: a
-        catalogue that fits in one page should not pay for paging.
-        """
-        request: dict[str, Any] = {"queryPrice": True} if query_price else {}
-        page = 1
-        while True:
-            if page > 1:
-                pause_before_next_page()
-            data = self._request(
-                {**request, "pageNo": page, "pageSize": CATALOG_PAGE_SIZE}
-            )
-            items = list(self._catalogue_items(data))
-            yield from items
-            total = int(data.get("total", 0))
-            if not items or page * CATALOG_PAGE_SIZE >= total:
-                return
-            page += 1
-            if page > CATALOG_PAGE_LIMIT:
-                raise SourceError("Aliyun pagination exceeded safety limit")
-
-    @staticmethod
-    def _catalogue_items(data: dict[str, Any]) -> Iterator[dict[str, Any]]:
-        """Unwrap the per-model entries a response carries, grouped or not."""
-        for item in data.get("list", []):
-            yield from item.get("items") or [item]
-
     def _record_for(self, item: dict[str, Any]) -> dict[str, Any]:
-        """Build one record, keeping each time band's prices its own offer."""
-        grouped_prices: dict[str, list[dict[str, Any]]] = {}
-        for price in item.get("prices", []):
-            band = price.get("timeBand") or "standard"
-            grouped_prices.setdefault(band, []).append(
-                price_item(
-                    ALIYUN_PRICE_TYPES.get(
-                        price.get("type"), price.get("type", "other")
-                    ),
-                    price.get("priceName", price.get("type", "价格")),
-                    str(price["price"]) if price.get("price") is not None else None,
-                    unit_code(price.get("priceUnit", "")),
-                    discount=price.get("discount"),
+        """Keep every market tier and time band as an independent offer."""
+        grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for tier, prices in price_groups(item):
+            for price in prices:
+                amount, list_amount = discounted_amount(
+                    price.get("Price"), price.get("Discount")
                 )
-            )
+                # A zero is a free entitlement, not a monetary model price.
+                if amount is None or is_zero_amount(amount):
+                    continue
+                band = str(price.get("TimeBand") or "standard")
+                grouped.setdefault((tier, band), []).append(
+                    price_item(
+                        ALIYUN_PRICE_TYPES.get(
+                            price.get("Type"), price.get("Type") or "other"
+                        ),
+                        price.get("PriceName") or price.get("Type") or "价格",
+                        amount,
+                        unit_code(str(price.get("PriceUnit") or "")),
+                        list_amount=list_amount,
+                        discount=price.get("Discount"),
+                    )
+                )
+
         offers = []
-        for band, prices in grouped_prices.items():
+        for (tier, band), prices in grouped.items():
             label = time_band_label(band)
-            conditions = {} if band == "standard" else {"time_band": label}
-            offers.append({"name": label, "conditions": conditions, "prices": prices})
-        display_name = item.get("name", item["model"])
+            conditions: dict[str, Any] = {}
+            if tier:
+                conditions[
+                    "context_tier" if "输入" in tier else "price_tier"
+                ] = tier
+            if band != "standard":
+                conditions["time_band"] = label
+            name = "｜".join(
+                part
+                for part in (tier, label if band != "standard" else "")
+                if part
+            )
+            offers.append(
+                {"name": name or "standard", "conditions": conditions, "prices": prices}
+            )
+
+        model_id = str(item["Model"])
+        display_name = item.get("Name") or model_id
+        detail_url = qianwen_model_url(model_id)
+        has_time_bands = any(
+            "time_band" in offer.get("conditions", {}) for offer in offers
+        )
         return make_record(
             self.provider_id,
             self.provider_name,
-            item["model"],
+            model_id,
             display_name,
             "中国区",
             offers,
-            self.source_url,
+            detail_url,
             self.source_kind,
             now_iso(),
-            price_time_bands=item.get("priceTimeBands", []),
-            service_sites=item.get("serviceSites", []),
             delivery_mode=(
                 "platform_hosted"
-                if item.get("inferenceProvider") == "aliyun-bailian"
+                if item.get("InferenceProvider") == "aliyun-bailian"
                 else "third_party_hosted"
             ),
-            inference_provider=item.get("inferenceProvider"),
-            access_scope=item.get("scope"),
-            # The catalogue dates each model's own last update, so a later scan can
-            # say whether the vendor touched it between two runs.
-            source_updated_at=item.get("updateAt"),
-            model_family=model_family(item["model"]),
-            model_metadata={
-                "summary": item.get("description") or item.get("shortDescription"),
-                "capabilities": item.get("capabilities") or [],
-                "features": item.get("features") or [],
-                "context_window": item.get("contextWindow"),
-                "max_input_tokens": item.get("maxInputTokens"),
-                "max_output_tokens": item.get("maxOutputTokens"),
-                "doc_url": item.get("docUrl"),
-                "lifecycle": (
-                    "preview"
-                    if str(item.get("versionTag", "")).upper() == "PREVIEW"
-                    else "active"
-                ),
-            },
-            time_bands=time_bands_for(
-                self._band_text(),
-                model_id=item["model"],
-                display_name=display_name,
-                source_url=ALIYUN_BAND_DOC_URL,
+            source_updated_at=item.get("UpdateAt"),
+            model_family=model_family(model_id),
+            model_metadata=qianwen_model_metadata(item),
+            time_bands=(
+                time_bands_for(
+                    self._detail_text(model_id),
+                    model_id=model_id,
+                    display_name=str(display_name),
+                    source_url=detail_url,
+                )
+                if has_time_bands
+                else {}
             ),
         )

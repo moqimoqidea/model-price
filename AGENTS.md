@@ -258,7 +258,9 @@ explain a peak/off-peak window in prose beside the table.
 Override `catalog_records()` when the adapter can build every record from the
 document it already parsed. The inherited default walks the whole catalogue with
 one `query` per model, which is correct but pays an HTTP request per model for an
-adapter whose `query` fetches on its own.
+adapter whose `query` fetches on its own. Aliyun's public Qianwen model-market API
+returns series with all their independently priced model items, so its adapter
+loads that catalogue once and reuses it for listing, queries, and scans.
 
 Prefer the representation the page publishes for machines — its own Markdown copy
 when the tables are real Markdown tables, otherwise its public structured JSON.

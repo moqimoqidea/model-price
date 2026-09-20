@@ -368,14 +368,25 @@ def token_price_kind(header: str) -> str | None:
 # deepseek-flash on weekdays only, while its 0731 generation still treats weekends
 # as peak). Nothing here may therefore be inferred from another provider's schedule,
 # and a platform that publishes no window must be reported as such.
+CLOCK_VALUE = r"\d{1,2}(?::\d{2}|点(?:\d{1,2}分)?)"
 CLOCK_RANGE_RE = re.compile(
-    r"\d{1,2}:\d{2}(?:\s*(?:[-–—~～]|至|到)\s*(?:次日\s*)?\d{1,2}:\d{2})"
+    rf"{CLOCK_VALUE}(?:\s*(?:[-–—~～]|至|到)\s*(?:次日\s*)?{CLOCK_VALUE})"
 )
 # A bullet or numbered item survives the Markdown reader as text; it is layout,
 # not part of the rule, so it comes off before the window is quoted.
 LIST_MARKER_RE = re.compile(r"^\s*(?:[*\-+•]|\d+[.、)])\s*")
 TIME_BAND_WORDS = ("高峰", "空闲", "闲时", "忙时", "峰时", "谷时", "峰谷", "peak")
-TIME_BAND_SCHEDULE_WORDS = ("工作日", "周末", "每天", "每日", "全天", "其余", "周一", "周二")
+TIME_BAND_SCHEDULE_WORDS = (
+    "工作日",
+    "周末",
+    "每天",
+    "每日",
+    "全天",
+    "其余",
+    "此外",
+    "周一",
+    "周二",
+)
 # A band is filed in a free-form condition column — "条件" on Volcengine, "子项" on
 # Baidu, a column the vendor also uses for length tiers — so the cell *value*, not
 # the heading, is what says a row is banded. Without this both bands land in one
@@ -397,6 +408,13 @@ MAX_TIME_BAND_STATEMENT = 400
 # applies does not quote amounts in the same breath, and keeping such a row would
 # repeat a price table in the report's prose section.
 PRICE_IN_STATEMENT_RE = re.compile(r"[$¥￥]\s*\d|\d[\d.]*\s*元")
+# Server-rendered detail pages often put the rule in a tooltip ``span`` on one
+# otherwise enormous HTML line. Block and inline closing tags provide the real
+# text boundaries, so expose those before applying the same prose parser used for
+# Markdown documents.
+HTML_TEXT_BREAK_RE = re.compile(
+    r"(?:<br\s*/?>|</(?:p|li|span|div|td|tr|button)\s*>)", re.I
+)
 
 
 class TimeBandRule(NamedTuple):
@@ -443,7 +461,8 @@ def time_band_rules(document: str) -> list[TimeBandRule]:
     """
     rules: list[TimeBandRule] = []
     scope = ""
-    for line in document.splitlines() or [document]:
+    lines = HTML_TEXT_BREAK_RE.sub("\n", document).splitlines() or [document]
+    for line in lines:
         # Split on sentence-final punctuation only. A "；" joins clauses of one
         # rule (Tencent states the weekday window and the weekend exemption in a
         # single sentence), so cutting there would divorce a rule from its scope.
@@ -585,7 +604,7 @@ def compact_time_band_window(statement: str) -> str:
     if weekend and any(word in weekend.group(0) for word in ("全天", "不区分")):
         parts.append(_strip_list_marker(weekend.group(0)))
     # "其余" closes the rule: it says what the band that was *not* named costs.
-    rest = re.search(r"其余[^，,。；;）)]*", statement)
+    rest = re.search(r"(?:其余|此外)[^，,。；;）)]*", statement)
     if rest:
         parts.append(_strip_list_marker(rest.group(0)))
     return "、".join(dict.fromkeys(part for part in parts if part))
