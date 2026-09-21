@@ -316,10 +316,10 @@ contents and leave a fresh clone with nowhere to write.
 
 ## The two checkouts
 
-The repository is cloned twice on a working machine: a development clone, and the
-installed copy at `~/.workbuddy/skills/model-price`. They are independent clones,
-so editing one changes nothing in the other until the change is committed, pushed,
-and the other fast-forwards.
+The repository may be cloned twice on a working machine: a development clone, and
+an installed copy in the skill host's configured search path. They are independent
+clones, so editing one changes nothing in the other until the change is committed,
+pushed, and the other fast-forwards.
 
 - The installed copy self-updates at the start of every `--refresh` and every
   `delta`: it fetches upstream, checks whether the incoming commits actually

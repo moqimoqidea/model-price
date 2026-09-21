@@ -21,6 +21,7 @@
 
 ```
 .
+├── LICENSE             # Apache License 2.0
 ├── SKILL.md            # Agent 加载的指令
 ├── AGENTS.md           # 给维护代码的 Agent：结构、不变量、改动落点
 ├── scripts/
@@ -36,16 +37,11 @@
 ## 安装
 
 **仓库根目录就是 skill 目录**，所以 skill 的安装名由克隆到的目标目录名决定。
+将仓库克隆到任意工作目录，再按所用 Agent 宿主的说明将该目录添加到 skill 搜索路径，
+或在该搜索路径中创建指向此仓库的软链接。
 
 ```bash
-# 用户级：所有项目可用
-git clone https://github.com/moqimoqidea/model-price.git ~/.workbuddy/skills/model-price
-
-# 项目级：只在该项目可用
-git clone https://github.com/moqimoqidea/model-price.git .workbuddy/skills/model-price
-
-# 已有工作副本时，用软链代替再克隆一份
-ln -s "/path/to/this/repo" .workbuddy/skills/model-price
+git clone https://github.com/moqimoqidea/model-price.git model-price
 ```
 
 > **不要用复制的方式安装。** 仓库自带的更新检查需要一个配好 upstream 的 Git 工作副本；
