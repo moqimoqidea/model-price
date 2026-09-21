@@ -331,6 +331,24 @@ pushed, and the other fast-forwards.
   `delta` reports `baseline_created` for every provider instead of a comparison.
   Copy them over when that matters.
 
+## Git remotes and publishing
+
+The repository is published through two remotes so that users in mainland China
+have a nearby source:
+
+- `origin`: `https://github.com/moqimoqidea/model-price`
+- `gitee`: `https://gitee.com/moqimoqidea/model-price`
+
+Every code or documentation commit must be pushed to both remotes. Push the same
+branch to `origin` and `gitee`, then verify that both remote-tracking refs resolve
+to the local commit. Adding a checkout's mirror remote uses:
+
+```bash
+git remote add gitee https://gitee.com/moqimoqidea/model-price
+git push origin <branch>
+git push gitee <branch>
+```
+
 ## Anti-patterns
 
 - Restating `SKILL.md`'s runtime rules or `README.md`'s usage in a docstring.

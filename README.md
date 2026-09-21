@@ -8,6 +8,11 @@
 面向人的说明在这个文件；面向 Agent 的执行规则在 [SKILL.md](SKILL.md)，
 改代码用的项目结构与约束说明在 [AGENTS.md](AGENTS.md)。
 
+仓库同时发布到两个地址：
+
+- GitHub（`origin`）：https://github.com/moqimoqidea/model-price
+- Gitee（`gitee`，中国大陆镜像）：https://gitee.com/moqimoqidea/model-price
+
 ## 支持的渠道
 
 | 默认查询（国内） | 仅在明确提到时查询（海外） |
@@ -41,12 +46,19 @@
 或在该搜索路径中创建指向此仓库的软链接。
 
 ```bash
+# GitHub
 git clone https://github.com/moqimoqidea/model-price.git model-price
+
+# Gitee（中国大陆可优先使用）
+git clone https://gitee.com/moqimoqidea/model-price.git model-price
 ```
 
 > **不要用复制的方式安装。** 仓库自带的更新检查需要一个配好 upstream 的 Git 工作副本；
 > 复制出来的目录没有 `.git`，每次刷新都会报 `check_failed`（见下）。软链可以：更新逻辑会
 > 先把路径解析到真实目录，再定位仓库。
+
+维护代码的工作副本应保留上述两个远程。每次提交后将同一分支分别推送到
+`origin` 和 `gitee`，避免两个入口的内容不一致。
 
 ## 用法
 
