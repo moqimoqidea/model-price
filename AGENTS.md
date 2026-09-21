@@ -9,6 +9,7 @@ This file deliberately does not restate the other documents.
 | --- | --- |
 | `README.md` | you need what the skill does, how to install it, or why the report is shaped the way it is (for a person) |
 | `SKILL.md` | you are **using** the skill at runtime and need to pick a command, a provider set, and a format |
+| `im/dingtalk.md` | you are delivering through DingTalk or changing its DWS compatibility contract |
 | `references/schema.md` | you are consuming or changing the JSON payload |
 | `references/source-notes.md` | you are touching one vendor's source or parser |
 | `AGENTS.md` | you are **maintaining** the code — this file |
@@ -31,6 +32,8 @@ Standard library only, Python 3, no install step, no build step.
 ├── README.md                    the person-facing document
 ├── AGENTS.md                    code structure, invariants, and change locations
 ├── agents/openai.yaml           platform interface metadata (display name, default prompt, policy)
+├── im/
+│   └── dingtalk.md              DingTalk transport version, routing, and verification contract
 ├── references/
 │   ├── schema.md                the JSON payload, field by field
 │   └── source-notes.md          per-vendor source and parser notes
@@ -212,6 +215,11 @@ even when the tests still pass.
     no such evidence exists, the message labels the previous successful snapshot's
     `captured_at` as 上次更新时间; it never calls that fallback 官方更新时间. A
     date-only source remains date-only rather than acquiring an invented midnight.
+17. **IM transport facts have one owner per channel.** `SKILL.md` routes a sender
+    to the selected channel contract; it does not restate versions or commands.
+    DingTalk's DWS minimum version, exact route, preflight, target checks, and
+    transport ceiling live only in `im/dingtalk.md`. `README.md` may
+    explain why that contract exists, but must link to it instead of copying it.
 
 ## Where a change goes
 
@@ -224,6 +232,7 @@ even when the tests still pass.
 | Change how a message is laid out | `messages.py` |
 | Change which blocks a density keeps, or what opens a message | the section list in `messages.py` (`comparison_sections` / `scan_sections`) |
 | Change the character budget or how a density is chosen | `budget.py`, plus `DEFAULT_MAX_CHARS` callers in `query_model_prices.py` |
+| Change a DingTalk version, command, target check, or delivery recommendation | `im/dingtalk.md`; keep `SKILL.md` and `README.md` as links to that contract |
 | Change which providers a query covers | `registry.py` |
 | Change the cache or snapshot shape | `paths.py` version, then the reader and writer together |
 | Refresh the Tencent mirror | `scripts/update_tencent_model_mirror.py` |
@@ -353,6 +362,8 @@ git push gitee <branch>
 
 - Restating `SKILL.md`'s runtime rules or `README.md`'s usage in a docstring.
   Point at the document instead.
+- Copying an IM channel's version or command into multiple documents. Route to
+  its file under `im/` instead.
 - Teaching a parser a model name. Fix the rule it uses.
 - Merging currencies, time bands, regions, or generations to make a comparison
   tidier, or reporting a price of zero for a model that is only billed per

@@ -29,6 +29,8 @@
 ├── LICENSE             # Apache License 2.0
 ├── SKILL.md            # Agent 加载的指令
 ├── AGENTS.md           # 给维护代码的 Agent：结构、不变量、改动落点
+├── im/                 # 各即时通讯渠道的投递契约
+│   └── dingtalk.md     # 钉钉的 dws 版本、纯文本入口与发送前检查
 ├── scripts/
 │   ├── query_model_prices.py   # CLI 入口
 │   └── model_price/            # 实现，价格 providers 与 descriptions 分离
@@ -75,7 +77,7 @@ python3 scripts/query_model_prices.py delta --format message            # 全量
 python3 scripts/query_model_prices.py compare MODEL --format message --max-chars 2000
 ```
 
-`--format message` 得到一条可直接转发到钉钉的普通消息（`delta` 默认就是它），
+`--format message` 得到一条交给即时通讯发送方的普通消息（`delta` 默认就是它），
 `--format json` 得到同样的数据，给需要解析而不是阅读的一方。`--max-chars`
 只在目标渠道的上限与钉钉不同时才需要改（见「输出」）。渠道 id 见
 [SKILL.md](SKILL.md#model-price)。
@@ -84,6 +86,10 @@ python3 scripts/query_model_prices.py compare MODEL --format message --max-chars
 走即时通讯的要求，都该出 message 格式，不必再等他补一句开关。默认是 `json`，
 因为 `compare` / `provider` 的常见消费方是程序；`delta` 默认 `message`，因为它的
 常见消费方就是聊天窗口。
+
+真正投递前还要读目标渠道自己的契约。发钉钉时以
+[im/dingtalk.md](im/dingtalk.md) 为准；那里集中维护 dws 最低版本、唯一推荐入口、
+dry-run 判断标准、收件人核对和字符上限，其他文档不再复制这些易漂移的细节。
 
 ## 典型示例
 
@@ -135,7 +141,7 @@ python3 scripts/query_model_prices.py compare MODEL --format message --max-chars
 - **模型介绍（summary）不超过 300 字。** 官方原文更长的照样完整留在记录里，只是打上
   `summary_needs_condensing` 标记，消息里那一行的标签会写成「用途（原文 N 字，超过 300 字
   上限，需先总结再发送）」。由真正发送的一方（Agent 或人）先把原文总结进 300 字再发。
-- **整条消息不超过 `--max-chars`**（默认 3000 字符，给钉钉纯文本上限 5120 留足余量——渠道只
+- **整条消息不超过 `--max-chars`**（默认 3000 字符，给投递和最后编辑留出余量——渠道只
   会越来越多，而一条消息得始终是一条消息）。超了照样渲染完整报告，只在末尾补一行，写明超了
   多少字、发送前需总结压缩到哪里，并点名不许丢的东西：标题、结论、每个渠道条目、全部金额。
 
@@ -159,26 +165,10 @@ python3 scripts/query_model_prices.py compare MODEL --format message --max-chars
 DeepSeek 会检查最近 7 天的官方新闻地址；页面未公布时间或近期没有公告时，报告改为
 显示“上次更新时间”，其值是上一次成功读取并写入快照的时间，不再用破折号占位。
 
-**为什么不发 Markdown 文档。** 钉钉会用自家的解析器读文档，本工具的报告层级密、
-表格多，被它读回来容易串行——列错位、标题被吞、价格落到别的模型下面。所以
-消息里一个 Markdown 记号都没有：层级靠编号与缩进，段落之间空行分隔，每条来源
-URL 都写在行尾，避免被钉钉自动链接连带标点一起吃掉。
-
-**投递必须走纯文本通道。** 钉钉在渲染一条 Markdown 消息前会先解析它，那个解析
-把每个单换行都变成空格——三行抬头会挤成一行，以 URL 结尾的段落还会吞掉后面那个
-换行（`…&_v=undefined` 直接粘上下一个渠道名）。所以发送时要显式指定文本类型：
-
-```bash
-dws chat +messages-send --identity user \
-  --open-dingtalk-id <接收人 openDingTalkId> \
-  --msg-type text --text "$(cat message.txt)" -y
-```
-
-`dws chat +dm` 看着等价，但它默认走 Markdown，不能用。纯文本消息单条上限
-**5120 字符**（服务端按字符数拒绝，不是字节数），所以消息得控制篇幅：已经出现在
-渠道明细里的来源 URL 不再在「来源检查」里重复，每条计费方案也只写自己的档位，
-不再把同一个渠道的峰谷时段窗口在每一行上重抄一遍。默认 3000 字符的预算就是为此
-留的余量（见上）。
+**消息正文不是 Markdown 文档。** 报告里一个 Markdown 记号都没有：层级靠编号与
+缩进，段落之间空行分隔，每条来源 URL 都写在行尾，避免即时通讯客户端重新解释正文。
+这只定义报告本身；具体发送通道、兼容版本和验证方式属于渠道契约。钉钉的唯一维护点是
+[im/dingtalk.md](im/dingtalk.md)，发送方必须先读它，不能凭相似命令猜测等价行为。
 
 **定时任务。** `delta` 读遍各渠道后如果全都没有变化，只输出标题和一行结论
 （如「9 个渠道共 312 个模型，全部无变化。」），让你知道任务确实跑过，而不用每天

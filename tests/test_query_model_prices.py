@@ -1518,10 +1518,6 @@ class MessageBudgetTests(unittest.TestCase):
         self.assertIn("【渠道对比】", message)
         self.assertNotIn("需总结压缩", message)
 
-    def test_the_default_budget_stays_inside_the_channel_it_writes_for(self):
-        """DingTalk carries 5120 characters, and a report is kept well inside it."""
-        self.assertLess(DEFAULT_MAX_CHARS, 5120)
-
     def test_an_over_long_report_loses_nothing_and_says_it_must_be_summarized(self):
         """Nothing is dropped to fit, and that is the point.
 

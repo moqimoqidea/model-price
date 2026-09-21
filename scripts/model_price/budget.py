@@ -14,9 +14,9 @@ under its limit is done by whoever writes the message out.
 
 from __future__ import annotations
 
-# A DingTalk text message holds 5120 characters, which is the channel this tool
-# writes for. A report is kept well inside that: the number of providers only
-# grows, and one message has to stay one message.
+# Keep a conservative default because the number of providers grows while one
+# report still has to remain one message. Transport ceilings belong to the
+# selected channel contract under ``im/``, not to this measurement module.
 DEFAULT_MAX_CHARS = 3000
 
 
