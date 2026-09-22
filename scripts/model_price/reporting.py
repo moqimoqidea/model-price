@@ -25,6 +25,7 @@ from .diffing import (
     PRICE_CHANGE_FIELD,
     UNCHANGED,
 )
+from .pricing import price_sort_key, primary_offer
 from .snapshots import AT_OR_BEFORE, LAST_MONTH, ON_DATE, YESTERDAY
 
 DELIVERY_LABELS = {
@@ -496,14 +497,14 @@ def comparison_differences(results: list[dict[str, Any]]) -> list[str]:
 
 
 def model_digest(model: dict[str, Any]) -> str:
-    """Name what a newly listed model charges, from its first published offer."""
+    """Name what a newly listed model charges from its primary billing offer."""
     offers = model.get("offers", [])
-    if not offers:
+    head = primary_offer(offers)
+    if head is None:
         return ""
-    head = offers[0]
     charges = "；".join(
         f"{price.get('label') or price.get('type')} {format_price(price)}"
-        for price in head.get("prices", [])
+        for price in sorted(head.get("prices", []), key=price_sort_key)
     )
     condition = offering_text(head.get("name", ""), head.get("conditions", {}))
     digest = f"{condition} — {charges}" if charges else condition

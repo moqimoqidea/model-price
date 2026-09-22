@@ -104,6 +104,7 @@ from model_price.descriptions.core import (
 from model_price.messages import band_lines, comparison_message, scan_message
 from model_price.reporting import (
     format_moment,
+    model_digest,
     offer_condition_text,
     offering_text,
     price_lookup,
@@ -694,11 +695,15 @@ class OverseasParserTests(unittest.TestCase):
         markdown = """## Model pricing
 | Model | Base input tokens | 5m cache writes | 1h cache writes | Cache hits and refreshes | Output tokens |
 | --- | --- | --- | --- | --- | --- |
-| Claude Test 1 | $2 / MTok | $2.50 / MTok | $4 / MTok | $0.20 / MTok | $10 / MTok |
+| Claude Test 1 | $2 / MTok | $2.50 / MTok | $4 / MTok | $0.20 / MTok<sup>2</sup> | $10 / MTok |
 """
         adapter = AnthropicAdapter(MappingClient({ANTHROPIC_MARKDOWN_URL: markdown}))
         record = adapter.query("claude-test-1")[0]
         self.assertEqual(record["offers"][0]["prices"][-1]["amount"], "10")
+        self.assertEqual(
+            price_lookup(record["offers"][0], "cache_hit")["display"],
+            "$0.20 / MTok",
+        )
 
     def test_gemini_markdown_parser_uses_paid_tier(self):
         adapter = GeminiAdapter(MappingClient({GEMINI_MARKDOWN_URL: GEMINI_MARKDOWN}))
@@ -2361,6 +2366,111 @@ class SnapshotTests(unittest.TestCase):
         first.pop("captured_at")
         second.pop("captured_at")
         self.assertEqual(first, second)
+
+    def test_offers_use_business_priority_instead_of_alphabetical_order(self):
+        record = scanned_offers(
+            "m1",
+            "M1",
+            ("batch", None, "1", "4"),
+            ("flex", None, "1.5", "6"),
+            ("fast", None, "4", "16"),
+            ("standard", None, "2", "8"),
+        )
+
+        offers = snapshot_of([record])["models"]["m1"]["offers"]
+
+        self.assertEqual(
+            [offer["name"] for offer in offers],
+            ["standard", "fast", "flex", "batch"],
+        )
+
+    def test_equal_priority_context_tiers_keep_the_sources_order(self):
+        record = scanned_offers(
+            "m1",
+            "M1",
+            ("输入<=32k", None, "1", "4"),
+            ("32k<输入<=128k", None, "2", "8"),
+            ("128k<输入<=256k", None, "3", "12"),
+        )
+
+        offers = snapshot_of([record])["models"]["m1"]["offers"]
+
+        self.assertEqual(
+            [offer["name"] for offer in offers],
+            ["输入<=32k", "32k<输入<=128k", "128k<输入<=256k"],
+        )
+
+    def test_prices_are_stably_ordered_from_input_through_cache_to_output(self):
+        record = scanned_record("m1", "M1", "2", "8")
+        record["offers"][0]["prices"] = [
+            price_item("output", "Output", "8", "USD_per_million_tokens"),
+            price_item("cache_hit", "Cache hit", "0.2", "USD_per_million_tokens"),
+            price_item(
+                "cache_write_1h", "1h cache write", "4", "USD_per_million_tokens"
+            ),
+            price_item("input", "Base input", "2", "USD_per_million_tokens"),
+            price_item(
+                "cache_write_5m", "5m cache write", "2.5", "USD_per_million_tokens"
+            ),
+        ]
+
+        prices = snapshot_of([record])["models"]["m1"]["offers"][0]["prices"]
+
+        self.assertEqual(
+            [price["type"] for price in prices],
+            [
+                "input",
+                "cache_write_5m",
+                "cache_write_1h",
+                "cache_hit",
+                "output",
+            ],
+        )
+
+    def test_model_digest_selects_a_primary_offer_from_legacy_ordering(self):
+        digest = model_digest(
+            {
+                "offers": [
+                    {
+                        "name": "batch",
+                        "conditions": {"service_tier": "batch"},
+                        "prices": [
+                            price_item(
+                                "input", "Input", "2", "USD_per_million_tokens"
+                            ),
+                            price_item(
+                                "output", "Output", "10", "USD_per_million_tokens"
+                            ),
+                        ],
+                    },
+                    {
+                        "name": "standard",
+                        "conditions": {"service_tier": "standard"},
+                        "prices": [
+                            price_item(
+                                "output", "Output", "20", "USD_per_million_tokens"
+                            ),
+                            price_item(
+                                "cache_hit",
+                                "Cache hit",
+                                "0.20",
+                                "USD_per_million_tokens",
+                            ),
+                            price_item(
+                                "input", "Base input", "4", "USD_per_million_tokens"
+                            ),
+                        ],
+                    },
+                ]
+            }
+        )
+
+        self.assertEqual(
+            digest,
+            "standard — Base input 4 美元/百万 tokens；"
+            "Cache hit 0.20 美元/百万 tokens；"
+            "Output 20 美元/百万 tokens（另有 1 种计费方式）",
+        )
 
     def test_the_documents_own_section_is_not_part_of_an_offers_identity(self):
         one = {"name": "标准", "conditions": {"source_section": "在线推理"}}

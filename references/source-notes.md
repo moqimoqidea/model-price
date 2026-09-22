@@ -14,8 +14,13 @@ such as `deepseek-v4.1-flash`, `deepseek-v4-1-flash`, and `deepseek-flash` do no
 produce duplicate prose. Query failures are isolated from prices; `delta` resolves
 only models present in an actual change.
 
-- OpenAI, Anthropic, Gemini, and xAI use the official per-model Markdown variants.
-  A soft-404 page is accepted only when its body names the requested model.
+- OpenAI, Gemini, and xAI use the official per-model Markdown variants. Anthropic
+  first reads its official models-overview Markdown, which publishes each model's
+  detail link, Claude API id, and alias, then follows that indexed detail page;
+  punctuation in a price-table id is never used to guess a URL. A generated
+  soft-404 page is accepted only when its body names the requested model. An
+  Anthropic page named by the official index but missing or mismatched is a source
+  error, while a model absent from the index is `not_found`.
 - Kimi, MiniMax, and Zhipu use the official overview Markdown tables. Section
   headings contribute category/lifecycle information, including Kimi's explicit
   已下线 section.

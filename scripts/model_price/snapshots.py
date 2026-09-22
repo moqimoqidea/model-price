@@ -25,6 +25,7 @@ from .paths import (
     SNAPSHOT_RETENTION_MONTHS,
     SNAPSHOT_SCHEMA_VERSION,
 )
+from .pricing import offer_priority, price_sort_key
 
 LATEST = "latest"
 YESTERDAY = "yesterday"
@@ -161,7 +162,11 @@ def build_snapshot(
         entry["offers"].extend(offers)
     for entry in models.values():
         unique = {offer_identity(offer): offer for offer in entry["offers"]}
-        entry["offers"] = [unique[key] for key in sorted(unique)]
+        # ``sorted`` is stable, so equal-priority context and time bands retain
+        # the order in which the official source published them. This keeps a
+        # shortest-context row ahead of its larger tiers without sacrificing the
+        # explicit standard-before-batch ordering above it.
+        entry["offers"] = sorted(unique.values(), key=offer_priority)
     return {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "provider": {"id": provider.provider_id, "name": provider.provider_name},
@@ -201,7 +206,7 @@ def _offer_payload(offer: dict[str, Any]) -> dict[str, Any]:
                 {field: price.get(field) for field in PRICE_FIELDS}
                 for price in offer.get("prices", [])
             ),
-            key=price_identity,
+            key=price_sort_key,
         ),
     }
 

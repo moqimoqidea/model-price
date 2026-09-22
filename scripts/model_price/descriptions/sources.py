@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from ..errors import SourceError
 from ..models import model_matches, normalize_model
@@ -40,6 +40,7 @@ from .tencent_mirror import validate_tencent_mirror
 
 OPENAI_MODELS_URL = "https://developers.openai.com/api/docs/models/all"
 ANTHROPIC_MODELS_URL = "https://platform.claude.com/docs/en/models/overview"
+ANTHROPIC_MODELS_MARKDOWN_URL = f"{ANTHROPIC_MODELS_URL}.md"
 GEMINI_MODELS_URL = "https://ai.google.dev/gemini-api/docs/models"
 XAI_MODELS_URL = "https://docs.x.ai/developers/models"
 KIMI_MODELS_URL = "https://platform.kimi.com/docs/models.md"
@@ -89,19 +90,47 @@ class MarkdownDetailSource(DescriptionSource):
         *,
         record: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        url = self.url_for(model_id)
+        return self._describe_url(
+            self.url_for(model_id),
+            model_id,
+            display_name,
+        )
+
+    def _describe_url(
+        self,
+        url: str,
+        model_id: str,
+        display_name: str = "",
+        *,
+        authoritative: bool = False,
+    ) -> dict[str, Any] | None:
+        """Read one detail URL, optionally requiring an index-confirmed page.
+
+        Generated URLs can honestly miss when a vendor has no independent page,
+        so their 404 remains ``not_found``. A URL copied from an official index is
+        different: if that page disappears or no longer describes the indexed
+        model, the source is inconsistent and the resolver must report an error.
+        """
         try:
             text = self.client.get_text(url)
         except SourceError as exc:
-            if _not_found_error(exc):
+            if _not_found_error(exc) and not authoritative:
                 return None
             raise
         # Several documentation sites answer an unknown path with a soft 200.
         # A page must name the requested model before its prose is trusted.
         if not model_mentioned(text, model_id, display_name):
+            if authoritative:
+                raise SourceError(
+                    f"official model page did not name the indexed model: {url}"
+                )
             return None
         summary = markdown_summary(text)
         if not summary:
+            if authoritative:
+                raise SourceError(
+                    f"official model page published no readable summary: {url}"
+                )
             return None
         # A feature can be in preview while the model itself is stable, so
         # lifecycle is read only from a dedicated availability section, never
@@ -133,11 +162,62 @@ class OpenAIDescriptionSource(MarkdownDetailSource):
     )
 
 
-def _anthropic_slug(model: str) -> str:
-    slug = normalize_model(model)
-    if slug.startswith("claude-"):
-        slug = slug[len("claude-") :]
-    return re.sub(r"-\d{8}$", "", slug)
+ANTHROPIC_MODEL_LINK_RE = re.compile(r"\[([^]]+)]\(([^)]+)\)")
+ANTHROPIC_MODEL_PAGE_PATH_RE = re.compile(r"/docs/en/models/([^/]+)/overview(?:\.md)?$")
+
+
+def _anthropic_model_page(target: str) -> tuple[str, str] | None:
+    """Validate one official index link and return its public page and slug."""
+    resolved = urljoin(ANTHROPIC_MODELS_URL, target)
+    parsed = urlsplit(resolved)
+    match = ANTHROPIC_MODEL_PAGE_PATH_RE.fullmatch(parsed.path)
+    if parsed.netloc != "platform.claude.com" or not match:
+        return None
+    path = parsed.path.removesuffix(".md")
+    return f"https://platform.claude.com{path}", match.group(1)
+
+
+def anthropic_model_pages(document: str) -> dict[str, str]:
+    """Map official model labels and API ids to index-published detail pages."""
+    pages: dict[str, str] = {}
+
+    def register(value: str, page: str) -> None:
+        key = normalize_model(markdown_text(value))
+        if key:
+            pages[key] = page
+
+    # This also covers the prose list of legacy models below the comparison table.
+    for label, target in ANTHROPIC_MODEL_LINK_RE.findall(document):
+        resolved = _anthropic_model_page(target)
+        if resolved is None:
+            continue
+        page, slug = resolved
+        register(label, page)
+        register(f"claude-{slug}", page)
+
+    # Current models also publish exact pinned ids and aliases by table column.
+    # Those ids can differ from the human label, so bind them to the model-page
+    # row instead of reconstructing a path from punctuation in an id.
+    for _, rows in markdown_tables(document):
+        labelled = {
+            markdown_text(row[0]).lower(): row
+            for row in rows
+            if row and markdown_text(row[0])
+        }
+        page_row = labelled.get("model page")
+        if not page_row:
+            continue
+        column_pages = []
+        for cell in page_row[1:]:
+            _, target = model_link(cell)
+            resolved = _anthropic_model_page(target) if target else None
+            column_pages.append(resolved[0] if resolved else "")
+        for label in ("claude api id", "claude api alias"):
+            row = labelled.get(label) or []
+            for index, cell in enumerate(row[1:]):
+                if index < len(column_pages) and column_pages[index]:
+                    register(cell, column_pages[index])
+    return pages
 
 
 class AnthropicDescriptionSource(MarkdownDetailSource):
@@ -145,10 +225,49 @@ class AnthropicDescriptionSource(MarkdownDetailSource):
     source_name = "Anthropic"
     source_url = ANTHROPIC_MODELS_URL
     source_kind = "official_markdown"
-    url_for = staticmethod(
-        lambda model: "https://platform.claude.com/docs/en/models/"
-        f"{_anthropic_slug(model)}/overview.md"
-    )
+
+    def __init__(self, client: Any) -> None:
+        super().__init__(client)
+        self._pages: dict[str, str] | None = None
+
+    def _model_pages(self) -> dict[str, str]:
+        if self._pages is None:
+            document = self.client.get_text(ANTHROPIC_MODELS_MARKDOWN_URL)
+            pages = anthropic_model_pages(document)
+            if not pages:
+                raise SourceError(
+                    "official Anthropic model index published no model detail links"
+                )
+            self._pages = pages
+        return self._pages
+
+    def describe(
+        self,
+        model_id: str,
+        display_name: str = "",
+        *,
+        record: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        pages = self._model_pages()
+        page = next(
+            (
+                pages[key]
+                for key in (
+                    normalize_model(model_id),
+                    normalize_model(display_name),
+                )
+                if key and key in pages
+            ),
+            None,
+        )
+        if page is None:
+            return None
+        return self._describe_url(
+            f"{page}.md",
+            model_id,
+            display_name,
+            authoritative=True,
+        )
 
 
 class GeminiDescriptionSource(MarkdownDetailSource):

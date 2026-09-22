@@ -18,6 +18,8 @@ from model_price.descriptions.core import (
 from model_price.descriptions.resolver import DescriptionResolver
 from model_price.descriptions.sources import (
     AliyunDescriptionSource,
+    ANTHROPIC_MODELS_MARKDOWN_URL,
+    AnthropicDescriptionSource,
     KIMI_MODELS_URL,
     KimiDescriptionSource,
     OpenAIDescriptionSource,
@@ -43,9 +45,14 @@ from model_price.snapshots import SnapshotStore
 class MappingClient:
     def __init__(self, mapping):
         self.mapping = mapping
+        self.requests = []
 
     def get_text(self, url):
-        return self.mapping[url]
+        self.requests.append(url)
+        value = self.mapping[url]
+        if isinstance(value, Exception):
+            raise value
+        return value
 
 
 class QianwenDescriptionClient:
@@ -121,6 +128,88 @@ Model ID: `gpt-test`
         self.assertEqual(result["capabilities"], ["function_calling", "image_input"])
         self.assertEqual(result["specifications"]["context_window"], "200,000")
         self.assertEqual(result["lifecycle"], "active")
+
+    def test_anthropic_uses_the_official_index_link_for_dotted_versions(self):
+        page = "https://platform.claude.com/docs/en/models/opus-5-5/overview"
+        index = f"""## Compare models
+
+| Feature | Claude Opus 5.5 |
+|---|---|
+| Model page | [Claude Opus 5.5]({page}) |
+| Claude API ID | `claude-opus-5-5` |
+| Claude API alias | `claude-opus-5-5` |
+"""
+        detail = """# Claude Opus 5.5
+
+Model ID: `claude-opus-5-5`
+
+## Overview
+
+Built for long-running agentic coding and knowledge work.
+
+### Capabilities
+
+| Feature | Value |
+|---|---|
+| Context window | 1M tokens |
+"""
+        client = MappingClient(
+            {
+                ANTHROPIC_MODELS_MARKDOWN_URL: index,
+                f"{page}.md": detail,
+            }
+        )
+        source = AnthropicDescriptionSource(client)
+
+        result = source.describe("claude-opus-5.5", "Claude Opus 5.5")
+
+        self.assertEqual(
+            result["summary"],
+            "Built for long-running agentic coding and knowledge work.",
+        )
+        self.assertEqual(result["source"]["url"], page)
+        self.assertEqual(
+            client.requests,
+            [ANTHROPIC_MODELS_MARKDOWN_URL, f"{page}.md"],
+        )
+
+    def test_an_indexed_anthropic_page_failure_is_a_source_error(self):
+        page = "https://platform.claude.com/docs/en/models/opus-5-5/overview"
+        source = AnthropicDescriptionSource(
+            MappingClient(
+                {
+                    ANTHROPIC_MODELS_MARKDOWN_URL: (
+                        f"[Claude Opus 5.5]({page})"
+                    ),
+                    f"{page}.md": SourceError(
+                        "request rejected by platform.claude.com: HTTP 404"
+                    ),
+                }
+            )
+        )
+        result = DescriptionResolver({"anthropic": source}).resolve(
+            [
+                {
+                    "model_id": "claude-opus-5.5",
+                    "display_name": "Claude Opus 5.5",
+                    "provider_id": "anthropic",
+                }
+            ]
+        )
+
+        self.assertEqual(result["status"], "source_error")
+        self.assertEqual(result["attempted_sources"][0]["status"], "source_error")
+
+    def test_an_unreadable_anthropic_index_stays_a_source_error(self):
+        source = AnthropicDescriptionSource(
+            MappingClient({ANTHROPIC_MODELS_MARKDOWN_URL: "# Models"})
+        )
+
+        for model_id in ("claude-one", "claude-two"):
+            with self.assertRaisesRegex(
+                SourceError, "index published no model detail links"
+            ):
+                source.describe(model_id)
 
     def test_markdown_overview_marks_retired_models_honestly(self):
         source = KimiDescriptionSource(
