@@ -35,7 +35,11 @@ from model_price.registry import (
     select_compare_providers,
     source_status,
 )
-from model_price.snapshots import SnapshotStore
+from model_price.snapshots import (
+    BaselineSelection,
+    SnapshotStore,
+    parse_baseline_selection,
+)
 from model_price.updating import update_skill_before_refresh
 
 PROVIDER_OPTION_HELP = "query only this provider; repeat to compare selected providers"
@@ -45,6 +49,19 @@ FORMAT_HELP = "json for machines, message for a DingTalk channel"
 MAX_CHARS_HELP = (
     "character budget for message output; an overrun is reported without truncation"
 )
+
+SINCE_HELP = (
+    "baseline to compare with: yesterday, last-month, an ISO date, or an ISO "
+    "timestamp; omit for the previous successful scan"
+)
+
+
+def baseline_argument(value: str) -> BaselineSelection:
+    """Give argparse a concise error for an invalid historical comparison point."""
+    try:
+        return parse_baseline_selection(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def add_message_options(
@@ -126,7 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     delta = subparsers.add_parser(
         "delta",
-        help="scan whole catalogues and compare each provider with its last scan",
+        help="scan whole catalogues against the latest or a historical baseline",
     )
     delta.add_argument(
         "--provider",
@@ -139,6 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="also scan OpenAI, Anthropic, Google, and xAI",
     )
+    delta.add_argument("--since", type=baseline_argument, help=SINCE_HELP)
     add_message_options(delta, default_format="message")
     delta.add_argument(
         "--snapshot-dir",
@@ -205,6 +223,7 @@ def main() -> int:
             ),
             SnapshotStore(args.snapshot_dir),
             descriptions=descriptions,
+            baseline=args.since,
         )
     else:
         adapter = adapters[args.provider]

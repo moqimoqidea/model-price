@@ -1,22 +1,76 @@
-"""Point-in-time catalogues, so a later scan can be compared with the last one.
+"""Archived point-in-time catalogues for latest and historical comparisons.
 
-A snapshot is what the previous scan saw. It is deliberately not the TTL cache:
-cache entries expire after three hours and are *reused* within that window, while
-a baseline has to survive until the next scan replaces it — an expiring baseline
-would turn every run into a first run, and a reused one would hide a change behind
-a cache hit.
+Snapshots are deliberately not the TTL cache: cached responses are reused for
+three hours, which would hide a catalogue change, while every successful scan is
+an independent baseline. The store keeps a recent calendar window and a minimum
+count so callers can resolve human time requests without growing forever.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from calendar import monthrange
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from uuid import uuid4
 
 from .core import write_json
 from .models import normalize_model
-from .paths import DEFAULT_SNAPSHOT_DIR, SNAPSHOT_SCHEMA_VERSION
+from .paths import (
+    DEFAULT_SNAPSHOT_DIR,
+    SNAPSHOT_RETENTION_COUNT,
+    SNAPSHOT_RETENTION_MONTHS,
+    SNAPSHOT_SCHEMA_VERSION,
+)
+
+LATEST = "latest"
+YESTERDAY = "yesterday"
+LAST_MONTH = "last_month"
+ON_DATE = "date"
+AT_OR_BEFORE = "at_or_before"
+
+
+@dataclass(frozen=True)
+class BaselineSelection:
+    """A user request for the baseline one provider should be compared with."""
+
+    mode: str = LATEST
+    requested: str | None = None
+    day: date | None = None
+    moment: datetime | None = None
+
+    @property
+    def is_latest(self) -> bool:
+        return self.mode == LATEST
+
+    def payload(self) -> dict[str, str | None]:
+        return {"mode": self.mode, "requested": self.requested}
+
+
+def parse_baseline_selection(value: str | None) -> BaselineSelection:
+    """Parse the CLI's relative aliases, ISO date, or ISO timestamp."""
+    if value is None or value.strip().lower() == LATEST:
+        return BaselineSelection()
+    requested = value.strip()
+    alias = requested.lower().replace("_", "-")
+    if alias == YESTERDAY:
+        return BaselineSelection(YESTERDAY, requested)
+    if alias == "last-month":
+        return BaselineSelection(LAST_MONTH, requested)
+    try:
+        if len(requested) == 10:
+            return BaselineSelection(
+                ON_DATE, requested, day=date.fromisoformat(requested)
+            )
+        moment = datetime.fromisoformat(requested.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            "expected yesterday, last-month, an ISO date, or an ISO timestamp"
+        ) from exc
+    return BaselineSelection(AT_OR_BEFORE, requested, moment=moment)
+
 
 # Conditions describing how the vendor laid the document out, rather than what is
 # being billed. They are kept for the reader but stay out of an offer's identity:
@@ -110,7 +164,7 @@ def latest_update(models: Iterable[dict[str, Any]]) -> str | None:
     not, never that its prices are old.
     """
     dated = [
-        (str(model["updated_at"]), _resolved(model["updated_at"]))
+        (str(model["updated_at"]), _parse_moment(model["updated_at"]))
         for model in models
         if model.get("updated_at")
     ]
@@ -118,13 +172,6 @@ def latest_update(models: Iterable[dict[str, Any]]) -> str | None:
     if not resolved:
         return None
     return max(resolved, key=lambda item: item[1])[0]
-
-
-def _resolved(value: Any) -> datetime | None:
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 def _offer_payload(offer: dict[str, Any]) -> dict[str, Any]:
@@ -142,28 +189,218 @@ def _offer_payload(offer: dict[str, Any]) -> dict[str, Any]:
 
 
 class SnapshotStore:
-    """One baseline file per provider, replaced in place by each scan."""
+    """A bounded, timestamped history of every provider's successful scans."""
 
-    def __init__(self, root: Path = DEFAULT_SNAPSHOT_DIR) -> None:
+    def __init__(
+        self,
+        root: Path = DEFAULT_SNAPSHOT_DIR,
+        *,
+        retention_months: int = SNAPSHOT_RETENTION_MONTHS,
+        retention_count: int = SNAPSHOT_RETENTION_COUNT,
+    ) -> None:
+        if retention_months < 1 or retention_count < 1:
+            raise ValueError("snapshot retention values must be positive")
         self.root = root
+        self.retention_months = retention_months
+        self.retention_count = retention_count
 
     def path(self, provider_id: str) -> Path:
+        """Return the legacy single-baseline path used before history existed."""
         return self.root / f"{provider_id}.json"
 
-    def read(self, provider_id: str) -> dict[str, Any] | None:
-        """Return the last baseline, or ``None`` when there is none to compare with.
+    def history_dir(self, provider_id: str) -> Path:
+        return self.root / provider_id
 
-        A snapshot written by an older shape is treated as absent rather than
-        diffed against, so a format change reports one baseline run instead of
-        every model looking new.
+    def read(self, provider_id: str) -> dict[str, Any] | None:
+        """Return the latest valid baseline, including a legacy single file."""
+        return self._last_valid(self._entry_refs(provider_id))
+
+    def history(self, provider_id: str) -> list[dict[str, Any]]:
+        """Return valid baselines in capture order.
+
+        A snapshot written by an older shape is absent from the history rather
+        than diffed against, so a format change reports one baseline run instead
+        of every model looking new.
         """
-        try:
-            payload = json.loads(self.path(provider_id).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        snapshots = []
+        for _, path in self._entry_refs(provider_id):
+            if payload := _read_snapshot(path):
+                snapshots.append(payload)
+        return snapshots
+
+    def select(
+        self,
+        provider_id: str,
+        selection: BaselineSelection,
+        *,
+        reference_at: str,
+    ) -> dict[str, Any] | None:
+        """Resolve one baseline relative to the current scan's local calendar."""
+        entries = self._entry_refs(provider_id)
+        if not entries:
             return None
-        if payload.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
-            return None
-        return payload
+        if selection.is_latest:
+            return self._last_valid(entries)
+
+        reference = _parse_moment(reference_at)
+        if reference is None:
+            raise ValueError(f"invalid scan timestamp: {reference_at}")
+        local_zone = reference.tzinfo or timezone.utc
+
+        def local_moment(entry: tuple[datetime, Path]) -> datetime:
+            return entry[0].astimezone(local_zone)
+
+        candidates = entries
+        if selection.mode == YESTERDAY:
+            target_day = reference.date() - timedelta(days=1)
+            candidates = [
+                entry for entry in entries if local_moment(entry).date() == target_day
+            ]
+        elif selection.mode == LAST_MONTH:
+            target_month = reference.month - 1 or 12
+            target_year = reference.year - (1 if reference.month == 1 else 0)
+            candidates = []
+            for entry in entries:
+                local = local_moment(entry)
+                if (local.year, local.month) == (target_year, target_month):
+                    candidates.append(entry)
+        elif selection.mode == ON_DATE:
+            candidates = [
+                entry
+                for entry in entries
+                if local_moment(entry).date() == selection.day
+            ]
+        elif selection.mode == AT_OR_BEFORE:
+            target = selection.moment
+            if target is None:
+                return None
+            if target.tzinfo is None:
+                target = target.replace(tzinfo=local_zone)
+            candidates = [entry for entry in entries if entry[0] <= target]
+        else:
+            raise ValueError(f"unknown baseline selection mode: {selection.mode}")
+        return self._last_valid(candidates)
 
     def write(self, provider_id: str, snapshot: dict[str, Any]) -> None:
-        write_json(self.path(provider_id), snapshot, indent=2)
+        """Archive one successful scan, migrate legacy state, then prune history."""
+        self._migrate_legacy(provider_id)
+        moment = _snapshot_moment(snapshot) or datetime.now(timezone.utc)
+        write_json(self._archive_path(provider_id, moment), snapshot, indent=2)
+        self._prune(provider_id)
+
+    def _entry_refs(self, provider_id: str) -> list[tuple[datetime, Path]]:
+        """List capture times without loading every archived catalogue."""
+        entries = []
+        legacy = self.path(provider_id)
+        legacy_payload = _read_snapshot(legacy)
+        if legacy_moment := _snapshot_moment(legacy_payload):
+            entries.append((legacy_moment, legacy))
+        directory = self.history_dir(provider_id)
+        if directory.exists():
+            entries.extend(
+                (moment, path)
+                for path in directory.glob("*.json")
+                if (moment := _archive_moment(path)) is not None
+            )
+        return sorted(entries, key=_entry_order)
+
+    @staticmethod
+    def _last_valid(entries: list[tuple[datetime, Path]]) -> dict[str, Any] | None:
+        for _, path in reversed(entries):
+            if payload := _read_snapshot(path):
+                return payload
+        return None
+
+    def _migrate_legacy(self, provider_id: str) -> None:
+        legacy = self.path(provider_id)
+        payload = _read_snapshot(legacy)
+        moment = _snapshot_moment(payload)
+        if payload is None or moment is None:
+            return
+        same_moment = [
+            path
+            for captured_at, path in self._entry_refs(provider_id)
+            if path != legacy and captured_at == moment
+        ]
+        if not any(_read_snapshot(path) == payload for path in same_moment):
+            write_json(self._archive_path(provider_id, moment), payload, indent=2)
+        try:
+            legacy.unlink()
+        except OSError:
+            pass
+
+    def _archive_path(self, provider_id: str, moment: datetime) -> Path:
+        stamp = moment.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        return self.history_dir(provider_id) / f"{stamp}-{uuid4().hex}.json"
+
+    def _prune(self, provider_id: str) -> None:
+        entries = [
+            entry
+            for entry in self._entry_refs(provider_id)
+            if entry[1].parent == self.history_dir(provider_id)
+        ]
+        if not entries:
+            return
+        cutoff = _subtract_months(entries[-1][0], self.retention_months)
+        kept = {path for _, path in entries[-self.retention_count :]}
+        kept.update(path for moment, path in entries if moment >= cutoff)
+        for _, path in entries:
+            if path not in kept:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+
+
+def _read_snapshot(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
+        return None
+    return payload
+
+
+def _archive_moment(path: Path) -> datetime | None:
+    stamp = path.name.split("-", 1)[0]
+    try:
+        return datetime.strptime(stamp, "%Y%m%dT%H%M%S.%fZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+
+
+def _entry_order(entry: tuple[datetime, Path]) -> tuple[datetime, int, str]:
+    try:
+        modified_at = entry[1].stat().st_mtime_ns
+    except OSError:
+        modified_at = 0
+    return entry[0], modified_at, entry[1].name
+
+
+def _snapshot_moment(snapshot: dict[str, Any] | None) -> datetime | None:
+    if not snapshot:
+        return None
+    return _parse_moment(snapshot.get("captured_at"))
+
+
+def _parse_moment(value: Any) -> datetime | None:
+    try:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment
+
+
+def _subtract_months(moment: datetime, months: int) -> datetime:
+    ordinal = moment.year * 12 + moment.month - 1 - months
+    year, zero_based_month = divmod(ordinal, 12)
+    month = zero_based_month + 1
+    day = min(moment.day, monthrange(year, month)[1])
+    return moment.replace(year=year, month=month, day=day)

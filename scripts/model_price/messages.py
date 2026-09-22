@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import Any, Iterable, Sequence
 
 from .budget import DEFAULT_MAX_CHARS, overage
-from .delta import EMPTY_SCAN, SOURCE_ERROR
+from .delta import BASELINE_NOT_FOUND, EMPTY_SCAN, SOURCE_ERROR
 
 from .descriptions.core import AVAILABLE as DESCRIPTION_AVAILABLE
 from .diffing import (
@@ -48,6 +48,7 @@ from .reporting import (
     UNSTATED,
     all_unchanged,
     banded_records,
+    baseline_selection_text,
     change_digest,
     changed_descriptions,
     comparison_conclusion,
@@ -80,7 +81,14 @@ SCAN_SUBJECT = "全渠道模型与计费变化"
 # The order a reader wants the channels in: what needs a look first, then what is
 # merely fine. Sorting is stable, so channels of one status keep the order the
 # scan covered them in, and two reports stay comparable line by line.
-STATUS_ORDER = (CHANGED, EMPTY_SCAN, SOURCE_ERROR, BASELINE_CREATED, UNCHANGED)
+STATUS_ORDER = (
+    CHANGED,
+    EMPTY_SCAN,
+    SOURCE_ERROR,
+    BASELINE_NOT_FOUND,
+    BASELINE_CREATED,
+    UNCHANGED,
+)
 
 STATUS_RANK = {status: rank for rank, status in enumerate(STATUS_ORDER)}
 
@@ -436,8 +444,10 @@ def scan_blocks(payload: dict[str, Any]) -> list[list[str]]:
     keyed by model rather than by the change that mentioned it.
     """
     reports = payload.get("providers", [])
+    comparison = baseline_selection_text(payload)
+    subject = f"{SCAN_SUBJECT}（{comparison}）" if comparison else SCAN_SUBJECT
     blocks = [
-        header(SCAN_TITLE, SCAN_SUBJECT, payload),
+        header(SCAN_TITLE, subject, payload),
         section("变化模型能力", description_lines(changed_descriptions(payload))),
         section("结论", scan_conclusion(payload)),
     ]
@@ -486,11 +496,11 @@ def channel_entry(position: int, report: dict[str, Any]) -> list[str]:
         facts.append(
             field("官方更新时间", sentence_text(format_moment(updated_at)))
         )
-    elif report.get("baseline_at"):
+    elif report.get("last_successful_at"):
         facts.append(
             field(
                 "上次更新时间",
-                sentence_text(format_moment(report["baseline_at"])),
+                sentence_text(format_moment(report["last_successful_at"])),
             )
         )
     return entry(
@@ -523,7 +533,7 @@ def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
         report["provider"]["name"],
         [
             field(
-                "上次扫描", sentence_text(format_moment(report.get("baseline_at")))
+                "对比基线", sentence_text(format_moment(report.get("baseline_at")))
             ),
             field(
                 "本次扫描", sentence_text(f"{report.get('model_count', 0)} 个模型")
@@ -584,9 +594,9 @@ def failed_lines(reports: list[dict[str, Any]]) -> list[str]:
 def failed_text(report: dict[str, Any]) -> str:
     status = DELTA_STATUS_LABELS.get(report["status"], report["status"])
     reason = report.get("error") or UNSTATED
-    baseline = report.get("baseline_at")
+    baseline = report.get("last_successful_at")
     kept = (
-        f"；上次基线 {format_moment(baseline)} 保留，下次扫描仍与它对比"
+        f"；最近一次成功基线 {format_moment(baseline)} 及历史归档均保留"
         if baseline
         else ""
     )

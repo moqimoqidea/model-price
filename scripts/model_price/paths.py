@@ -16,8 +16,14 @@ CACHE_TTL = timedelta(hours=3)
 # older version are ignored instead of being served for the rest of their TTL.
 CACHE_SCHEMA_VERSION = 9
 
-# Snapshots are the baseline a later scan is compared against. They never expire —
-# an expired baseline would turn every run into a first run — so they are versioned
-# separately from the TTL cache. Bump this whenever the snapshot shape changes, and
-# an older baseline is treated as absent instead of being diffed against.
+# Snapshots are archived baselines rather than response caches, so they are
+# versioned separately from the TTL cache. Bump this whenever their shape changes;
+# an older baseline is then absent from comparisons instead of looking like every
+# model changed.
 SNAPSHOT_SCHEMA_VERSION = 1
+
+# Successful scans are archived per provider. Keep every snapshot in the recent
+# calendar window, plus enough older ones to retain a useful long-running trail
+# for infrequently scanned catalogues.
+SNAPSHOT_RETENTION_MONTHS = 3
+SNAPSHOT_RETENTION_COUNT = 1000

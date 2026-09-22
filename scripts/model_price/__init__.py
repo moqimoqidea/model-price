@@ -13,7 +13,7 @@ Responsibility split:
 - ``descriptions`` independent model introductions, from vendors and platforms
 - ``caching``      provider-scoped file cache
 - ``updating``     Git self-update before an explicit refresh
-- ``snapshots``    the per-provider baselines a later scan is compared against
+- ``snapshots``    archived baselines, retention, and point-in-time selection
 - ``diffing``      what moved between two baselines
 - ``delta``        the scan-every-catalogue-and-compare run
 - ``reporting``    the shared wording and single-value formatters

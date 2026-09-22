@@ -20,7 +20,8 @@ A single-skill repository whose root **is** the skill directory. It queries publ
 credential-free model catalogues, introductions, capabilities, specifications, and
 official price documents across 13 providers. Its two output modes are a model and
 cross-provider comparison, and a whole-catalogue scan that reports launches,
-withdrawals, billing changes, and price moves since the previous scan.
+withdrawals, billing changes, and price moves since the previous scan or a
+retained historical baseline.
 
 Standard library only, Python 3, no install step, no build step.
 
@@ -51,7 +52,7 @@ Standard library only, Python 3, no install step, no build step.
 │       ├── parsing.py           document readers: HTML/Markdown tables, price headers, time bands
 │       ├── caching.py           CacheStore and the CachedPriceSource decorator
 │       ├── updating.py          Git fast-forward before an explicit refresh
-│       ├── snapshots.py         the per-provider baseline a later scan is compared against
+│       ├── snapshots.py         archived baselines, retention, and point-in-time selection
 │       ├── diffing.py           what moved between two baselines
 │       ├── delta.py             the scan-every-catalogue run
 │       ├── reporting.py         the shared wording: one value, written once
@@ -93,8 +94,9 @@ compare / provider / list
 delta
   ├── registry.select_catalog_providers()    never infers an overseas provider
   ├── adapter.catalog_records()              always fresh — a cache hit reads as "no change"
-  ├── snapshots.build_snapshot() → SnapshotStore.write()
-  ├── diffing.compare_snapshots(previous, current)
+  ├── SnapshotStore.select()          previous, yesterday, last month, or a timestamp
+  ├── snapshots.build_snapshot() → SnapshotStore.write() archives every success
+  ├── diffing.compare_snapshots(selected, current)
   ├── descriptions.resolve_many(changed models only)
   └── messages.scan_message(payload)
 ```
@@ -169,13 +171,15 @@ even when the tests still pass.
 7. **Never synthesize Tencent model text.** Its details sit behind an authenticated
    console, so the checked-in mirror is the only source. A model absent from it is
    `not_found` — not a cue to infer capabilities from a name.
-8. **A failed or empty scan never overwrites a good baseline.** `source_error` and
-   `empty_scan` are reported and the previous baseline is kept, so the change
-   survives into the run after the source recovers.
+8. **A failed or empty scan never writes a baseline.** `source_error` and
+   `empty_scan` are reported and every prior successful archive is kept, so the
+   change survives into the run after the source recovers.
 9. **Cache and baseline are different things.** The cache is a 3-hour TTL store of
-   responses, reused inside that window. A baseline never expires, because an
-   expiring one would turn every run into a first run. `delta` therefore always
-   reads the sources afresh — a cache hit would be handed back as "no change".
+   responses, reused inside that window. `delta` always reads the sources afresh —
+   a cache hit would be handed back as "no change". Successful scans are archived
+   per provider; retention keeps the union of the most recent three-month calendar
+   window and the newest 1000 snapshots. The latest snapshot therefore never ages
+   out merely because scans are infrequent.
 10. **Bump the schema version when a shape changes.** `CACHE_SCHEMA_VERSION` covers
     parsed responses (`CACHE_TTL`), `SNAPSHOT_SCHEMA_VERSION` covers baselines. A
     parser or source change requires the cache bump, or stale parsed data is served
@@ -212,9 +216,10 @@ even when the tests still pass.
     explicit Tencent mirror through a user-owned logged-in session, offline.
 16. **An official update time needs official evidence.** A vendor-labelled date or
     a matching official DeepSeek news page may populate `source_updated_at`. When
-    no such evidence exists, the message labels the previous successful snapshot's
-    `captured_at` as 上次更新时间; it never calls that fallback 官方更新时间. A
-    date-only source remains date-only rather than acquiring an invented midnight.
+    no such evidence exists, the message labels the most recent successful
+    snapshot before the current run as 上次更新时间, even when the comparison selected
+    an older historical baseline; it never calls that fallback 官方更新时间. A date-only
+    source remains date-only rather than acquiring an invented midnight.
 17. **IM transport facts have one owner per channel.** `SKILL.md` routes a sender
     to the selected channel contract; it does not restate versions or commands.
     DingTalk's DWS minimum version, exact route, preflight, target checks, and
@@ -306,6 +311,9 @@ python3 -m unittest discover -s tests                          # full suite, off
 python3 scripts/query_model_prices.py --help
 python3 scripts/query_model_prices.py compare deepseek-flash --format json
 python3 scripts/query_model_prices.py delta --format message
+python3 scripts/query_model_prices.py delta --since yesterday
+python3 scripts/query_model_prices.py delta --since last-month
+python3 scripts/query_model_prices.py delta --since 2026-09-19T23:59:59+08:00
 python3 scripts/query_model_prices.py compare deepseek-flash --format message --max-chars 1200
 python3 scripts/update_tencent_model_mirror.py CAPTURE.json
 ```
@@ -336,9 +344,11 @@ pushed, and the other fast-forwards.
   working tree there turns the update into `update_skipped`.
 - **Never install by copying.** A copy has no `.git`, so every refresh reports
   `check_failed`. A symlink to a real clone resolves to the repository and is fine.
-- `snapshots/*.json` are not in git. A fresh clone has no baselines, so its first
-  `delta` reports `baseline_created` for every provider instead of a comparison.
-  Copy them over when that matters.
+- `snapshots/` history is not in git. A fresh clone has no baselines, so its first
+  default `delta` reports `baseline_created` for every provider instead of a
+  comparison. Copy the directory over when that matters. A historical request
+  with no matching baseline reports `baseline_not_found` rather than silently
+  selecting another date.
 
 ## Git remotes and publishing
 

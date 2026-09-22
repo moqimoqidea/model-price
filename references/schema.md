@@ -70,17 +70,21 @@ Explicit refreshes also add `skill_update` before querying official sources:
 
 ## Change reports
 
-`delta` reports `command`, `retrieved_at`, `summary`, and `providers`, with
+`delta` reports `command`, `retrieved_at`, `baseline_selection`, `summary`, and `providers`, with
 `skill_update` added on the same terms as a query:
 
 ```json
 {
   "command": "delta",
   "retrieved_at": "ISO-8601",
+  "baseline_selection": {
+    "mode": "latest|yesterday|last_month|date|at_or_before",
+    "requested": "original --since value, or null"
+  },
   "summary": {
     "providers": 9,
     "changed": 1, "unchanged": 7, "baseline_created": 1,
-    "empty_scan": 0, "source_error": 0,
+    "baseline_not_found": 0, "empty_scan": 0, "source_error": 0,
     "models_added": 2, "models_removed": 1,
     "offers_added": 1, "offers_removed": 0, "price_changes": 3
   },
@@ -88,21 +92,26 @@ Explicit refreshes also add `skill_update` before querying official sources:
 }
 ```
 
-Each entry of `providers` carries `provider`, `status`, `baseline_at`,
-`captured_at`, `source`, `model_count`, and `changes`. `status` is one of:
+Each successful entry of `providers` carries `provider`, `status`, `baseline_at`,
+`last_successful_at`, `captured_at`, `source`, `model_count`, and `changes`.
+`baseline_at` is the archive actually selected for comparison;
+`last_successful_at` is the latest successful scan before this run and remains the
+fallback for 上次更新时间 even when `--since` selected an older archive. `status` is
+one of:
 
 - `changed` — `changes` holds what moved
 - `unchanged` — `changes` is empty; the models and prices are the baseline's
 - `baseline_created` — there was no baseline yet, so `changes` is empty and the run is not a comparison
-- `empty_scan` — the source yielded no priced model; the previous baseline is kept
-- `source_error` — the source failed; `error` says why and the previous baseline is kept
+- `baseline_not_found` — `--since` matched no archive for this provider; the current successful scan is still archived
+- `empty_scan` — the source yielded no priced model; all existing archives are kept
+- `source_error` — the source failed; `error` says why and all existing archives are kept
 
 The two failure statuses omit `model_count` and `changes`. `baseline_at` is `null`
-when no baseline existed.
+when no matching baseline existed. A failed scan writes no archive.
 
 `source.updated_at` is official vendor evidence copied into the snapshot; it is
 `null` when the source publishes none. The plain-text report then displays
-`baseline_at` as 上次更新时间, rather than presenting a scan timestamp as an
+`last_successful_at` as 上次更新时间, rather than presenting a scan timestamp as an
 official vendor update. Date-only official values remain date-only.
 
 A `changed` provider also carries `model_descriptions`, covering each unique model
@@ -116,7 +125,11 @@ offer entry is a model plus `offer` (`name` and `conditions`). A price change is
 model plus `offer`, `conditions`, `type`, `label`, and `from`/`to` — each one an
 `{amount, unit}` pair, with `null` on the side where the price did not exist.
 
-Baselines are stored one per provider under `snapshots/` and never expire. They are
-not cache entries and not this payload: a baseline keeps the catalogue keyed by
-normalized model id, with each offer identified by its name and the conditions that
-describe what is billed rather than where the document filed it.
+Baselines are timestamped files under `snapshots/<provider>/`. Every successful
+scan is archived, including an unchanged catalogue. Per provider, retention keeps
+the union of the most recent three-month calendar window and the newest 1000
+snapshots. A legacy `snapshots/<provider>.json` remains readable and is migrated
+on the next successful write. Baselines are not cache entries and not this payload:
+a baseline keeps the catalogue keyed by normalized model id, with each offer
+identified by its name and the conditions that describe what is billed rather
+than where the document filed it.

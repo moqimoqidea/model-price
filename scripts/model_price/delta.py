@@ -1,8 +1,9 @@
-"""Scan every provider's whole catalogue and report what changed since last time.
+"""Scan whole catalogues and compare them with selected historical baselines.
 
 This is the entry point a scheduled run uses: it takes no model name, because the
 question it answers is about the catalogues themselves — which models appeared,
-which disappeared, and whose prices moved.
+which disappeared, and whose prices moved. Baseline selection stays independent
+of scanning so the same fresh catalogue can answer latest or point-in-time deltas.
 """
 
 from __future__ import annotations
@@ -19,7 +20,12 @@ from .diffing import (
     compare_snapshots,
 )
 from .models import normalize_model
-from .snapshots import SnapshotStore, build_snapshot
+from .snapshots import (
+    BaselineSelection,
+    SnapshotStore,
+    build_snapshot,
+    parse_baseline_selection,
+)
 
 SOURCE_ERROR = "source_error"
 # A scan that prices nothing is far more likely to be a parser losing the document
@@ -27,8 +33,16 @@ SOURCE_ERROR = "source_error"
 # replace the baseline: overwriting a full catalogue with an empty one would make
 # the next scan read as every model having been withdrawn.
 EMPTY_SCAN = "empty_scan"
+BASELINE_NOT_FOUND = "baseline_not_found"
 
-STATUSES = (CHANGED, UNCHANGED, BASELINE_CREATED, EMPTY_SCAN, SOURCE_ERROR)
+STATUSES = (
+    CHANGED,
+    UNCHANGED,
+    BASELINE_CREATED,
+    BASELINE_NOT_FOUND,
+    EMPTY_SCAN,
+    SOURCE_ERROR,
+)
 
 
 def scan_providers(
@@ -37,16 +51,25 @@ def scan_providers(
     *,
     captured_at: str | None = None,
     descriptions: DescriptionResolver | None = None,
+    baseline: BaselineSelection | None = None,
 ) -> dict[str, Any]:
-    """Scan each provider, compare it with its baseline, and move the baseline on."""
+    """Scan each provider, compare it with the requested baseline, and archive it."""
     started = captured_at or now_iso()
+    selection = baseline or parse_baseline_selection(None)
     reports = [
-        scan_provider(adapter, store, started, descriptions=descriptions)
+        scan_provider(
+            adapter,
+            store,
+            started,
+            descriptions=descriptions,
+            baseline=selection,
+        )
         for adapter in adapters
     ]
     return {
         "command": "delta",
         "retrieved_at": started,
+        "baseline_selection": selection.payload(),
         "summary": summarize(reports),
         "providers": reports,
     }
@@ -58,29 +81,41 @@ def scan_provider(
     captured_at: str,
     *,
     descriptions: DescriptionResolver | None = None,
+    baseline: BaselineSelection | None = None,
 ) -> dict[str, Any]:
     """Read one provider's catalogue, then report it against the stored baseline.
 
-    The baseline only moves once a scan has actually produced a catalogue, so a
-    source that breaks leaves the last good baseline in place and the change is
-    still visible on the next run.
+    History only advances once a scan has actually produced a catalogue, so a
+    source that breaks leaves every good baseline in place.
     """
-    previous = store.read(adapter.provider_id)
+    selection = baseline or parse_baseline_selection(None)
+    latest = store.read(adapter.provider_id)
+    previous = (
+        latest
+        if selection.is_latest
+        else store.select(
+            adapter.provider_id, selection, reference_at=captured_at
+        )
+    )
     try:
         records = adapter.catalog_records()
         snapshot = build_snapshot(adapter, records, captured_at)
     except Exception as exc:
-        return failed(adapter, previous, captured_at, str(exc))
+        return failed(adapter, previous, latest, captured_at, str(exc))
     if not snapshot["models"]:
         return failed(
             adapter,
             previous,
+            latest,
             captured_at,
             "the source published no priced model",
             status=EMPTY_SCAN,
         )
     store.write(adapter.provider_id, snapshot)
     report = compare_snapshots(previous, snapshot)
+    report["last_successful_at"] = (latest or {}).get("captured_at")
+    if previous is None and not selection.is_latest:
+        report["status"] = BASELINE_NOT_FOUND
     if descriptions is not None and report["status"] == CHANGED:
         report["model_descriptions"] = descriptions.resolve_many(
             changed_model_targets(report, records, adapter.provider_id)
@@ -119,6 +154,7 @@ def changed_model_targets(
 def failed(
     adapter: PriceSource,
     previous: dict[str, Any] | None,
+    latest: dict[str, Any] | None,
     captured_at: str,
     error: str,
     *,
@@ -130,11 +166,12 @@ def failed(
         "status": status,
         "error": error,
         "baseline_at": (previous or {}).get("captured_at"),
+        "last_successful_at": (latest or {}).get("captured_at"),
         "captured_at": captured_at,
         "source": {
             "url": adapter.source_url,
             "kind": adapter.source_kind,
-            "updated_at": ((previous or {}).get("source") or {}).get("updated_at"),
+            "updated_at": ((latest or {}).get("source") or {}).get("updated_at"),
         },
     }
 

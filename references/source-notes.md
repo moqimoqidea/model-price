@@ -134,16 +134,20 @@ only models present in an actual change.
 
 Provider caches live under `cache/<provider>/`. A cache entry records its provider, operation, arguments, fetch time, schema version, and data. Entries older than 3 hours are not used as fallback when refresh fails, and `CACHE_SCHEMA_VERSION` is bumped whenever a source or parser changes so entries written by an older version are ignored.
 
-The baselines `delta` compares against live beside the cache under
-`snapshots/<provider>.json` — one file per provider, replaced in place, and never
-expiring, because an expiring baseline would turn every run into a first run. A
-baseline records the catalogue only: models keyed by normalized id, each with its
-offers, and each offer identified by its name plus the conditions saying what is
-billed. `source_section` deliberately stays out of that identity, since it names
-where the document filed the row and a renamed section would otherwise read as one
-offer vanishing and another appearing; the condition itself is still kept for the
-reader. `SNAPSHOT_SCHEMA_VERSION` is bumped when the shape changes, and a baseline
-written by an older shape is treated as absent rather than diffed against.
+The baselines `delta` compares against live beside the cache as timestamped files
+under `snapshots/<provider>/`. Every successful scan is archived, even when its
+catalogue is unchanged. Retention is the union of the most recent three-month
+calendar window and the newest 1000 snapshots per provider: neither a busy recent
+window nor a long-running sparse history is prematurely lost. The legacy
+`snapshots/<provider>.json` shape remains readable and is migrated on the next
+successful scan. A baseline records the catalogue only: models keyed by normalized
+id, each with its offers, and each offer identified by its name plus the conditions
+saying what is billed. `source_section` deliberately stays out of that identity,
+since it names where the document filed the row and a renamed section would
+otherwise read as one offer vanishing and another appearing; the condition itself
+is still kept for the reader. `SNAPSHOT_SCHEMA_VERSION` is bumped when the shape
+changes, and a baseline written by an older shape is treated as absent rather than
+diffed against.
 
 Two catalogue-level traps:
 

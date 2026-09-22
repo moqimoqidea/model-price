@@ -13,7 +13,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from .delta import EMPTY_SCAN, SOURCE_ERROR
+from .delta import BASELINE_NOT_FOUND, EMPTY_SCAN, SOURCE_ERROR
 from .descriptions.core import AVAILABLE as DESCRIPTION_AVAILABLE
 from .descriptions.core import NOT_FOUND as DESCRIPTION_NOT_FOUND
 from .descriptions.core import SUMMARY_MAX_CHARS
@@ -24,6 +24,7 @@ from .diffing import (
     PRICE_CHANGE_FIELD,
     UNCHANGED,
 )
+from .snapshots import AT_OR_BEFORE, LAST_MONTH, ON_DATE, YESTERDAY
 
 DELIVERY_LABELS = {
     "platform_hosted": "平台托管",
@@ -102,6 +103,7 @@ DELTA_STATUS_LABELS = {
     CHANGED: "有变化",
     UNCHANGED: "无变化",
     BASELINE_CREATED: "首次建立基线",
+    BASELINE_NOT_FOUND: "未找到匹配的历史基线",
     EMPTY_SCAN: "未取到任何模型",
     SOURCE_ERROR: "来源解析失败",
 }
@@ -184,6 +186,29 @@ def format_moment(value: Any) -> str:
     hours, remainder = divmod(abs(total_minutes), 60)
     zone = f"UTC{sign}{hours}" + (f":{remainder:02d}" if remainder else "")
     return f"{stamp}（{zone}）"
+
+
+def baseline_selection_text(payload: dict[str, Any]) -> str:
+    """Describe which archived scan a historical delta asks each provider for."""
+    selection = payload.get("baseline_selection") or {}
+    mode = selection.get("mode")
+    requested = selection.get("requested")
+    if mode == YESTERDAY:
+        return "与昨天最后一次基线相比"
+    if mode == LAST_MONTH:
+        return "与上个月最后一次基线相比"
+    if mode == ON_DATE:
+        return f"与 {requested} 当天最后一次基线相比"
+    if mode == AT_OR_BEFORE:
+        rendered = format_moment(requested)
+        try:
+            moment = datetime.fromisoformat(str(requested).replace("Z", "+00:00"))
+        except ValueError:
+            moment = None
+        if moment is not None and moment.tzinfo is None:
+            rendered += "（按本次扫描时区）"
+        return f"与不晚于 {rendered} 的最后一次基线相比"
+    return ""
 
 
 def price_lookup(offer: dict[str, Any], kind: str) -> dict[str, Any] | None:
@@ -502,6 +527,8 @@ def change_digest(report: dict[str, Any]) -> str:
         return "；".join(counts) or NO_CHANGE
     if status == BASELINE_CREATED:
         return f"记录 {report.get('model_count', 0)} 个模型，下次扫描起参与对比"
+    if status == BASELINE_NOT_FOUND:
+        return "没有符合请求时间的历史基线；本次扫描已归档"
     if status in (EMPTY_SCAN, SOURCE_ERROR):
         return report.get("error") or UNSTATED
     return NO_CHANGE
@@ -539,6 +566,8 @@ def scan_conclusion(payload: dict[str, Any]) -> list[str]:
     ]
     if summary.get(BASELINE_CREATED):
         counts.append(f"{summary[BASELINE_CREATED]} 个首次建立基线")
+    if summary.get(BASELINE_NOT_FOUND):
+        counts.append(f"{summary[BASELINE_NOT_FOUND]} 个未找到匹配基线")
     failed = summary.get(EMPTY_SCAN, 0) + summary.get(SOURCE_ERROR, 0)
     counts.append(f"{failed} 个未能完成")
     return [f"{scope}：{'，'.join(counts)}。"]
@@ -549,7 +578,7 @@ def scan_summary(payload: dict[str, Any]) -> list[str]:
 
     The overview lists every channel, so this line is where a reader learns which
     parts of it deserve a second look — what moved, what could not be read — and
-    that the rest matched the previous scan rather than being omitted.
+    that the rest matched the selected baseline rather than being omitted.
     """
     reports = payload.get("providers", [])
     summary = payload.get("summary", {})
@@ -560,7 +589,19 @@ def scan_summary(payload: dict[str, Any]) -> list[str]:
     if summary.get(CHANGED):
         parts.append(f"{summary[CHANGED]} 个有变化，见上「变化详情」")
     if summary.get(BASELINE_CREATED):
-        parts.append(f"{summary[BASELINE_CREATED]} 个首次建立基线，下次扫描起参与对比")
+        parts.append(
+            f"{summary[BASELINE_CREATED]} 个首次建立基线，下次扫描起参与对比"
+        )
+    if summary.get(BASELINE_NOT_FOUND):
+        parts.append(
+            f"{summary[BASELINE_NOT_FOUND]} 个未找到匹配的历史基线，"
+            "本次扫描已归档"
+        )
     if summary.get(UNCHANGED):
-        parts.append(f"{summary[UNCHANGED]} 个无变化，与上次扫描一致，不再展开")
+        comparison = (
+            "与所选历史基线一致"
+            if baseline_selection_text(payload)
+            else "与上次扫描一致"
+        )
+        parts.append(f"{summary[UNCHANGED]} 个无变化，{comparison}，不再展开")
     return ["；".join(parts) + "。"]
