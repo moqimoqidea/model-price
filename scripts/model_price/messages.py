@@ -24,11 +24,12 @@ from __future__ import annotations
 from typing import Any, Iterable, Sequence
 
 from .budget import DEFAULT_MAX_CHARS, overage
-from .delta import BASELINE_NOT_FOUND, EMPTY_SCAN, SOURCE_ERROR
+from .delta import EMPTY_SCAN, SOURCE_ERROR
 
 from .descriptions.core import AVAILABLE as DESCRIPTION_AVAILABLE
 from .diffing import (
     BASELINE_CREATED,
+    BASELINE_NOT_FOUND,
     CHANGED,
     PRICE_CHANGE_FIELD,
     UNCHANGED,

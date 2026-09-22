@@ -14,9 +14,10 @@ if str(SCRIPTS) not in sys.path:
 
 from model_price.caching import CacheStore, CachedPriceSource
 from model_price.core import PriceSource
-from model_price.delta import BASELINE_NOT_FOUND, scan_providers
+from model_price.delta import scan_provider, scan_providers
 from model_price.diffing import (
     BASELINE_CREATED,
+    BASELINE_NOT_FOUND,
     CHANGED,
     UNCHANGED,
     compare_snapshots,
@@ -2339,7 +2340,9 @@ class SnapshotStoreTests(unittest.TestCase):
     def test_a_baseline_written_by_an_older_shape_is_treated_as_absent(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
-            store.write("fake", {"schema_version": 0, "models": {}})
+            store.path("fake").write_text(
+                json.dumps({"schema_version": 0, "models": {}}), encoding="utf-8"
+            )
             self.assertIsNone(store.read("fake"))
 
     def test_an_unreadable_baseline_reads_as_absent(self):
@@ -2354,7 +2357,7 @@ class SnapshotStoreTests(unittest.TestCase):
             snapshot = snapshot_of([scanned_record("m1", "M1", "2", "8")])
             store.write("fake", snapshot)
             store.write("fake", snapshot)
-            self.assertEqual(len(store.history("fake")), 2)
+            self.assertEqual(len(list(store.iter_history("fake"))), 2)
 
     def test_reading_latest_opens_only_the_selected_archive(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2367,16 +2370,35 @@ class SnapshotStoreTests(unittest.TestCase):
                         f"2026-09-{day:02d}T10:00:00+08:00",
                     ),
                 )
+            reader_store = SnapshotStore(Path(directory))
+            original_glob = Path.glob
             with mock.patch.object(
+                Path, "glob", autospec=True, side_effect=original_glob
+            ) as glob, mock.patch.object(
                 snapshots_module,
                 "_read_snapshot",
                 wraps=snapshots_module._read_snapshot,
             ) as reader:
-                latest = store.read("fake")
+                latest = reader_store.read("fake")
+                selected = reader_store.select(
+                    "fake",
+                    parse_baseline_selection("2026-09-30T00:00:00+08:00"),
+                    reference_at="2026-09-30T00:00:00+08:00",
+                )
+                reader_store.write(
+                    "fake",
+                    snapshot_of(
+                        [scanned_record("m1", "M1", "5", "8")],
+                        "2026-09-05T10:00:00+08:00",
+                    ),
+                )
             self.assertEqual(latest["captured_at"], "2026-09-04T10:00:00+08:00")
+            self.assertEqual(selected, latest)
             # One attempt checks the optional legacy path; one opens the latest
-            # archive. Older catalogues are not loaded just to find their times.
+            # archive. Selection reuses both the directory listing and payload,
+            # and writing/pruning reuses the same in-memory references.
             self.assertEqual(reader.call_count, 2)
+            self.assertEqual(glob.call_count, 1)
 
     def test_a_legacy_single_baseline_is_migrated_without_losing_it(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2397,22 +2419,42 @@ class SnapshotStoreTests(unittest.TestCase):
             )
             self.assertFalse(store.path("fake").exists())
             self.assertEqual(
-                [item["captured_at"] for item in store.history("fake")],
+                [item["captured_at"] for item in store.iter_history("fake")],
                 ["2026-09-15T10:00:00+08:00", "2026-09-16T10:00:00+08:00"],
             )
 
-    def test_retention_keeps_recent_months_or_the_latest_count(self):
+    def test_an_unusable_legacy_baseline_is_quarantined_after_a_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = SnapshotStore(root)
+            broken = snapshot_of(
+                [scanned_record("m1", "M1", "2", "8")], "not-a-timestamp"
+            )
+            store.path("fake").write_text(
+                json.dumps(broken, ensure_ascii=False), encoding="utf-8"
+            )
+            store.write(
+                "fake",
+                snapshot_of(
+                    [scanned_record("m1", "M1", "1", "8")],
+                    "2026-09-16T10:00:00+08:00",
+                ),
+            )
+            self.assertFalse(store.path("fake").exists())
+            self.assertEqual(len(list((root / "rejected").glob("fake-*.json"))), 1)
+
+    def test_retention_is_hard_bounded_and_keeps_recent_daily_anchors(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(
-                Path(directory), retention_months=3, retention_count=2
+                Path(directory), retention_months=3, retention_count=3
             )
             for captured_at in (
-                "2025-01-01T00:00:00+08:00",
-                "2025-02-01T00:00:00+08:00",
-                "2025-03-01T00:00:00+08:00",
-                "2026-06-15T00:00:00+08:00",
-                "2026-06-16T00:00:00+08:00",
-                "2026-06-17T00:00:00+08:00",
+                "2026-06-15T09:00:00+08:00",
+                "2026-06-15T18:00:00+08:00",
+                "2026-06-16T09:00:00+08:00",
+                "2026-06-16T18:00:00+08:00",
+                "2026-06-17T09:00:00+08:00",
+                "2026-06-17T18:00:00+08:00",
             ):
                 store.write(
                     "fake",
@@ -2421,12 +2463,18 @@ class SnapshotStoreTests(unittest.TestCase):
                     ),
                 )
             self.assertEqual(
-                [item["captured_at"] for item in store.history("fake")],
+                [item["captured_at"] for item in store.iter_history("fake")],
                 [
-                    "2026-06-15T00:00:00+08:00",
-                    "2026-06-16T00:00:00+08:00",
-                    "2026-06-17T00:00:00+08:00",
+                    "2026-06-15T18:00:00+08:00",
+                    "2026-06-16T18:00:00+08:00",
+                    "2026-06-17T18:00:00+08:00",
                 ],
+            )
+
+    def test_sparse_history_keeps_the_latest_count_beyond_three_months(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(
+                Path(directory), retention_months=3, retention_count=2
             )
             for captured_at in (
                 "2025-01-01T00:00:00+08:00",
@@ -2440,9 +2488,19 @@ class SnapshotStoreTests(unittest.TestCase):
                     ),
                 )
             self.assertEqual(
-                [item["captured_at"] for item in store.history("sparse")],
+                [item["captured_at"] for item in store.iter_history("sparse")],
                 ["2025-02-01T00:00:00+08:00", "2026-06-17T00:00:00+08:00"],
             )
+
+    def test_since_accepts_only_extended_calendar_dates_and_timestamps(self):
+        date_selection = parse_baseline_selection("2026-09-20")
+        self.assertEqual(date_selection.payload()["target"], "2026-09-20")
+        naive = parse_baseline_selection("2026-09-20T12:00:00")
+        self.assertTrue(naive.payload()["uses_scan_timezone"])
+        for unsupported in ("2026-W37-1", "20260920"):
+            with self.subTest(unsupported=unsupported):
+                with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):
+                    parse_baseline_selection(unsupported)
 
     def test_relative_dates_choose_the_last_baseline_in_the_period(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2589,8 +2647,42 @@ class DiffingTests(unittest.TestCase):
         self.assertIsNone(report["baseline_at"])
         self.assertEqual(report["changes"]["total"], 0)
 
+    def test_a_requested_but_missing_baseline_is_decided_by_the_diff(self):
+        report = compare_snapshots(
+            None,
+            snapshot_of([scanned_record("m1", "M1", "2", "8")]),
+            no_baseline_status=BASELINE_NOT_FOUND,
+        )
+        self.assertEqual(report["status"], BASELINE_NOT_FOUND)
+
 
 class DeltaScanTests(unittest.TestCase):
+    def test_an_invalid_scan_timestamp_fails_before_any_provider_is_scanned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            with self.assertRaisesRegex(ValueError, "invalid scan timestamp"):
+                scan_providers(
+                    [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
+                    store,
+                    captured_at="not-a-timestamp",
+                    baseline=parse_baseline_selection("yesterday"),
+                )
+            self.assertEqual(list(store.iter_history("fake")), [])
+
+    def test_a_direct_scan_rejects_an_invalid_timestamp_before_reading_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provider = ScannedProvider([scanned_record("m1", "M1", "2", "8")])
+            with mock.patch.object(
+                provider, "catalog_records", wraps=provider.catalog_records
+            ) as catalog:
+                with self.assertRaisesRegex(ValueError, "invalid scan timestamp"):
+                    scan_provider(
+                        provider,
+                        SnapshotStore(Path(directory)),
+                        "not-a-timestamp",
+                    )
+            catalog.assert_not_called()
+
     def test_the_first_scan_records_a_baseline_rather_than_no_change(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
@@ -2663,7 +2755,7 @@ class DeltaScanTests(unittest.TestCase):
                 baseline=parse_baseline_selection("yesterday"),
             )
             self.assertEqual(payload["providers"][0]["status"], BASELINE_NOT_FOUND)
-            self.assertEqual(len(store.history("fake")), 1)
+            self.assertEqual(len(list(store.iter_history("fake"))), 1)
 
     def test_a_failed_scan_keeps_the_baseline_the_next_scan_compares_against(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2682,7 +2774,7 @@ class DeltaScanTests(unittest.TestCase):
             self.assertEqual(
                 failed["providers"][0]["baseline_at"], "2026-09-16T10:00:00+08:00"
             )
-            self.assertEqual(len(store.history("fake")), 1)
+            self.assertEqual(len(list(store.iter_history("fake"))), 1)
             recovered = scan_providers(
                 [ScannedProvider([scanned_record("m1", "M1", "1.5", "8")])],
                 store,

@@ -136,11 +136,12 @@ Provider caches live under `cache/<provider>/`. A cache entry records its provid
 
 The baselines `delta` compares against live beside the cache as timestamped files
 under `snapshots/<provider>/`. Every successful scan is archived, even when its
-catalogue is unchanged. Retention is the union of the most recent three-month
-calendar window and the newest 1000 snapshots per provider: neither a busy recent
-window nor a long-running sparse history is prematurely lost. The legacy
+catalogue is unchanged. Retention is hard-capped at 1000 snapshots per provider:
+the last scan of each day in the recent three-month calendar window is reserved,
+then the remaining slots take the newest scans. The legacy
 `snapshots/<provider>.json` shape remains readable and is migrated on the next
-successful scan. A baseline records the catalogue only: models keyed by normalized
+successful scan; an unreadable legacy file moves to `snapshots/rejected/`. A
+baseline records the catalogue only: models keyed by normalized
 id, each with its offers, and each offer identified by its name plus the conditions
 saying what is billed. `source_section` deliberately stays out of that identity,
 since it names where the document filed the row and a renamed section would

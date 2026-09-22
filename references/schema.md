@@ -79,7 +79,9 @@ Explicit refreshes also add `skill_update` before querying official sources:
   "retrieved_at": "ISO-8601",
   "baseline_selection": {
     "mode": "latest|yesterday|last_month|date|at_or_before",
-    "requested": "original --since value, or null"
+    "requested": "original --since value, or null",
+    "target": "normalized ISO date or timestamp, or null",
+    "uses_scan_timezone": false
   },
   "summary": {
     "providers": 9,
@@ -126,10 +128,12 @@ model plus `offer`, `conditions`, `type`, `label`, and `from`/`to` — each one 
 `{amount, unit}` pair, with `null` on the side where the price did not exist.
 
 Baselines are timestamped files under `snapshots/<provider>/`. Every successful
-scan is archived, including an unchanged catalogue. Per provider, retention keeps
-the union of the most recent three-month calendar window and the newest 1000
-snapshots. A legacy `snapshots/<provider>.json` remains readable and is migrated
-on the next successful write. Baselines are not cache entries and not this payload:
+scan is archived, including an unchanged catalogue. Retention is hard-capped at
+1000 snapshots per provider: reserve the last scan of each day in the recent
+three-month calendar window, then fill remaining slots with the newest scans. A
+legacy `snapshots/<provider>.json` remains readable and is migrated on the next
+successful write; an unreadable one moves to `snapshots/rejected/`. Baselines are
+not cache entries and not this payload:
 a baseline keeps the catalogue keyed by normalized model id, with each offer
 identified by its name and the conditions that describe what is billed rather
 than where the document filed it.

@@ -8,12 +8,14 @@ of scanning so the same fresh catalogue can answer latest or point-in-time delta
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Iterable
 
 from .core import PriceSource, now_iso
 from .descriptions import DescriptionResolver
 from .diffing import (
     BASELINE_CREATED,
+    BASELINE_NOT_FOUND,
     CHANGED,
     CHANGE_FIELDS,
     UNCHANGED,
@@ -25,6 +27,7 @@ from .snapshots import (
     SnapshotStore,
     build_snapshot,
     parse_baseline_selection,
+    require_moment,
 )
 
 SOURCE_ERROR = "source_error"
@@ -33,8 +36,6 @@ SOURCE_ERROR = "source_error"
 # replace the baseline: overwriting a full catalogue with an empty one would make
 # the next scan read as every model having been withdrawn.
 EMPTY_SCAN = "empty_scan"
-BASELINE_NOT_FOUND = "baseline_not_found"
-
 STATUSES = (
     CHANGED,
     UNCHANGED,
@@ -55,14 +56,16 @@ def scan_providers(
 ) -> dict[str, Any]:
     """Scan each provider, compare it with the requested baseline, and archive it."""
     started = captured_at or now_iso()
+    reference = require_moment(started, label="scan timestamp")
     selection = baseline or parse_baseline_selection(None)
     reports = [
-        scan_provider(
+        _scan_provider(
             adapter,
             store,
             started,
             descriptions=descriptions,
-            baseline=selection,
+            selection=selection,
+            reference_at=reference,
         )
         for adapter in adapters
     ]
@@ -88,13 +91,33 @@ def scan_provider(
     History only advances once a scan has actually produced a catalogue, so a
     source that breaks leaves every good baseline in place.
     """
-    selection = baseline or parse_baseline_selection(None)
+    reference = require_moment(captured_at, label="scan timestamp")
+    return _scan_provider(
+        adapter,
+        store,
+        captured_at,
+        descriptions=descriptions,
+        selection=baseline or parse_baseline_selection(None),
+        reference_at=reference,
+    )
+
+
+def _scan_provider(
+    adapter: PriceSource,
+    store: SnapshotStore,
+    captured_at: str,
+    *,
+    descriptions: DescriptionResolver | None,
+    selection: BaselineSelection,
+    reference_at: datetime,
+) -> dict[str, Any]:
+    """Run one scan after its shared timestamp and selection are validated."""
     latest = store.read(adapter.provider_id)
     previous = (
         latest
         if selection.is_latest
         else store.select(
-            adapter.provider_id, selection, reference_at=captured_at
+            adapter.provider_id, selection, reference_at=reference_at
         )
     )
     try:
@@ -112,10 +135,14 @@ def scan_provider(
             status=EMPTY_SCAN,
         )
     store.write(adapter.provider_id, snapshot)
-    report = compare_snapshots(previous, snapshot)
+    report = compare_snapshots(
+        previous,
+        snapshot,
+        no_baseline_status=(
+            BASELINE_CREATED if selection.is_latest else BASELINE_NOT_FOUND
+        ),
+    )
     report["last_successful_at"] = (latest or {}).get("captured_at")
-    if previous is None and not selection.is_latest:
-        report["status"] = BASELINE_NOT_FOUND
     if descriptions is not None and report["status"] == CHANGED:
         report["model_descriptions"] = descriptions.resolve_many(
             changed_model_targets(report, records, adapter.provider_id)

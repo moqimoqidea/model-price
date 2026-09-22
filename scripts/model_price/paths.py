@@ -22,8 +22,8 @@ CACHE_SCHEMA_VERSION = 9
 # model changed.
 SNAPSHOT_SCHEMA_VERSION = 1
 
-# Successful scans are archived per provider. Keep every snapshot in the recent
-# calendar window, plus enough older ones to retain a useful long-running trail
-# for infrequently scanned catalogues.
+# Successful scans are archived per provider. The hard count limit reserves the
+# last scan of each day in the recent calendar window, then fills remaining slots
+# with the newest scans for useful fine-grained and long-running history.
 SNAPSHOT_RETENTION_MONTHS = 3
 SNAPSHOT_RETENTION_COUNT = 1000

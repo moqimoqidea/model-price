@@ -13,12 +13,13 @@ import re
 from datetime import datetime
 from typing import Any
 
-from .delta import BASELINE_NOT_FOUND, EMPTY_SCAN, SOURCE_ERROR
+from .delta import EMPTY_SCAN, SOURCE_ERROR
 from .descriptions.core import AVAILABLE as DESCRIPTION_AVAILABLE
 from .descriptions.core import NOT_FOUND as DESCRIPTION_NOT_FOUND
 from .descriptions.core import SUMMARY_MAX_CHARS
 from .diffing import (
     BASELINE_CREATED,
+    BASELINE_NOT_FOUND,
     CHANGE_FIELDS,
     CHANGED,
     PRICE_CHANGE_FIELD,
@@ -192,20 +193,16 @@ def baseline_selection_text(payload: dict[str, Any]) -> str:
     """Describe which archived scan a historical delta asks each provider for."""
     selection = payload.get("baseline_selection") or {}
     mode = selection.get("mode")
-    requested = selection.get("requested")
+    target = selection.get("target")
     if mode == YESTERDAY:
         return "与昨天最后一次基线相比"
     if mode == LAST_MONTH:
         return "与上个月最后一次基线相比"
     if mode == ON_DATE:
-        return f"与 {requested} 当天最后一次基线相比"
+        return f"与 {target} 当天最后一次基线相比"
     if mode == AT_OR_BEFORE:
-        rendered = format_moment(requested)
-        try:
-            moment = datetime.fromisoformat(str(requested).replace("Z", "+00:00"))
-        except ValueError:
-            moment = None
-        if moment is not None and moment.tzinfo is None:
+        rendered = format_moment(target)
+        if selection.get("uses_scan_timezone"):
             rendered += "（按本次扫描时区）"
         return f"与不晚于 {rendered} 的最后一次基线相比"
     return ""

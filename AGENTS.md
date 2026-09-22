@@ -177,9 +177,10 @@ even when the tests still pass.
 9. **Cache and baseline are different things.** The cache is a 3-hour TTL store of
    responses, reused inside that window. `delta` always reads the sources afresh —
    a cache hit would be handed back as "no change". Successful scans are archived
-   per provider; retention keeps the union of the most recent three-month calendar
-   window and the newest 1000 snapshots. The latest snapshot therefore never ages
-   out merely because scans are infrequent.
+   per provider, with a hard limit of 1000 snapshots. Before pruning, reserve the
+   last scan of each day in the recent three-month calendar window, then fill the
+   remaining slots with the newest scans. This preserves yesterday/month lookups
+   without letting a high-frequency schedule grow past the count limit.
 10. **Bump the schema version when a shape changes.** `CACHE_SCHEMA_VERSION` covers
     parsed responses (`CACHE_TTL`), `SNAPSHOT_SCHEMA_VERSION` covers baselines. A
     parser or source change requires the cache bump, or stale parsed data is served

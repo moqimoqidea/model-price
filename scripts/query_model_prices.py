@@ -51,8 +51,8 @@ MAX_CHARS_HELP = (
 )
 
 SINCE_HELP = (
-    "baseline to compare with: yesterday, last-month, an ISO date, or an ISO "
-    "timestamp; omit for the previous successful scan"
+    "baseline to compare with: yesterday, last-month, YYYY-MM-DD, or an ISO "
+    "calendar timestamp; omit for the previous successful scan"
 )
 
 

@@ -8,6 +8,7 @@ from .snapshots import offer_identity, price_identity
 
 # What one scan can conclude about one provider.
 BASELINE_CREATED = "baseline_created"
+BASELINE_NOT_FOUND = "baseline_not_found"
 UNCHANGED = "unchanged"
 CHANGED = "changed"
 
@@ -24,13 +25,16 @@ CHANGE_FIELDS = (
 
 
 def compare_snapshots(
-    previous: dict[str, Any] | None, current: dict[str, Any]
+    previous: dict[str, Any] | None,
+    current: dict[str, Any],
+    *,
+    no_baseline_status: str = BASELINE_CREATED,
 ) -> dict[str, Any]:
     """Report how ``current`` differs from ``previous``.
 
-    ``previous`` is ``None`` on a first run. That is reported as a baseline being
-    created rather than as "no change": there was nothing to compare with, and
-    saying the provider was unchanged would claim knowledge the scan never had.
+    ``previous`` is ``None`` on a first run or when a requested historical point
+    has no match. ``no_baseline_status`` preserves that distinction where the
+    comparison result is created rather than patching the report afterward.
     """
     changes = (
         empty_changes()
@@ -41,7 +45,7 @@ def compare_snapshots(
     )
     status = UNCHANGED
     if previous is None:
-        status = BASELINE_CREATED
+        status = no_baseline_status
     elif changes["total"]:
         status = CHANGED
     return {

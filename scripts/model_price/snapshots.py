@@ -2,18 +2,19 @@
 
 Snapshots are deliberately not the TTL cache: cached responses are reused for
 three hours, which would hide a catalogue change, while every successful scan is
-an independent baseline. The store keeps a recent calendar window and a minimum
-count so callers can resolve human time requests without growing forever.
+an independent baseline. The store has a hard per-provider count bound while
+reserving daily anchors in the recent calendar window for human time requests.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 from uuid import uuid4
 
 from .core import write_json
@@ -31,6 +32,9 @@ LAST_MONTH = "last_month"
 ON_DATE = "date"
 AT_OR_BEFORE = "at_or_before"
 
+CALENDAR_DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
+CALENDAR_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T ]")
+
 
 @dataclass(frozen=True)
 class BaselineSelection:
@@ -45,12 +49,24 @@ class BaselineSelection:
     def is_latest(self) -> bool:
         return self.mode == LATEST
 
-    def payload(self) -> dict[str, str | None]:
-        return {"mode": self.mode, "requested": self.requested}
+    def payload(self) -> dict[str, Any]:
+        target: str | None = None
+        uses_scan_timezone = False
+        if self.day is not None:
+            target = self.day.isoformat()
+        elif self.moment is not None:
+            target = self.moment.isoformat()
+            uses_scan_timezone = self.moment.tzinfo is None
+        return {
+            "mode": self.mode,
+            "requested": self.requested,
+            "target": target,
+            "uses_scan_timezone": uses_scan_timezone,
+        }
 
 
 def parse_baseline_selection(value: str | None) -> BaselineSelection:
-    """Parse the CLI's relative aliases, ISO date, or ISO timestamp."""
+    """Parse relative aliases or an extended ISO calendar date or timestamp."""
     if value is None or value.strip().lower() == LATEST:
         return BaselineSelection()
     requested = value.strip()
@@ -60,14 +76,16 @@ def parse_baseline_selection(value: str | None) -> BaselineSelection:
     if alias == "last-month":
         return BaselineSelection(LAST_MONTH, requested)
     try:
-        if len(requested) == 10:
+        if CALENDAR_DATE.fullmatch(requested):
             return BaselineSelection(
                 ON_DATE, requested, day=date.fromisoformat(requested)
             )
+        if not CALENDAR_TIMESTAMP.match(requested):
+            raise ValueError
         moment = datetime.fromisoformat(requested.replace("Z", "+00:00"))
     except ValueError as exc:
         raise ValueError(
-            "expected yesterday, last-month, an ISO date, or an ISO timestamp"
+            "expected yesterday, last-month, YYYY-MM-DD, or an ISO calendar timestamp"
         ) from exc
     return BaselineSelection(AT_OR_BEFORE, requested, moment=moment)
 
@@ -188,8 +206,11 @@ def _offer_payload(offer: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+SnapshotRef = tuple[datetime, Path]
+
+
 class SnapshotStore:
-    """A bounded, timestamped history of every provider's successful scans."""
+    """A timestamped history with a hard file-count bound per provider."""
 
     def __init__(
         self,
@@ -203,6 +224,8 @@ class SnapshotStore:
         self.root = root
         self.retention_months = retention_months
         self.retention_count = retention_count
+        self._refs: dict[str, list[SnapshotRef]] = {}
+        self._payloads: dict[Path, dict[str, Any] | None] = {}
 
     def path(self, provider_id: str) -> Path:
         """Return the legacy single-baseline path used before history existed."""
@@ -215,25 +238,21 @@ class SnapshotStore:
         """Return the latest valid baseline, including a legacy single file."""
         return self._last_valid(self._entry_refs(provider_id))
 
-    def history(self, provider_id: str) -> list[dict[str, Any]]:
-        """Return valid baselines in capture order.
-
-        A snapshot written by an older shape is absent from the history rather
-        than diffed against, so a format change reports one baseline run instead
-        of every model looking new.
-        """
-        snapshots = []
+    def iter_history(self, provider_id: str) -> Iterator[dict[str, Any]]:
+        """Yield valid baselines in capture order without loading them together."""
         for _, path in self._entry_refs(provider_id):
-            if payload := _read_snapshot(path):
-                snapshots.append(payload)
-        return snapshots
+            payload = self._payloads.get(path)
+            if path not in self._payloads:
+                payload = _read_snapshot(path)
+            if payload:
+                yield payload
 
     def select(
         self,
         provider_id: str,
         selection: BaselineSelection,
         *,
-        reference_at: str,
+        reference_at: str | datetime,
     ) -> dict[str, Any] | None:
         """Resolve one baseline relative to the current scan's local calendar."""
         entries = self._entry_refs(provider_id)
@@ -242,12 +261,10 @@ class SnapshotStore:
         if selection.is_latest:
             return self._last_valid(entries)
 
-        reference = _parse_moment(reference_at)
-        if reference is None:
-            raise ValueError(f"invalid scan timestamp: {reference_at}")
+        reference = require_moment(reference_at, label="scan timestamp")
         local_zone = reference.tzinfo or timezone.utc
 
-        def local_moment(entry: tuple[datetime, Path]) -> datetime:
+        def local_moment(entry: SnapshotRef) -> datetime:
             return entry[0].astimezone(local_zone)
 
         candidates = entries
@@ -283,17 +300,29 @@ class SnapshotStore:
 
     def write(self, provider_id: str, snapshot: dict[str, Any]) -> None:
         """Archive one successful scan, migrate legacy state, then prune history."""
-        self._migrate_legacy(provider_id)
-        moment = _snapshot_moment(snapshot) or datetime.now(timezone.utc)
-        write_json(self._archive_path(provider_id, moment), snapshot, indent=2)
-        self._prune(provider_id)
+        moment = require_moment(snapshot.get("captured_at"), label="snapshot timestamp")
+        entries = list(self._entry_refs(provider_id))
+        destination = self._archive_path(provider_id, moment)
+        write_json(destination, snapshot, indent=2)
+        self._payloads[destination] = snapshot
+        entries.append((moment, destination))
+        try:
+            entries = self._migrate_legacy(provider_id, entries)
+            retained = self._prune(provider_id, entries, moment)
+        except Exception:
+            # The archive already exists. Force a fresh directory read so this
+            # store cannot keep serving an index from before the successful write.
+            self._refs.pop(provider_id, None)
+            raise
+        self._refs[provider_id] = retained
 
-    def _entry_refs(self, provider_id: str) -> list[tuple[datetime, Path]]:
-        """List capture times without loading every archived catalogue."""
-        entries = []
+    def _entry_refs(self, provider_id: str) -> list[SnapshotRef]:
+        """List capture times once per provider without loading every catalogue."""
+        if provider_id in self._refs:
+            return self._refs[provider_id]
+        entries: list[SnapshotRef] = []
         legacy = self.path(provider_id)
-        legacy_payload = _read_snapshot(legacy)
-        if legacy_moment := _snapshot_moment(legacy_payload):
+        if legacy_moment := _snapshot_moment(self._read(legacy)):
             entries.append((legacy_moment, legacy))
         directory = self.history_dir(provider_id)
         if directory.exists():
@@ -302,54 +331,103 @@ class SnapshotStore:
                 for path in directory.glob("*.json")
                 if (moment := _archive_moment(path)) is not None
             )
-        return sorted(entries, key=_entry_order)
+        self._refs[provider_id] = sorted(entries, key=_entry_order)
+        return self._refs[provider_id]
 
-    @staticmethod
-    def _last_valid(entries: list[tuple[datetime, Path]]) -> dict[str, Any] | None:
+    def _read(self, path: Path) -> dict[str, Any] | None:
+        if path not in self._payloads:
+            self._payloads[path] = _read_snapshot(path)
+        return self._payloads[path]
+
+    def _last_valid(self, entries: list[SnapshotRef]) -> dict[str, Any] | None:
         for _, path in reversed(entries):
-            if payload := _read_snapshot(path):
+            if payload := self._read(path):
                 return payload
         return None
 
-    def _migrate_legacy(self, provider_id: str) -> None:
+    def _migrate_legacy(
+        self, provider_id: str, entries: list[SnapshotRef]
+    ) -> list[SnapshotRef]:
         legacy = self.path(provider_id)
-        payload = _read_snapshot(legacy)
+        if not legacy.exists():
+            return entries
+        payload = self._read(legacy)
         moment = _snapshot_moment(payload)
         if payload is None or moment is None:
-            return
+            if self._quarantine_legacy(provider_id, legacy):
+                return [entry for entry in entries if entry[1] != legacy]
+            return entries
         same_moment = [
             path
-            for captured_at, path in self._entry_refs(provider_id)
+            for captured_at, path in entries
             if path != legacy and captured_at == moment
         ]
-        if not any(_read_snapshot(path) == payload for path in same_moment):
-            write_json(self._archive_path(provider_id, moment), payload, indent=2)
+        if not any(self._read(path) == payload for path in same_moment):
+            destination = self._archive_path(provider_id, moment)
+            write_json(destination, payload, indent=2)
+            self._payloads[destination] = payload
+            entries.append((moment, destination))
         try:
             legacy.unlink()
         except OSError:
-            pass
+            return sorted(entries, key=_entry_order)
+        self._payloads.pop(legacy, None)
+        return sorted(
+            (entry for entry in entries if entry[1] != legacy), key=_entry_order
+        )
+
+    def _quarantine_legacy(self, provider_id: str, legacy: Path) -> bool:
+        rejected = self.root / "rejected"
+        destination = rejected / f"{provider_id}-{uuid4().hex}.json"
+        try:
+            rejected.mkdir(parents=True, exist_ok=True)
+            legacy.replace(destination)
+        except OSError:
+            return False
+        self._payloads.pop(legacy, None)
+        return True
 
     def _archive_path(self, provider_id: str, moment: datetime) -> Path:
         stamp = moment.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
         return self.history_dir(provider_id) / f"{stamp}-{uuid4().hex}.json"
 
-    def _prune(self, provider_id: str) -> None:
-        entries = [
-            entry
-            for entry in self._entry_refs(provider_id)
-            if entry[1].parent == self.history_dir(provider_id)
-        ]
-        if not entries:
-            return
-        cutoff = _subtract_months(entries[-1][0], self.retention_months)
-        kept = {path for _, path in entries[-self.retention_count :]}
-        kept.update(path for moment, path in entries if moment >= cutoff)
-        for _, path in entries:
-            if path not in kept:
-                try:
-                    path.unlink()
-                except OSError:
-                    pass
+    def _prune(
+        self, provider_id: str, entries: list[SnapshotRef], reference: datetime
+    ) -> list[SnapshotRef]:
+        directory = self.history_dir(provider_id)
+        archives = sorted(
+            (entry for entry in entries if entry[1].parent == directory),
+            key=_entry_order,
+        )
+        if len(archives) <= self.retention_count:
+            return sorted(entries, key=_entry_order)
+
+        cutoff = _subtract_months(reference, self.retention_months)
+        local_zone = reference.tzinfo or timezone.utc
+        daily: dict[date, SnapshotRef] = {}
+        for entry in archives:
+            if entry[0] >= cutoff:
+                daily[entry[0].astimezone(local_zone).date()] = entry
+        anchors = sorted(daily.values(), key=_entry_order)[-self.retention_count :]
+        kept = {path for _, path in anchors}
+        for _, path in reversed(archives):
+            if len(kept) >= self.retention_count:
+                break
+            kept.add(path)
+
+        retained = [entry for entry in entries if entry[1].parent != directory]
+        for entry in archives:
+            path = entry[1]
+            if path in kept:
+                retained.append(entry)
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                retained.append(entry)
+            else:
+                self._payloads.pop(path, None)
+        return sorted(retained, key=_entry_order)
 
 
 def _read_snapshot(path: Path) -> dict[str, Any] | None:
@@ -393,6 +471,16 @@ def _parse_moment(value: Any) -> datetime | None:
         moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment
+
+
+def require_moment(value: Any, *, label: str = "timestamp") -> datetime:
+    """Return a parsed moment or reject an invalid caller-supplied timestamp."""
+    moment = value if isinstance(value, datetime) else _parse_moment(value)
+    if moment is None:
+        raise ValueError(f"invalid {label}: {value}")
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
     return moment
