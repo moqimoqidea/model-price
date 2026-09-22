@@ -27,7 +27,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="JSON capture produced from the authenticated model square",
     )
     parser.add_argument("--output", type=Path, default=DEFAULT_TENCENT_MIRROR)
-    parser.add_argument("--timeout", type=int, default=30)
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="network timeout in seconds for each request attempt",
+    )
     parser.add_argument(
         "--no-catalog-aliases",
         action="store_true",

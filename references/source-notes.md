@@ -134,6 +134,19 @@ only models present in an actual change.
 
 Provider caches live under `cache/<provider>/`. A cache entry records its provider, operation, arguments, fetch time, schema version, and data. Entries older than 3 hours are not used as fallback when refresh fails, and `CACHE_SCHEMA_VERSION` is bumped whenever a source or parser changes so entries written by an older version are ignored.
 
+All live reads pass through the standard-library `HttpClient`. GET and HEAD use at
+most three attempts for connection failures and HTTP 408, 425, 429, 500, 502, 503,
+and 504, with full-jitter exponential backoff capped at 8 seconds. A Cloudflare
+challenge-shaped 403 is retried once; other 4xx responses fail immediately.
+`Retry-After` is honored for 429 and 503 when its delay is at most 30 seconds, and
+longer waits end the provider early with the requested delay in the error. POST is
+one attempt unless the caller explicitly marks its read-only operation idempotent;
+the Bailian catalogue POST is such a read. Each host has a 20-attempt budget per
+run, including retries. The same GET URL and the same cached operation are held in
+memory for the run, while every registered provider builds a whole catalogue from
+one parsed source pass. Errors distinguish timeout, connection failure, rejected
+4xx, and server 5xx responses and always retain a non-empty diagnostic.
+
 The baselines `delta` compares against live beside the cache as timestamped files
 under `snapshots/<provider>/`. Every successful scan is archived, even when its
 catalogue is unchanged. Retention is hard-capped at 1000 snapshots per provider:

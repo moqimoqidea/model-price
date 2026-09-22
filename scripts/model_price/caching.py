@@ -25,13 +25,18 @@ class CacheStore:
         self.ttl = ttl
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
-    def _path(self, provider: str, operation: str, arguments: Any) -> Path:
-        identity = json.dumps(
+    @staticmethod
+    def operation_identity(operation: str, arguments: Any) -> str:
+        """Return the stable key shared by memory and file cache entries."""
+        return json.dumps(
             [operation, arguments],
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
         )
+
+    def _path(self, provider: str, operation: str, arguments: Any) -> Path:
+        identity = self.operation_identity(operation, arguments)
         digest = hashlib.sha256(identity.encode()).hexdigest()[:20]
         return self.root / provider / f"{operation}-{digest}.json"
 
@@ -44,14 +49,21 @@ class CacheStore:
             payload = json.loads(path.read_text(encoding="utf-8"))
             if payload.get("schema_version") != CACHE_SCHEMA_VERSION:
                 return None
-            fetched_at = datetime.fromisoformat(payload["fetched_at"])
-            if fetched_at.tzinfo is None:
-                fetched_at = fetched_at.replace(tzinfo=timezone.utc)
-            if self.clock() - fetched_at > self.ttl:
+            if not self.is_fresh(payload["fetched_at"]):
                 return None
             return payload["data"], payload["fetched_at"]
         except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
             return None
+
+    def is_fresh(self, fetched_at: str) -> bool:
+        """Whether a fetched value is still reusable in this process or on disk."""
+        try:
+            moment = datetime.fromisoformat(fetched_at)
+        except (TypeError, ValueError):
+            return False
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return self.clock() - moment <= self.ttl
 
     def write(self, provider: str, operation: str, arguments: Any, data: Any) -> str:
         fetched_at = self.clock().astimezone().isoformat(timespec="seconds")
@@ -89,12 +101,22 @@ class CachedPriceSource(PriceSource):
         self.catalog_url = source.catalog_url
         self.cache_status = "unused"
         self.cached_at: str | None = None
+        self._memory: dict[str, tuple[Any, str | None]] = {}
 
     def _cached(self, operation: str, arguments: Any, loader: Any) -> Any:
+        identity = self.cache.operation_identity(operation, arguments)
+        if identity in self._memory and self.cache.is_fresh(
+            self._memory[identity][1] or ""
+        ):
+            data, self.cached_at = self._memory[identity]
+            self.cache_status = "memory_hit"
+            return data
+        self._memory.pop(identity, None)
         if not self.refresh:
             cached = self.cache.read(self.provider_id, operation, arguments)
             if cached is not None:
                 data, self.cached_at = cached
+                self._memory[identity] = (data, self.cached_at)
                 self.cache_status = "hit"
                 return data
         try:
@@ -103,6 +125,7 @@ class CachedPriceSource(PriceSource):
             self.cache_status = "refresh_failed"
             raise
         self.cached_at = self.cache.write(self.provider_id, operation, arguments, data)
+        self._memory[identity] = (data, self.cached_at)
         self.cache_status = "refreshed" if self.refresh else "miss"
         return data
 

@@ -32,7 +32,7 @@ class XiaomiAdapter(TabularTokenPricingAdapter):
     def document_text(self) -> str:
         """Return the rendered page once, for both prices and its update date."""
         if self._document is None:
-            self._document = self.client.get_text(self.source_url)
+            self._document = self.document(self.source_url)
             self._source_updated_at = document_update_stamp(
                 self._document, utc_offset="+08:00"
             )

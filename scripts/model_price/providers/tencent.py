@@ -135,7 +135,7 @@ class TencentAdapter(PriceSource):
         """Return the price article once, including its official update stamp."""
         if self._article is None:
             self._article = extract_tencent_article(
-                self.client.get_text(TENCENT_PRICE_URL)
+                self.document(TENCENT_PRICE_URL)
             )
         return self._article
 
@@ -159,7 +159,7 @@ class TencentAdapter(PriceSource):
         return self._band_text
 
     def _catalog(self) -> list[dict[str, str]]:
-        slate = extract_tencent_slate(self.client.get_text(TENCENT_LIST_URL))
+        slate = extract_tencent_slate(self.document(TENCENT_LIST_URL))
         entries: list[dict[str, str]] = []
         for node in walk_objects(slate):
             if node.get("type") != "table":

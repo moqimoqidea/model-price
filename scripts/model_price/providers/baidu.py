@@ -135,12 +135,12 @@ class BaiduAdapter(PriceSource):
     def document_text(self) -> str:
         """Return the article body the page keeps beside the rendered portal."""
         if self._document is None:
-            page = self.client.get_text(BAIDU_PAGE_URL)
+            page = self.document(BAIDU_PAGE_URL)
             self._source_updated_at = document_update_stamp(
                 page, utc_offset="+08:00"
             )
             try:
-                payload = json.loads(self.client.get_text(price_data_url(page)))
+                payload = json.loads(self.document(price_data_url(page)))
                 body = payload["result"]["data"]["markdownRemark"]["html"]
             except (ValueError, KeyError, TypeError) as exc:
                 raise SourceError("unexpected Baidu page-data shape") from exc

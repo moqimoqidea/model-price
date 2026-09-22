@@ -40,8 +40,14 @@ class AnthropicAdapter(PriceSource):
     source_url = ANTHROPIC_URL
     source_kind = "official_markdown"
 
+    def __init__(self, client: Any) -> None:
+        super().__init__(client)
+        self._parsed_rows: list[dict[str, Any]] | None = None
+
     def _rows(self) -> list[dict[str, Any]]:
-        text = self.client.get_text(ANTHROPIC_MARKDOWN_URL)
+        if self._parsed_rows is not None:
+            return self._parsed_rows
+        text = self.document(ANTHROPIC_MARKDOWN_URL)
         tables = markdown_tables(text)
         table = next(
             (rows for headings, rows in tables if headings[-1:] == ["Model pricing"]),
@@ -114,7 +120,32 @@ class AnthropicAdapter(PriceSource):
                             },
                         }
                     )
-        return rows
+        self._parsed_rows = rows
+        return self._parsed_rows
+
+    def _rows_by_model(self) -> dict[str, list[dict[str, Any]]]:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in self._rows():
+            grouped.setdefault(normalize_model(row["model_id"]), []).append(row)
+        return grouped
+
+    def _record_for(self, matched: list[dict[str, Any]]) -> dict[str, Any]:
+        first = matched[0]
+        return make_record(
+            self.provider_id,
+            self.provider_name,
+            first["model_id"],
+            first["display_name"],
+            "全球",
+            [row["offer"] for row in matched],
+            self.source_url,
+            self.source_kind,
+            now_iso(),
+            currency="USD",
+            delivery_mode="first_party",
+            model_family=model_family(first["model_id"]),
+            source_api=ANTHROPIC_MARKDOWN_URL,
+        )
 
     def list_models(self, prefix: str = "") -> list[str]:
         models = {row["model_id"] for row in self._rows()}
@@ -126,27 +157,10 @@ class AnthropicAdapter(PriceSource):
         return sorted(models)
 
     def query(self, model: str) -> list[dict[str, Any]]:
-        matched = [
-            row
-            for row in self._rows()
-            if normalize_model(row["model_id"]) == normalize_model(model)
-        ]
-        if not matched:
-            return []
-        return [
-            make_record(
-                self.provider_id,
-                self.provider_name,
-                matched[0]["model_id"],
-                matched[0]["display_name"],
-                "全球",
-                [row["offer"] for row in matched],
-                self.source_url,
-                self.source_kind,
-                now_iso(),
-                currency="USD",
-                delivery_mode="first_party",
-                model_family=model_family(matched[0]["model_id"]),
-                source_api=ANTHROPIC_MARKDOWN_URL,
-            )
-        ]
+        matched = self._rows_by_model().get(normalize_model(model))
+        return [self._record_for(matched)] if matched else []
+
+    def catalog_records(self) -> list[dict[str, Any]]:
+        """Build the whole catalogue from one parsed Markdown document."""
+        grouped = self._rows_by_model()
+        return [self._record_for(grouped[key]) for key in sorted(grouped)]

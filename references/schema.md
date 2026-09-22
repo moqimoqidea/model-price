@@ -50,7 +50,7 @@ When a vendor bills by time of day the result also carries `time_bands`:
 Cached operations add:
 
 ```json
-{"cache": {"status": "hit|miss|refreshed|refresh_failed", "fetched_at": "ISO-8601"}}
+{"cache": {"status": "hit|miss|refreshed|memory_hit|refresh_failed", "fetched_at": "ISO-8601"}}
 ```
 
 Explicit refreshes also add `skill_update` before querying official sources:

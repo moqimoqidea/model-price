@@ -58,9 +58,9 @@ class KimiAdapter(PriceSource):
         self._parsed_rows: list[dict[str, Any]] | None = None
 
     def _documents(self) -> list[tuple[str, str]]:
-        index = self.client.get_text(KIMI_INDEX_URL)
+        index = self.document(KIMI_INDEX_URL)
         urls = KIMI_PRICING_DOC_RE.findall(index)
-        return [(url, self.client.get_text(url)) for url in dict.fromkeys(urls)]
+        return [(url, self.document(url)) for url in dict.fromkeys(urls)]
 
     @staticmethod
     def _tables(document: str) -> list[list[list[str]]]:

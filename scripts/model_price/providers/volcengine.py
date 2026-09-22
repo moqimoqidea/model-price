@@ -84,7 +84,7 @@ class VolcengineAdapter(TabularTokenPricingAdapter):
 
     def document_text(self) -> str:
         if self._document is None:
-            payload = json.loads(self.client.get_text(VOLCENGINE_DOC_API))
+            payload = json.loads(self.document(VOLCENGINE_DOC_API))
             try:
                 result = payload["Result"]
                 document = result["MDContent"]

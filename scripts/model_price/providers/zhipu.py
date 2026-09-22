@@ -28,7 +28,7 @@ class ZhipuAdapter(TabularTokenPricingAdapter):
     region = "中国区"
 
     def document_text(self) -> str:
-        return self.client.get_text(ZHIPU_MARKDOWN_URL)
+        return self.document(ZHIPU_MARKDOWN_URL)
 
     def price_kind(self, header: str) -> str | None:
         compact = header.replace(" ", "")

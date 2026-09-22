@@ -64,7 +64,7 @@ class TabularTokenPricingAdapter(PriceSource):
 
     def document_text(self) -> str:
         """Return the document to parse; override when it is fetched indirectly."""
-        return self.client.get_text(self.source_url)
+        return self.document(self.source_url)
 
     def price_kind(self, header: str) -> str | None:
         """Classify a price column, or return ``None`` when it is a condition."""

@@ -53,7 +53,7 @@ class QianwenDescriptionClient:
         self.items = list(items)
         self.requests = []
 
-    def post_form(self, url, fields):
+    def post_form(self, url, fields, *, idempotent=False):
         self.requests.append((url, dict(fields), json.loads(fields["params"])))
         return {
             "code": "200",

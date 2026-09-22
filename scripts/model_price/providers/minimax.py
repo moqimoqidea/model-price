@@ -20,8 +20,14 @@ class MiniMaxAdapter(PriceSource):
     source_url = MINIMAX_URL
     source_kind = "official_markdown"
 
+    def __init__(self, client: Any) -> None:
+        super().__init__(client)
+        self._parsed_rows: list[dict[str, Any]] | None = None
+
     def _rows(self) -> list[dict[str, Any]]:
-        text = self.client.get_text(MINIMAX_URL)
+        if self._parsed_rows is not None:
+            return self._parsed_rows
+        text = self.document(MINIMAX_URL)
         language = text.split("## 语言模型", 1)[1].split("## 语音", 1)[0]
         rows: list[dict[str, Any]] = []
         tier = "standard"
@@ -75,23 +81,17 @@ class MiniMaxAdapter(PriceSource):
                     "prices": prices,
                 }
             )
-        return rows
+        self._parsed_rows = rows
+        return self._parsed_rows
 
-    def list_models(self, prefix: str = "") -> list[str]:
-        models = {row["model"] for row in self._rows()}
-        if prefix:
-            normalized = normalize_model(prefix)
-            models = {m for m in models if normalize_model(m).startswith(normalized)}
-        return sorted(models, key=str.lower)
+    def _rows_by_model(self) -> dict[str, list[dict[str, Any]]]:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in self._rows():
+            grouped.setdefault(normalize_model(row["model"]), []).append(row)
+        return grouped
 
-    def query(self, model: str) -> list[dict[str, Any]]:
-        matched = [
-            row
-            for row in self._rows()
-            if normalize_model(row["model"]) == normalize_model(model)
-        ]
-        if not matched:
-            return []
+    def _record_for(self, matched: list[dict[str, Any]]) -> dict[str, Any]:
+        first = matched[0]
         offers = []
         for row in matched:
             conditions: dict[str, Any] = {"service_tier": row["tier"]}
@@ -106,18 +106,32 @@ class MiniMaxAdapter(PriceSource):
                     "prices": row["prices"],
                 }
             )
-        return [
-            make_record(
-                self.provider_id,
-                self.provider_name,
-                normalize_model(matched[0]["model"]),
-                matched[0]["model"],
-                "中国区",
-                offers,
-                self.source_url,
-                self.source_kind,
-                now_iso(),
-                delivery_mode="first_party",
-                model_family=model_family(matched[0]["model"]),
-            )
-        ]
+        return make_record(
+            self.provider_id,
+            self.provider_name,
+            normalize_model(first["model"]),
+            first["model"],
+            "中国区",
+            offers,
+            self.source_url,
+            self.source_kind,
+            now_iso(),
+            delivery_mode="first_party",
+            model_family=model_family(first["model"]),
+        )
+
+    def list_models(self, prefix: str = "") -> list[str]:
+        models = {row["model"] for row in self._rows()}
+        if prefix:
+            normalized = normalize_model(prefix)
+            models = {m for m in models if normalize_model(m).startswith(normalized)}
+        return sorted(models, key=str.lower)
+
+    def query(self, model: str) -> list[dict[str, Any]]:
+        matched = self._rows_by_model().get(normalize_model(model))
+        return [self._record_for(matched)] if matched else []
+
+    def catalog_records(self) -> list[dict[str, Any]]:
+        """Build the whole catalogue from one parsed Markdown document."""
+        grouped = self._rows_by_model()
+        return [self._record_for(grouped[key]) for key in sorted(grouped)]

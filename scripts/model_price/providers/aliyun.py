@@ -70,6 +70,7 @@ def qianwen_catalog_request(
                 params, ensure_ascii=False, separators=(",", ":")
             ),
         },
+        idempotent=True,
     )
     try:
         if str(outer.get("code")) != "200":
@@ -246,7 +247,7 @@ class AliyunAdapter(PriceSource):
         url = qianwen_model_url(model_id)
         if url not in self._detail_documents:
             try:
-                self._detail_documents[url] = self.client.get_text(url)
+                self._detail_documents[url] = self.document(url)
             except SourceError:
                 self._detail_documents[url] = ""
         return self._detail_documents[url]

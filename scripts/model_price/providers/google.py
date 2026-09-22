@@ -49,7 +49,7 @@ class GeminiAdapter(PriceSource):
 
     def _sections(self) -> list[dict[str, Any]]:
         """Split the page into its ``h2`` model sections with their tier tables."""
-        text = self.client.get_text(GEMINI_MARKDOWN_URL)
+        text = self.document(GEMINI_MARKDOWN_URL)
         parts = re.split(r"^## +(.+)$", text, flags=re.M)
         sections = []
         for heading, body in zip(parts[1::2], parts[2::2]):

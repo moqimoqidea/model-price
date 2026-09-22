@@ -44,6 +44,7 @@ from model_price.pricing import (
     price_item,
     tokens_per_price_unit,
 )
+from model_price.providers import ALL_PROVIDERS
 from model_price.providers.aliyun import (
     ALIYUN_API_URL,
     CATALOG_PAGE_SIZE,
@@ -70,6 +71,7 @@ from model_price.providers.google import (
     GeminiAdapter,
 )
 from model_price.providers.kimi import KIMI_INDEX_URL, KimiAdapter
+from model_price.providers.minimax import MINIMAX_URL, MiniMaxAdapter
 from model_price.providers.openai import OPENAI_MARKDOWN_URL, OpenAIAdapter
 from model_price.providers.tencent import (
     TENCENT_PRICE_URL,
@@ -161,8 +163,10 @@ def volc_payload(markdown=VOLC_MARKDOWN):
 class MappingClient:
     def __init__(self, values):
         self.values = values
+        self.requests = []
 
     def get_text(self, url):
+        self.requests.append(url)
         if url not in self.values:
             raise SourceError(f"unmapped test URL: {url}")
         value = self.values[url]
@@ -569,7 +573,7 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(adapter.list_models(), ["model-a"])
             self.assertEqual(adapter.cache_status, "miss")
             self.assertEqual(adapter.list_models(), ["model-a"])
-            self.assertEqual(adapter.cache_status, "hit")
+            self.assertEqual(adapter.cache_status, "memory_hit")
             self.assertEqual(source.calls, 1)
 
             other_source = CountingSource()
@@ -593,6 +597,17 @@ class CacheTests(unittest.TestCase):
             refreshed.query("model-a")
             self.assertEqual(refreshed.cache_status, "refreshed")
             self.assertEqual(source.calls, 2)
+
+    def test_refresh_reuses_the_same_operation_inside_one_process(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = CountingSource()
+            adapter = CachedPriceSource(
+                source, CacheStore(Path(directory)), refresh=True
+            )
+            self.assertEqual(adapter.query("model-a")[0]["model_id"], "model-a")
+            self.assertEqual(adapter.query("model-a")[0]["model_id"], "model-a")
+            self.assertEqual(adapter.cache_status, "memory_hit")
+            self.assertEqual(source.calls, 1)
 
     def test_expired_cache_does_not_hide_a_refresh_failure(self):
         current = [datetime(2026, 9, 9, 0, 0, tzinfo=timezone.utc)]
@@ -690,6 +705,49 @@ class OverseasParserTests(unittest.TestCase):
         record = adapter.query("gemini-test")[0]
         self.assertEqual(record["offers"][0]["conditions"]["billing_tier"], "paid")
         self.assertEqual(record["offers"][0]["prices"][0]["amount"], "0.50")
+
+
+class CatalogueRequestCountTests(unittest.TestCase):
+    OPENAI = """### Standard pricing data
+| Model | Short context input | Short context output |
+| --- | --- | --- |
+| gpt-a | $1.00 | $4.00 |
+| gpt-b | $2.00 | $8.00 |
+"""
+    ANTHROPIC = """## Model pricing
+| Model | Base input tokens | 5m cache writes | 1h cache writes | Cache hits and refreshes | Output tokens |
+| --- | --- | --- | --- | --- | --- |
+| Claude A | $1 / MTok | $1.25 / MTok | $2 / MTok | $0.10 / MTok | $5 / MTok |
+| Claude B | $2 / MTok | $2.50 / MTok | $4 / MTok | $0.20 / MTok | $10 / MTok |
+"""
+    MINIMAX = """## 语言模型
+| 模型 | 输入 | 输出 | 缓存读取 | 缓存写入 |
+| --- | --- | --- | --- | --- |
+| MiniMax-A | 1 | 2 | 0.1 | 0.2 |
+| MiniMax-B | 3 | 4 | 0.3 | 0.4 |
+## 语音
+"""
+
+    def test_document_catalogues_fetch_their_pricing_page_once(self):
+        cases = (
+            (OpenAIAdapter, OPENAI_MARKDOWN_URL, self.OPENAI),
+            (AnthropicAdapter, ANTHROPIC_MARKDOWN_URL, self.ANTHROPIC),
+            (MiniMaxAdapter, MINIMAX_URL, self.MINIMAX),
+        )
+        for adapter_type, url, document in cases:
+            with self.subTest(provider=adapter_type.provider_id):
+                client = MappingClient({url: document})
+                records = adapter_type(client).catalog_records()
+                self.assertEqual(len(records), 2)
+                self.assertEqual(client.requests, [url])
+
+    def test_every_registered_provider_owns_a_one_pass_catalogue_reader(self):
+        for adapter_type in ALL_PROVIDERS:
+            with self.subTest(provider=adapter_type.provider_id):
+                self.assertIsNot(
+                    adapter_type.catalog_records,
+                    PriceSource.catalog_records,
+                )
 
 
 XAI_MARKDOWN = """# Pricing
@@ -1306,6 +1364,12 @@ class DeepSeekAdapterTests(unittest.TestCase):
         record = self.adapter().query("deepseek-flash")[0]
         self.assertIsNone(record["source_updated_at"])
 
+    def test_catalogue_fetches_the_pricing_document_once(self):
+        client = MappingClient({DEEPSEEK_URL: DEEPSEEK_HTML})
+        records = DeepSeekAdapter(client).catalog_records()
+        self.assertEqual(len(records), 2)
+        self.assertEqual(client.requests.count(DEEPSEEK_URL), 1)
+
 
 class ModelNameCouplingTests(unittest.TestCase):
     def test_footnote_markers_are_not_part_of_model_identity(self):
@@ -1809,6 +1873,7 @@ class QianwenPagingClient:
     def __init__(self, pages, details=None):
         self.pages = list(pages)
         self.requests = []
+        self.idempotent_requests = []
         self.details = dict(details or {})
 
     def get_text(self, url):
@@ -1816,7 +1881,8 @@ class QianwenPagingClient:
             raise SourceError("request failed")
         return self.details[url]
 
-    def post_form(self, url, fields):
+    def post_form(self, url, fields, *, idempotent=False):
+        self.idempotent_requests.append(idempotent)
         self.requests.append((url, dict(fields), json.loads(fields["params"])))
         page = self.pages[min(len(self.requests) - 1, len(self.pages) - 1)]
         return {"code": "200", "data": page}
@@ -1840,6 +1906,7 @@ class QianwenCatalogueTests(unittest.TestCase):
         adapter = AliyunAdapter(client)
         self.assertEqual(adapter.list_models(), ["m1", "m2"])
         self.assertEqual([request[2]["PageNo"] for request in client.requests], [1, 2])
+        self.assertEqual(client.idempotent_requests, [True, True])
         for url, fields, params in client.requests:
             self.assertEqual(url, ALIYUN_API_URL)
             self.assertEqual(fields["product"], "AliyunDeliveryService")

@@ -92,7 +92,10 @@ def build_parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument(
-        "--timeout", type=int, default=30, help="HTTP timeout in seconds"
+        "--timeout",
+        type=int,
+        default=30,
+        help="network timeout in seconds for each request attempt",
     )
     parser.add_argument(
         "--cache-dir", type=Path, default=DEFAULT_CACHE_DIR, help=argparse.SUPPRESS

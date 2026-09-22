@@ -68,16 +68,19 @@ class DeepSeekAdapter(PriceSource):
     def __init__(self, client: Any) -> None:
         super().__init__(client)
         self._document: str | None = None
+        self._parsed_table: list[list[str]] | None = None
         self._news_checked = False
         self._news_updated_at: str | None = None
 
     def document_text(self) -> str:
         """Return the pricing page once, so the table and its footnote agree."""
         if self._document is None:
-            self._document = self.client.get_text(DEEPSEEK_URL).replace("\x00", "")
+            self._document = self.document(DEEPSEEK_URL).replace("\x00", "")
         return self._document
 
     def _table(self) -> list[list[str]]:
+        if self._parsed_table is not None:
+            return self._parsed_table
         parser = TextTableParser()
         parser.feed(self.document_text())
         table = next(
@@ -92,7 +95,8 @@ class DeepSeekAdapter(PriceSource):
         )
         if not table:
             raise SourceError("DeepSeek pricing table was not found")
-        return table
+        self._parsed_table = table
+        return self._parsed_table
 
     def source_updated_at(self) -> str | None:
         """Check recent official news once; the scan supplies fallback wording."""
@@ -187,3 +191,10 @@ class DeepSeekAdapter(PriceSource):
                 ),
             )
         ]
+
+    def catalog_records(self) -> list[dict[str, Any]]:
+        """Build each model from the one pricing table already parsed."""
+        records = []
+        for model in self._models(self._table()):
+            records.extend(self.query(model))
+        return records

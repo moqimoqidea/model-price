@@ -226,6 +226,11 @@ even when the tests still pass.
     DingTalk's DWS minimum version, exact route, preflight, target checks, and
     transport ceiling live only in `im/dingtalk.md`. `README.md` may
     explain why that contract exists, but must link to it instead of copying it.
+18. **One document is one request per run.** Every registered provider owns a
+    one-pass `catalog_records()` implementation, and adapters read stable pages
+    through `PriceSource.document()`. `HttpClient` retries only safe requests,
+    respects short `Retry-After` values, and enforces a per-host request budget.
+    POST is never retried unless its caller marks the operation idempotent.
 
 ## Where a change goes
 
@@ -241,6 +246,7 @@ even when the tests still pass.
 | Change a DingTalk version, command, target check, or delivery recommendation | `im/dingtalk.md`; keep `SKILL.md` and `README.md` as links to that contract |
 | Change which providers a query covers | `registry.py` |
 | Change the cache or snapshot shape | `paths.py` version, then the reader and writer together |
+| Change retries, timeouts, request budgets, or HTTP diagnostics | `core.py`, plus the network policy in `references/source-notes.md` |
 | Refresh the Tencent mirror | `scripts/update_tencent_model_mirror.py` |
 | Change the CLI surface | `query_model_prices.py` — and `SKILL.md` and `README.md`, which both document it |
 
