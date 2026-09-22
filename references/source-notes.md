@@ -20,7 +20,9 @@ only models present in an actual change.
   punctuation in a price-table id is never used to guess a URL. A generated
   soft-404 page is accepted only when its body names the requested model. An
   Anthropic page named by the official index but missing or mismatched is a source
-  error, while a model absent from the index is `not_found`.
+  error, while a model absent from the index is `not_found`. Per-model Markdown
+  specifications come only from labelled bullets or vertical property/value
+  tables; headings in horizontal comparison tables are never treated as values.
 - Kimi, MiniMax, and Zhipu use the official overview Markdown tables. Section
   headings contribute category/lifecycle information, including Kimi's explicit
   已下线 section.

@@ -14,7 +14,7 @@ DEFAULT_SNAPSHOT_DIR = SKILL_DIR / "snapshots"
 CACHE_TTL = timedelta(hours=3)
 # Bumped whenever a provider's source or parsing changes, so entries written by an
 # older version are ignored instead of being served for the rest of their TTL.
-CACHE_SCHEMA_VERSION = 10
+CACHE_SCHEMA_VERSION = 11
 
 # Snapshots are archived baselines rather than response caches, so they are
 # versioned separately from the TTL cache. Bump this whenever their shape changes;

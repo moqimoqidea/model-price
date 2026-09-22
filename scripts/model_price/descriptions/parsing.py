@@ -6,7 +6,7 @@ import html
 import re
 
 from ..models import normalize_model
-from ..parsing import markdown_link_text
+from ..parsing import markdown_link_text, markdown_tables
 from ..text import CELL_BREAK_RE, clean_text
 
 FRONTMATTER_RE = re.compile(r"\A---\s*\n(?P<body>.*?)\n---\s*\n", re.S)
@@ -124,7 +124,14 @@ def markdown_capabilities(text: str) -> list[str]:
 
 
 def markdown_specifications(text: str) -> dict[str, str]:
-    """Keep concise, explicitly published model limits."""
+    """Keep concise model limits from bullets and vertical property tables.
+
+    A horizontal comparison table also contains headings such as ``Max output``.
+    Reading the document with a cross-line regular expression made the following
+    heading (``Price / MTok``) look like that specification's value. Tables are
+    therefore accepted only when their header identifies a property and value
+    column, and a specification label appears in the property column itself.
+    """
     result: dict[str, str] = {}
     labels = {
         "context window": "context_window",
@@ -132,6 +139,7 @@ def markdown_specifications(text: str) -> dict[str, str]:
         "output token limit": "output_token_limit",
         "max output": "max_output",
         "knowledge cutoff": "knowledge_cutoff",
+        "reliable knowledge cutoff": "knowledge_cutoff",
         "input modalities": "input_modalities",
         "output modalities": "output_modalities",
     }
@@ -141,14 +149,41 @@ def markdown_specifications(text: str) -> dict[str, str]:
             label = markdown_text(bullet.group(1)).lower()
             key = labels.get(label)
             if key:
-                result[key] = markdown_text(bullet.group(2))
-    for label, key in labels.items():
-        pattern = re.compile(
-            rf"\|\s*{re.escape(label)}\s*\|\s*(.*?)\s*\|", re.I
+                value = markdown_text(bullet.group(2))
+                if value:
+                    result[key] = value
+    property_headers = {
+        "attribute",
+        "feature",
+        "field",
+        "parameter",
+        "property",
+        "specification",
+    }
+    value_headers = {"description", "details", "specification", "value"}
+    for _, rows in markdown_tables(text):
+        if len(rows) < 2:
+            continue
+        headers = [markdown_text(cell).lower() for cell in rows[0]]
+        if not headers or headers[0] not in property_headers:
+            continue
+        value_column = next(
+            (
+                index
+                for index, header in enumerate(headers[1:], start=1)
+                if header in value_headers
+            ),
+            None,
         )
-        match = pattern.search(text)
-        if match:
-            result.setdefault(key, markdown_text(match.group(1)))
+        if value_column is None:
+            continue
+        for row in rows[1:]:
+            if len(row) <= value_column:
+                continue
+            key = labels.get(markdown_text(row[0]).lower())
+            value = markdown_text(row[value_column])
+            if key and value:
+                result.setdefault(key, value)
     return result
 
 

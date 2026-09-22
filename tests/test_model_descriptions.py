@@ -147,11 +147,19 @@ Model ID: `claude-opus-5-5`
 
 Built for long-running agentic coding and knowledge work.
 
+## How it compares
+
+| Model | Context | Max output | Price / MTok | Knowledge cutoff |
+|---|---|---|---|---|
+| Claude Opus 5.5 | 1M | 128K | $4 / $20 | Jun 2026 |
+
 ### Capabilities
 
 | Feature | Value |
 |---|---|
-| Context window | 1M tokens |
+| [Context window](https://example.test/context) | 1M tokens |
+| Max output | 128K tokens |
+| Reliable knowledge cutoff | Jun 2026 |
 """
         client = MappingClient(
             {
@@ -168,6 +176,14 @@ Built for long-running agentic coding and knowledge work.
             "Built for long-running agentic coding and knowledge work.",
         )
         self.assertEqual(result["source"]["url"], page)
+        self.assertEqual(
+            result["specifications"],
+            {
+                "context_window": "1M tokens",
+                "max_output": "128K tokens",
+                "knowledge_cutoff": "Jun 2026",
+            },
+        )
         self.assertEqual(
             client.requests,
             [ANTHROPIC_MODELS_MARKDOWN_URL, f"{page}.md"],
