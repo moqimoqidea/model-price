@@ -96,17 +96,23 @@ Explicit refreshes also add `skill_update` before querying official sources:
 
 When the CLI runs `delta`, each provider also carries an independent `lifecycle`
 result. Its `status` is `changed`, `unchanged`, `baseline_created`,
-`baseline_not_found`, `source_error`, or `no_public_schedule`. A price-source
+`baseline_not_found`, `source_error`, or `no_public_schedule` (for an unregistered
+provider). A price-source
 failure does not suppress a readable retirement notice, and a notice-source
 failure does not erase a successful price comparison. `source` names the official
 notice/index, `baseline_at` names the selected retirement baseline,
 `last_successful_at` names its most recent successful read, and `event_count`
-counts retained model records. `changes[]` contains:
+counts retained model records. `notice_model_ids[]` lists literal IDs appearing
+in retained official notices, including future and legacy entries.
+`retired_model_ids[]` lists literal IDs with
+confirmed retirement as of this scan: an explicit “already retired” status, a
+due definite EOS, or a due automatic redirect. It is retained from the last
+successful notice read when the current read fails. `changes[]` contains:
 
 - `kind`: `new_notice`, `date_revised`, `detail_revised`, or `milestone_reached`
 - `event`: the vendor's literal `model_id`, `scope`, `source_url`, optional
   `announced_at`, `eom_at`, `redirect_at`, `eos_at`, `replacement`,
-  `end_behavior`, and `eos_earliest`
+  `end_behavior`, `eos_earliest`, and `notice_status`
 - for `date_revised`, `milestone`, `before`, and `after`; for
   `milestone_reached`, `milestone`; for `detail_revised`, `field`, `before`,
   and `after`
@@ -116,13 +122,29 @@ vendor gave the earliest possible shutdown date, so crossing it is not evidence
 that service actually stopped. `end_behavior` is `redirect`, `unavailable`,
 `existing_access_continues`, or `unknown`. Model IDs are scoped to the hosting
 provider: the same model name on two platforms can have different dates.
+`notice_status` is `scheduled`, `legacy`, `retired`, or null. `legacy` identifies
+an old-version bucket without claiming shutdown; `scheduled` needs a due definite
+date before it counts as retired; `retired` is an explicit already-down notice,
+including Google's gray row marker even when the row has no date.
 `summary.lifecycle_changes` and `summary.lifecycle_source_errors` count these
 results separately from price changes when lifecycle scanning is enabled.
+
+For changed models, a provider report carries `model_availability`, a mapping
+from its literal model IDs to `listed` or `delisted`. `delisted` means the model
+left that provider's monitored price catalogue without a still-open official
+notice, or has confirmed retirement evidence. A future or undated legacy notice
+keeps a model listed even if that price page has no row for it. Catalogue removal
+alone does not prove the API stopped serving the ID.
+The message prefixes each introduction with 【上架】 or 【下架】, groups listed models
+first, and shows only listed models in its 模型价格 section. JSON keeps all price
+changes and removed-model counts for audit.
 
 Notice archives are under `snapshots/lifecycle-<provider>/`, independent of the
 price archives and with their own `lifecycle_schema_version`. A failed or empty
 notice read writes no retirement baseline. Older notices absent from a shortened
-index are retained as known evidence rather than treated as retractions.
+index are retained as known evidence rather than treated as retractions. A
+retirement schema bump starts a new comparison baseline while carrying prior
+notice events forward so old rolling-index links remain traceable.
 
 Each successful entry of `providers` carries `provider`, `status`, `baseline_at`,
 `last_successful_at`, `captured_at`, `source`, `model_count`, and `changes`.

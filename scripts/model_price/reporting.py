@@ -25,6 +25,7 @@ from .diffing import (
     PRICE_CHANGE_FIELD,
     UNCHANGED,
 )
+from .models import normalize_model
 from .pricing import is_standard_offer, price_sort_key
 from .snapshots import AT_OR_BEFORE, LAST_MONTH, ON_DATE, YESTERDAY, YESTERDAY_FIRST
 
@@ -77,6 +78,8 @@ LIFECYCLE_LABELS = {
     "unknown": "官方未说明",
 }
 
+AVAILABILITY_LABELS = {"listed": "【上架】", "delisted": "【下架】"}
+
 SPECIFICATION_LABELS = {
     "context_window": "上下文窗口",
     "input_token_limit": "最大输入",
@@ -118,12 +121,6 @@ CHANGE_FIELD_LABELS = {
     "offers_removed": "移除计费方式",
     PRICE_CHANGE_FIELD: "价格变化",
 }
-
-# The changes listed one per model; a price move carries more, so it is grouped
-# separately by what it moved.
-BULLET_CHANGE_FIELDS = tuple(
-    field for field in CHANGE_FIELDS if field != PRICE_CHANGE_FIELD
-)
 
 CACHE_PRICE_TYPES = {"cache_hit", "cache_write", "cache_storage"}
 
@@ -387,9 +384,41 @@ def changed_descriptions(payload: dict[str, Any]) -> list[dict[str, Any]]:
     seen: dict[str, dict[str, Any]] = {}
     for report in payload.get("providers", []):
         for description in report.get("model_descriptions") or []:
-            key = description.get("model_id") or description.get("display_name", "")
-            seen.setdefault(key, description)
-    return list(seen.values())
+            key = normalize_model(
+                description.get("canonical_model_id")
+                or description.get("model_id")
+                or description.get("display_name", "")
+            )
+            observed = description.get("observed_model_ids") or [
+                description.get("model_id", "")
+            ]
+            availability = (
+                "listed"
+                if any(model_availability(report, name) == "listed" for name in observed)
+                else "delisted"
+            )
+            if key not in seen:
+                seen[key] = {**description, "availability": availability}
+            elif availability == "listed":
+                seen[key]["availability"] = "listed"
+    return sorted(
+        seen.values(), key=lambda description: description["availability"] != "listed"
+    )
+
+
+def model_availability(report: dict[str, Any], model_id: str) -> str:
+    """Use this channel's fresh catalogue and conclusive retirement evidence."""
+    key = normalize_model(model_id)
+    statuses = report.get("model_availability") or {}
+    return next(
+        (status for name, status in statuses.items() if normalize_model(name) == key),
+        "listed",
+    )
+
+
+def availability_label(description: dict[str, Any]) -> str:
+    """Put a clear listing state before each model introduction."""
+    return AVAILABILITY_LABELS.get(description.get("availability"), "【上架】")
 
 
 def skill_update_text(payload: dict[str, Any]) -> str:
@@ -598,6 +627,13 @@ LIFECYCLE_DETAIL_LABELS = {
     "replacement": "替换模型",
     "end_behavior": "旧 ID 后续行为",
     "eos_earliest": "仅最早可能下线日",
+    "notice_status": "官方模型状态",
+}
+
+LIFECYCLE_NOTICE_LABELS = {
+    "legacy": "官方列为旧版，未公布停服日期",
+    "scheduled": "官方已预告下线",
+    "retired": "官方确认已下线",
 }
 
 
@@ -608,16 +644,21 @@ def lifecycle_detail_value(field: str, value: Any) -> str:
         return LIFECYCLE_BEHAVIOR_LABELS.get(str(value), str(value))
     if field == "eos_earliest":
         return "是" if value else "否"
+    if field == "notice_status":
+        return LIFECYCLE_NOTICE_LABELS.get(str(value), str(value))
     return str(value)
 
 
 def lifecycle_schedule_text(event: dict[str, Any]) -> str:
     """Describe only dates and effects that the vendor actually published."""
-    parts = [
+    parts = []
+    if status := event.get("notice_status"):
+        parts.append(LIFECYCLE_NOTICE_LABELS.get(status, status))
+    parts.extend(
         f"{LIFECYCLE_MILESTONE_LABELS[field]} {format_moment(event[field])}"
         for field in LIFECYCLE_MILESTONE_LABELS
         if event.get(field)
-    ]
+    )
     if event.get("eos_earliest") and event.get("eos_at"):
         parts[-1] += "（最早可能日期）"
     if event.get("replacement"):
@@ -634,7 +675,7 @@ def lifecycle_change_text(change: dict[str, Any]) -> str:
     model = f"{event['model_id']}（{event['scope']}）"
     kind = change["kind"]
     if kind == "new_notice":
-        return f"{model}：新增官方退役记录；{lifecycle_schedule_text(event)}"
+        return f"{model}：新增官方生命周期记录；{lifecycle_schedule_text(event)}"
     if kind == "date_revised":
         field = change["milestone"]
         old = format_moment(change.get("before")) if change.get("before") else "未公布"
@@ -643,7 +684,13 @@ def lifecycle_change_text(change: dict[str, Any]) -> str:
     if kind == "milestone_reached":
         field = change["milestone"]
         label = LIFECYCLE_MILESTONE_LABELS[field]
-        if field == "eos_at" and event.get("eos_earliest"):
+        if (
+            field == "eos_at"
+            and event.get("eos_earliest")
+            and event.get("notice_status") == "retired"
+        ):
+            label = "最早可能下线日期已到，官方已确认下线"
+        elif field == "eos_at" and event.get("eos_earliest"):
             label = "最早可能下线日期已到，实际下线待官方确认"
         elif field == "eos_at" and event.get("end_behavior") == "redirect":
             label = "旧 ID 下线/自动切换日期已到"

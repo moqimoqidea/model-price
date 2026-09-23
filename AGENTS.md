@@ -41,6 +41,7 @@ Standard library only, Python 3, no install step, no build step.
 ├── scripts/
 │   ├── query_model_prices.py    the stable CLI entry point — argument parsing and dispatch only
 │   ├── update_tencent_model_mirror.py   offline maintenance entry point
+│   ├── audit_model_retirements.py       read-only official evidence audit
 │   └── model_price/             the implementation
 │       ├── __init__.py          the responsibility split, restated for a reader
 │       ├── paths.py             filesystem anchors, cache TTL, schema versions
@@ -217,7 +218,8 @@ even when the tests still pass.
     does is a property of the model, so a scan introduces each moved model once
     from `changed_descriptions` rather than once per channel that reported it.
     Its source line is never optional: an unsourced capability claim is not a
-    fact. The message omits an `active` lifecycle because a newly listed model is
+    fact. A scan prefixes each introduction with 【上架】 or 【下架】, lists the
+    former first, and shows prices only for the former. The message omits an `active` lifecycle because a newly listed model is
     necessarily available; preview, legacy, retired, and unknown remain visible.
 14. **Statuses are reported, never softened.** `source_error`, `not_found`, and
     `empty_scan` reach the scan reader. `update_skipped` and `check_failed` remain
@@ -244,7 +246,8 @@ even when the tests still pass.
     price row alone does not prove EOS. Keep each hosting platform's literal ID
     and distinguish announcement, EOM, automatic redirect, and EOS. A failed or
     empty notice read cannot overwrite the prior notice history. The earliest
-    possible shutdown date never becomes an asserted actual shutdown.
+    possible shutdown date never becomes an asserted actual shutdown. A
+    【下架】 tag caused by catalogue removal describes that catalogue only.
 
 ## Where a change goes
 
@@ -261,6 +264,7 @@ even when the tests still pass.
 | Change which providers a query covers | `registry.py` |
 | Change the cache or snapshot shape | `paths.py` version, then the reader and writer together |
 | Change retirement sources or milestone semantics | `lifecycle_sources.py` or `lifecycle.py`, plus `references/source-notes.md` and `references/schema.md` |
+| Audit current official retirement evidence | `scripts/audit_model_retirements.py`; keep vendor readers in `lifecycle_sources.py` |
 | Change retries, timeouts, request budgets, or HTTP diagnostics | `core.py`, plus the network policy in `references/source-notes.md` |
 | Refresh the Tencent mirror | `scripts/update_tencent_model_mirror.py` |
 | Change the CLI surface | `query_model_prices.py` — and `SKILL.md` and `README.md`, which both document it |
@@ -338,6 +342,7 @@ python3 scripts/query_model_prices.py delta --since last-month
 python3 scripts/query_model_prices.py delta --since 2026-09-19T23:59:59+08:00
 python3 scripts/query_model_prices.py compare deepseek-flash --format message --max-chars 1200
 python3 scripts/update_tencent_model_mirror.py CAPTURE.json
+python3 scripts/audit_model_retirements.py --provider zhipu
 ```
 
 Tests never touch the network. An adapter accepts any object with `get_text`, so

@@ -16,18 +16,28 @@ source keeps its last successful notice archive.
 
 | Platform | Official evidence | Meaning and limits |
 | --- | --- | --- |
-| Volcengine Ark | [Model deprecation notice](https://docs.volcengine.com/docs/ark/model-deprecation-notice) | Batch timeline gives announcement/start, EOM, EOS; model rows may override EOS. Some embedding rows state EOM while existing access continues. |
+| Volcengine Ark | [Model deprecation notice](https://docs.volcengine.com/docs/ark/model-deprecation-notice) | Read the page's official `getDocDetail` `Result.MDContent`, because the rendered HTML sometimes omits its tables. Batch timeline gives announcement/start, EOM, EOS; model rows may override EOS. Some embedding rows state EOM while existing access continues. |
 | Tencent TokenHub | [Product announcement index](https://cloud.tencent.com/document/product/1823/130758) and its linked [individual notices](https://cloud.tencent.com/announce/detail/2469) | A notice gives exact `model` parameters, Beijing shutdown time, and possible automatic replacement. The general announcement feed also contains price notices, so title filtering alone is insufficient evidence of retirement. The index is a rolling list; previous notice records remain archived when a link rolls off. |
 | Baidu Qianfan | [Retirement mechanism and history](https://cloud.baidu.com/doc/qianfan/s/zmh4stou3) | Historical table gives registration and retirement dates per hosted model, plus recommended replacement. Its example row is excluded. |
 | Aliyun Bailian | [Deprecation policy](https://help.aliyun.com/zh/model-studio/model-depreciation) and public [model market](https://www.qianwenai.com/models) | The anonymous market API exposes per-model `OfflineInfo.Inference.OfflineTime`. Read it from the fresh catalogue; convert an explicit UTC instant to Beijing time, and keep an undated or missing value unknown. |
-| DeepSeek | [Official updates](https://api-docs.deepseek.com/zh-cn/updates) | Records only explicit old-version withdrawal and continued routing stated in the changelog; there is no complete future retirement timetable. |
+| DeepSeek | [Official updates](https://api-docs.deepseek.com/zh-cn/updates/) | The trailing slash is required: without it, the site can return a generic docs page with HTTP 200. Record only explicit old-version withdrawal and continued routing stated in the changelog; there is no complete future retirement timetable. |
 | Kimi | [Model list](https://platform.kimi.com/docs/models) | Retired-model section gives series-level dates and literal retired IDs. Match a table ID to the longest published series prefix. |
 | Xiaomi MiMo | [Deprecation log](https://mimo.mi.com/static/docs/updates/deprecate.md) | Separates the earlier automatic replacement time from the final old-ID expiry time where both are printed. |
 | OpenAI | [API deprecations](https://developers.openai.com/api/docs/deprecations) | Published notification and shutdown tables. A row may name several aliases separated by escaped Markdown pipes; each literal ID gets its own event. |
-| Anthropic | [Model deprecations](https://platform.claude.com/docs/en/about-claude/model-deprecations) | Deprecated and retired table applies to Anthropic-operated API. Partner platform schedules may differ. Active models' “not sooner than” dates are not shutdown promises. |
-| Google Gemini | [Gemini API deprecations](https://ai.google.dev/gemini-api/docs/deprecations) | Shutdown column is explicitly the *earliest possible* date. Reaching it is reported without claiming actual unavailability. |
+| Anthropic | [Model deprecations](https://platform.claude.com/docs/en/about-claude/model-deprecations) | Deprecated and retired table applies to Anthropic-operated API. A row explicitly marked Retired is down even if its retirement date is blank. Partner platform schedules may differ. Active models' “not sooner than” dates are not shutdown promises. |
+| Google Gemini | [Gemini API deprecations](https://ai.google.dev/gemini-api/docs/deprecations) | Shutdown dates are the *earliest possible* dates. The page separately marks already-shutdown models with `row-gray` table rows, including one with no published shutdown date. Only that explicit row state confirms retirement; reaching an unshaded row's date does not. |
 | xAI | [Official migration guides](https://docs.x.ai/developers/migration/may-15-retirement) | Old slugs can continue to resolve through automatic redirection, with billing at replacement-model prices. Read the effective PT clock where given; a date-only notice remains date-only. |
-| Zhipu and MiniMax | Official model/price pages, with no public per-model retirement schedule confirmed in this source review | Report `no_public_schedule`, continue price-catalogue monitoring, and do not guess a date. |
+| Zhipu BigModel | [GLM-4.5-Flash](https://docs.bigmodel.cn/cn/guide/models/free/glm-4.5-flash.md), [GLM-Z1](https://docs.bigmodel.cn/cn/guide/models/text/glm-z1.md), and [GLM-4.5](https://docs.bigmodel.cn/cn/guide/models/text/glm-4.5.md) model pages | No central retirement feed. Read explicit banner text on these known official pages: a dated shutdown with automatic routing, an undated “已下线” series notice, and undated “即将下线” plans. Only literal named IDs are recorded; a series notice is not expanded into guessed variants. These pages are a maintained source list, not a complete vendor-wide schedule. |
+| MiniMax | [Official model overview](https://platform.minimax.io/docs/guides/models-intro.md) | `Legacy Models` accordions identify old versions but provide no shutdown date and do not prove service cessation. A separate music notice explicitly discontinues three free music API IDs on 2026-08-20; the paid API restriction applies only to new users and does not retire those models. |
+
+Run `python3 scripts/audit_model_retirements.py` to read all 13 vendor-specific
+sources fresh and print exact model IDs, milestones, status-only claims, source
+URLs, and whether the evidence confirms retirement as of the chosen calendar
+timezone. `--provider` can select one vendor; `--timezone` defaults to
+`Asia/Shanghai`. The audit is read-only and does not write a scan baseline. The
+offline tests in `tests/test_lifecycle.py` cover each vendor's source shape and
+the distinction between a scheduled, legacy, earliest-possible, and confirmed
+shutdown.
 
 An announcement date, EOM (new purchases stop), automatic redirection, and EOS
 (service shutdown) are distinct milestones. A date revision or a date crossing
@@ -58,8 +68,10 @@ only models present in an actual change.
   headings contribute category/lifecycle information, including Kimi's explicit
   已下线 section.
 - DeepSeek uses the official release/news pages. Their server-rendered metadata is
-  the narrowest public representation carrying the release summary; exact retired
-  ids are preferred before following a live alias.
+  the narrowest public representation carrying the release summary. A page is
+  attached only to its literal published ID or a dated build of that ID; a broad
+  family match would misattribute the Vision-Exp release to a separate preview
+  model in a hosting provider's price table.
 - Aliyun uses the same public Qianwen model-market catalogue as pricing. Its
   `Description`, `Capabilities`, `Features`, context limits, modalities, and
   scheduled withdrawal are normalized by one shared helper. The introduction's
@@ -69,7 +81,8 @@ only models present in an actual change.
   Model capability and quick-selection tables are combined.
 - Volcengine's public Model Square page is used only when its server-rendered
   metadata actually names the requested model; a generic shell description is
-  rejected as a soft miss.
+  rejected as a soft miss. Model IDs are URL-encoded in its detail query, including
+  Chinese release-stage suffixes.
 - Tencent model details require an authenticated console. The checked-in
   `descriptions/data/tencent-models.json` file is the explicit mirror. Absence from
   the mirror is `not_found`, never a cue to synthesize an introduction.
@@ -98,6 +111,10 @@ only models present in an actual change.
   price: it carries the length tier (`输入长度 [0, 32]`) and, for
   `deepseek-v4-1-flash`, the peak/off-peak band (`空闲时段` / `高峰时段`). Reading it
   as an input price column loses both, so it must be classified as a condition.
+  The same document prices image generation per image (`元/张`); those rows are
+  excluded from the token catalogue. Older local baselines that mislabeled such
+  rows as token prices are filtered on read without rewriting the archive, so
+  correcting the parser does not report image products as newly removed models.
 - Tencent Cloud TokenHub: embedded Slate JSON from the official catalog and pricing
   documents; preserve self-deployed and “原厂直供” rows. There is no Markdown
   endpoint: the "MD" button converts this same Slate data in the browser with
@@ -105,9 +122,10 @@ only models present in an actual change.
   payload carries `recentReleaseTime`, which is the price page's official update
   time and is stored with every parsed record.
 - Tencent model introductions: the model square is authenticated and has no durable
-  anonymous description endpoint, so its 100 rendered cards were captured on
-  2026-09-17 into `descriptions/data/tencent-models.json`. Delivery-specific
-  duplicates are collapsed into 98 model-level introductions, while API ids from
+  anonymous description endpoint. The Guangzhou model square was captured through
+  the user's signed-in Chrome session on 2026-09-24. Its first page rendered 100
+  cards; author filters exposed all 114 cards, which collapse into 112 model-level
+  introductions in `descriptions/data/tencent-models.json`. API ids from
   the public catalogue are retained as aliases. `update_tencent_model_mirror.py`
   validates captures and rejects empty, duplicate, or conflicting entries before
   replacement.
@@ -153,13 +171,17 @@ only models present in an actual change.
   per-request (`单价`) and per-character speech tables are skipped.
 - MiniMax: `https://platform.minimax.cn/docs/guides/pricing-paygo.md`, split into the language-model and speech sections. `platform.minimaxi.com` serves the identical document.
 - Xiaomi MiMo: `https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go`. The
-  table's first column is the product line (`MiMo-V2.5 系列`), not a generic
-  `Model` header, so the model column falls back to the leftmost non-price column.
-  The page publishes the same models twice — `模型国内定价` in CNY and
-  `模型海外定价` in USD — and only the CNY tables are read. The ASR table (billed
-  per audio hour) and the plugin pricing section are not token pricing and are
-  skipped. The labelled 更新时间 in the rendered page is retained as the
-  catalogue's official update date.
+  older table's first column was the product line (`MiMo-V2.5 系列`), so that
+  labelled series column remains a fallback. Current tables explicitly label
+  `模型名称` after `推理类型`; one cell can name several model IDs separated by `、`,
+  and each gets its own priced record. `实时推理` and `批量推理` remain separate
+  offers, with batch excluded from the default standard-price message. A
+  parenthetical `即将下线` is not a context tier or price condition; the dated
+  retirement evidence comes from the independent deprecation log. The page
+  publishes the same models twice — `模型国内定价` in CNY and `模型海外定价` in USD —
+  and only the CNY tables are read. The ASR table (billed per audio hour) and
+  plugin pricing are not token pricing. The labelled 更新时间 is the official
+  catalogue update date.
 - OpenAI: `https://developers.openai.com/api/docs/pricing`; no public pricing JSON is exposed, so use its official `.md` representation.
 - Anthropic: `https://platform.claude.com/docs/en/about-claude/pricing`; no public pricing JSON is exposed, so use its official `.md` representation.
 - Google Gemini: `https://ai.google.dev/gemini-api/docs/pricing.md.txt`. The page

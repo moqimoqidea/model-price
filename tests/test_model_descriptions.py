@@ -20,10 +20,12 @@ from model_price.descriptions.sources import (
     AliyunDescriptionSource,
     ANTHROPIC_MODELS_MARKDOWN_URL,
     AnthropicDescriptionSource,
+    DeepSeekDescriptionSource,
     KIMI_MODELS_URL,
     KimiDescriptionSource,
     OpenAIDescriptionSource,
     TencentMirrorDescriptionSource,
+    VolcengineDescriptionSource,
 )
 from model_price.descriptions.tencent_mirror import (
     TENCENT_MODELS_URL,
@@ -98,6 +100,23 @@ class BrokenDescriptionSource(FakeDescriptionSource):
 
 
 class DescriptionSourceTests(unittest.TestCase):
+    def test_volcengine_percent_encodes_non_ascii_model_ids(self):
+        url = (
+            "https://console.volcengine.com/ark/region:cn-beijing/model/detail?"
+            "name=deepseek-v4-flash%E9%A2%84%E8%A7%88%E7%89%88"
+        )
+        client = MappingClient({url: "<title>Model Square</title>"})
+        self.assertIsNone(
+            VolcengineDescriptionSource(client).describe("deepseek-v4-flash预览版")
+        )
+        self.assertEqual(client.requests, [url])
+
+    def test_deepseek_preview_does_not_borrow_another_models_release(self):
+        client = MappingClient({})
+        source = DeepSeekDescriptionSource(client)
+        self.assertIsNone(source.describe("deepseek-v4-flash预览版"))
+        self.assertEqual(client.requests, [])
+
     def test_markdown_detail_keeps_summary_features_and_limits(self):
         url = "https://developers.openai.com/api/docs/models/gpt-test.md"
         source = OpenAIDescriptionSource(
@@ -408,6 +427,16 @@ class TencentMirrorTests(unittest.TestCase):
             for item in build_tencent_mirror(capture)["models"]
         }
         self.assertEqual(lifecycles, {"Past": "retired", "Future": "legacy"})
+
+    def test_sunset_uses_the_console_region_calendar_day(self):
+        capture = self.capture()
+        capture["captured_at"] = "2026-09-23T17:35:00Z"
+        capture["models"] = [{
+            "model_id": "Today", "display_name": "Today", "summary": "Model",
+            "capabilities": [], "lifecycle": "legacy",
+            "specifications": {"sunset_note": "9月24日下线"},
+        }]
+        self.assertEqual(build_tencent_mirror(capture)["models"][0]["lifecycle"], "retired")
 
 
 class SummaryOverLimitTests(unittest.TestCase):

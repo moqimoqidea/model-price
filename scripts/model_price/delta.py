@@ -157,16 +157,64 @@ def _scan_provider(
         report["lifecycle"] = scan_lifecycle(
             adapter, lifecycle_client, records, store, captured_at, selection, reference_at
         )
-    if descriptions is not None:
-        targets = changed_model_targets(report, records or [], adapter.provider_id)
-        for change in (report.get("lifecycle") or {}).get("changes", []):
-            item = change["event"]
-            name = item["model_id"]
-            if not any(normalize_model(target["model_id"]) == normalize_model(name) for target in targets):
-                targets.append({"model_id": name, "display_name": name, "provider_id": adapter.provider_id, "record": None})
-        if targets:
+    targets = changed_model_targets(report, records or [], adapter.provider_id)
+    targeted = {normalize_model(target["model_id"]) for target in targets}
+    for change in (report.get("lifecycle") or {}).get("changes", []):
+        name = change["event"]["model_id"]
+        key = normalize_model(name)
+        if key not in targeted:
+            record = next(
+                (item for item in records or [] if normalize_model(item["model_id"]) == key),
+                None,
+            )
+            targets.append(
+                {
+                    "model_id": name,
+                    "display_name": name,
+                    "provider_id": adapter.provider_id,
+                    "record": record,
+                }
+            )
+            targeted.add(key)
+    if targets:
+        current_ids = {
+            normalize_model(item["model_id"]) for item in records or []
+        }
+        retired_ids = {
+            normalize_model(name)
+            for name in (report.get("lifecycle") or {}).get("retired_model_ids", [])
+        }
+        notice_ids = {
+            normalize_model(name)
+            for name in (report.get("lifecycle") or {}).get("notice_model_ids", [])
+        }
+        report["model_availability"] = {
+            target["model_id"]: listing_state(
+                target["model_id"], current_ids, notice_ids, retired_ids,
+                catalogue_read=records is not None,
+            )
+            for target in targets
+        }
+        if descriptions is not None:
             report["model_descriptions"] = descriptions.resolve_many(targets)
     return report
+
+
+def listing_state(
+    model_id: str,
+    current_ids: set[str],
+    notice_ids: set[str],
+    retired_ids: set[str],
+    *,
+    catalogue_read: bool,
+) -> str:
+    """A future official notice wins over absence from a pricing-only catalogue."""
+    key = normalize_model(model_id)
+    if key in retired_ids:
+        return "delisted"
+    if key in notice_ids or not catalogue_read or key in current_ids:
+        return "listed"
+    return "delisted"
 
 
 def changed_model_targets(

@@ -31,11 +31,11 @@ from .diffing import (
     BASELINE_CREATED,
     BASELINE_NOT_FOUND,
     CHANGED,
+    CHANGE_FIELDS,
     PRICE_CHANGE_FIELD,
     UNCHANGED,
 )
 from .reporting import (
-    BULLET_CHANGE_FIELDS,
     CHANGE_FIELD_LABELS,
     DELTA_STATUS_LABELS,
     DESCRIPTION_STATUS_LABELS,
@@ -47,6 +47,7 @@ from .reporting import (
     UNPRICED,
     UNSTATED,
     banded_records,
+    availability_label,
     baseline_selection_text,
     change_digest,
     changed_descriptions,
@@ -59,6 +60,7 @@ from .reporting import (
     format_price,
     lifecycle_change_text,
     model_digest,
+    model_availability,
     offer_condition_text,
     offering_text,
     price_movement,
@@ -304,7 +306,9 @@ def band_lines(results: list[dict[str, Any]]) -> list[str]:
     return stacked(blocks)
 
 
-def description_lines(descriptions: list[dict[str, Any]]) -> list[str]:
+def description_lines(
+    descriptions: list[dict[str, Any]], *, show_availability: bool = False
+) -> list[str]:
     """One entry per model, from its vendor's own introduction.
 
     An introduction is a property of the model rather than of a price channel, so
@@ -317,6 +321,7 @@ def description_lines(descriptions: list[dict[str, Any]]) -> list[str]:
     return stacked(
         entry(
             position,
+            f"{availability_label(description) if show_availability else ''}"
             f"{description.get('display_name') or description.get('model_id', '')}"
             f"（{description.get('model_id', '')}）",
             description_fields(description),
@@ -418,7 +423,7 @@ def scan_blocks(payload: dict[str, Any]) -> list[list[str]]:
     subject = f"{SCAN_SUBJECT}（{comparison}）" if comparison else SCAN_SUBJECT
     return [
         header(SCAN_TITLE, subject, payload),
-        section("模型能力", description_lines(changed_descriptions(payload))),
+        section("模型能力", description_lines(changed_descriptions(payload), show_availability=True)),
         section("退役公告与时间节点", lifecycle_lines(reports)),
         section("模型价格", changed_blocks(reports)),
         section("渠道结论", channel_conclusion(payload)),
@@ -494,12 +499,22 @@ def changed_blocks(reports: list[dict[str, Any]]) -> list[str]:
     return stacked(blocks)
 
 
+PRICE_BULLET_CHANGE_FIELDS = tuple(
+    field for field in CHANGE_FIELDS
+    if field not in ("models_removed", PRICE_CHANGE_FIELD)
+)
+
+
 def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
     """Show standard prices while keeping distinct conditions separate."""
     changes = report.get("changes") or {}
     details: list[str] = []
-    for field_name in BULLET_CHANGE_FIELDS:
+    for field_name in PRICE_BULLET_CHANGE_FIELDS:
         items = changes.get(field_name) or []
+        items = [
+            item for item in items
+            if model_availability(report, item.get("model_id", "")) == "listed"
+        ]
         if field_name in ("offers_added", "offers_removed"):
             items = [item for item in items if is_standard_offer(item.get("offer") or {})]
         details.extend(
@@ -510,7 +525,8 @@ def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
         )
     moves = [
         move for move in changes.get(PRICE_CHANGE_FIELD) or []
-        if is_standard_offer(
+        if model_availability(report, move.get("model_id", "")) == "listed"
+        and is_standard_offer(
             {"name": move.get("offer"), "conditions": move.get("conditions")}
         )
     ]

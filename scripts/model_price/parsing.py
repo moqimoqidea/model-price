@@ -180,6 +180,10 @@ class TextTableParser(HTMLParser):
             self.cell.append(data)
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "li" and self.cell is not None:
+            # Lists inside a table cell are separate published values, just as
+            # explicit <br> tags are. Joining them erases capability boundaries.
+            self.cell.append("<br>")
         if tag in HEADING_TAGS and self.heading_level == int(tag[1]):
             # A heading replaces everything from its own level down, so an h3
             # keeps the h2 above it while an h2 starts a new top-level section.
@@ -310,7 +314,15 @@ def headed_document_tables(document: str) -> list[tuple[list[str], list[list[str
 # Headers that bill a non-token unit (audio duration, characters, calls) are not
 # token prices, so a per-million-token adapter must never read them. Without this
 # guard "输入音频时长" (input audio duration, billed per hour) looks like "input".
-NON_TOKEN_BILLING_MARKERS = ("时长", "小时", "秒", "字符", "千次", "万次", "/次")
+NON_TOKEN_BILLING_MARKERS = (
+    "时长", "小时", "秒", "字符", "千次", "万次", "/次", "/张", "/幅", "/页",
+)
+
+
+def non_token_billing_header(header: str) -> bool:
+    """Reject a price header whose named unit is not a token count."""
+    value = clean_text(header).lower().replace("-", "").replace(" ", "")
+    return any(marker in value for marker in NON_TOKEN_BILLING_MARKERS)
 
 # Cache *storage* is billed per million tokens per hour, so it stays a token price
 # even though its header names an hour. Detecting it first keeps the guard above
@@ -339,7 +351,7 @@ def token_price_kind(header: str) -> str | None:
         "cache" in value and "storage" in value
     ):
         return "cache_storage"
-    if any(marker.replace(" ", "") in value for marker in NON_TOKEN_BILLING_MARKERS):
+    if non_token_billing_header(header):
         return None
     if describes_request_length(header):
         return None

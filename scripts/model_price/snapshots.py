@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from .core import write_json
 from .models import normalize_model
+from .parsing import non_token_billing_header
 from .paths import (
     DEFAULT_SNAPSHOT_DIR,
     SNAPSHOT_RETENTION_COUNT,
@@ -459,7 +460,47 @@ def _read_snapshot(path: Path) -> dict[str, Any] | None:
         return None
     if payload.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
         return None
-    return payload
+    return _without_mislabeled_token_prices(payload)
+
+
+def _without_mislabeled_token_prices(payload: dict[str, Any]) -> dict[str, Any]:
+    """Ignore non-token rows misclassified in older price baselines.
+
+    Their original source headers remain in each price label, so the correction
+    can be applied on read without rewriting an archived historical document.
+    Retirement archives have a different model shape and are left untouched.
+    """
+    if (payload.get("source") or {}).get("kind") == "official_retirement_notice":
+        return payload
+    models = payload.get("models")
+    if not isinstance(models, dict):
+        return payload
+    cleaned_models: dict[str, Any] = {}
+    changed = False
+    for key, model in models.items():
+        if not isinstance(model, dict) or not isinstance(model.get("offers"), list):
+            cleaned_models[key] = model
+            continue
+        offers = []
+        for offer in model["offers"]:
+            prices = [
+                price for price in offer.get("prices", [])
+                if not (
+                    str(price.get("unit", "")).endswith("_per_million_tokens")
+                    and non_token_billing_header(str(price.get("label", "")))
+                )
+            ]
+            if len(prices) != len(offer.get("prices", [])):
+                changed = True
+            if prices:
+                offers.append({**offer, "prices": prices})
+            else:
+                changed = True
+        if offers:
+            cleaned_models[key] = {**model, "offers": offers}
+        else:
+            changed = True
+    return {**payload, "models": cleaned_models} if changed else payload
 
 
 def _archive_moment(path: Path) -> datetime | None:

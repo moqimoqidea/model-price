@@ -7,6 +7,7 @@ an unreadable notice is never interpreted as a withdrawn model.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
@@ -25,14 +26,25 @@ SOURCES = {
     "volcengine": "https://docs.volcengine.com/docs/ark/model-deprecation-notice",
     "tencent": "https://cloud.tencent.com/document/product/1823/130758",
     "baidu": "https://cloud.baidu.com/doc/qianfan/s/zmh4stou3",
-    "deepseek": "https://api-docs.deepseek.com/zh-cn/updates",
+    "deepseek": "https://api-docs.deepseek.com/zh-cn/updates/",
     "kimi": "https://platform.kimi.com/docs/models.md",
     "xiaomi": "https://mimo.mi.com/static/docs/updates/deprecate.md",
     "openai": "https://developers.openai.com/api/docs/deprecations.md",
     "anthropic": "https://platform.claude.com/docs/en/about-claude/model-deprecations.md",
     "google": "https://ai.google.dev/gemini-api/docs/deprecations",
     "xai": "https://docs.x.ai/llms.txt",
+    "zhipu": "https://docs.bigmodel.cn/cn/guide/models/free/glm-4.5-flash.md",
+    "minimax": "https://platform.minimax.io/docs/guides/models-intro.md",
 }
+ZHIPU_NOTICE_URLS = (
+    SOURCES["zhipu"],
+    "https://docs.bigmodel.cn/cn/guide/models/text/glm-z1.md",
+    "https://docs.bigmodel.cn/cn/guide/models/text/glm-4.5.md",
+)
+VOLCENGINE_NOTICE_API = (
+    "https://docs.volcengine.com/api/doc/getDocDetail"
+    "?DocumentID=1350667&LibraryID=82379&lang=zh"
+)
 
 ENGLISH_DATE = re.compile(
     r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
@@ -85,6 +97,7 @@ def event(
     replacement: str | None = None,
     end_behavior: str = "unknown",
     eos_earliest: bool = False,
+    notice_status: str | None = None,
     scope: str = "API",
 ) -> LifecycleEvent:
     return {
@@ -96,6 +109,7 @@ def event(
         "replacement": replacement,
         "end_behavior": end_behavior,
         "eos_earliest": eos_earliest,
+        "notice_status": notice_status,
         "scope": scope,
         "source_url": source_url,
     }
@@ -323,6 +337,7 @@ def anthropic_events(document: str) -> list[LifecycleEvent]:
                     announced_at=date_value(row[2]),
                     eos_at=date_value(row[3]),
                     end_behavior="unavailable",
+                    notice_status="retired" if row[1] == "Retired" else "scheduled",
                     scope="Anthropic-operated API",
                 )
                 for row in rows[1:]
@@ -333,8 +348,45 @@ def anthropic_events(document: str) -> list[LifecycleEvent]:
     raise SourceError("Anthropic model status table was not found")
 
 
+class GrayModelRowParser(HTMLParser):
+    """Google marks completed shutdowns with a row-gray table class."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.models: set[str] = set()
+        self.gray = False
+        self.first_cell = False
+        self.cell_count = 0
+        self.words: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "tr":
+            self.gray = "row-gray" in (dict(attrs).get("class") or "").split()
+            self.cell_count = 0
+        elif self.gray and tag in ("td", "th"):
+            self.first_cell = self.cell_count == 0
+            self.cell_count += 1
+            if self.first_cell:
+                self.words = []
+
+    def handle_data(self, data: str) -> None:
+        if self.first_cell:
+            self.words.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("td", "th") and self.first_cell:
+            name = clean_text(" ".join(self.words))
+            if MODEL_ID.fullmatch(name):
+                self.models.add(normalize_model(name))
+            self.first_cell = False
+        elif tag == "tr":
+            self.gray = False
+
+
 def gemini_events(document: str) -> list[LifecycleEvent]:
-    """Google calls each listed shutdown date the earliest possible date."""
+    """Use gray rows for actual shutdowns; other dates are only earliest dates."""
+    gray_rows = GrayModelRowParser()
+    gray_rows.feed(document)
     found = []
     for headings, rows in headed_document_tables(document):
         if not rows or rows[0][:3] != ["Model", "Release date", "Shutdown date"]:
@@ -342,14 +394,19 @@ def gemini_events(document: str) -> list[LifecycleEvent]:
         if "Managed agents" in headings:
             continue
         for row in rows[1:]:
-            if len(row) < 3 or not (eos := date_value(row[2])) or not model_ids(row[0]):
+            if len(row) < 3 or not model_ids(row[0]):
+                continue
+            confirmed = normalize_model(row[0]) in gray_rows.models
+            eos = date_value(row[2])
+            if not eos and not confirmed:
                 continue
             found.append(
                 event(
                     row[0],
                     SOURCES["google"],
                     eos_at=eos,
-                    eos_earliest=True,
+                    eos_earliest=bool(eos),
+                    notice_status="retired" if confirmed else "scheduled",
                     replacement=row[3] if len(row) > 3 else None,
                     scope="Gemini API",
                 )
@@ -439,6 +496,89 @@ def xiaomi_events(document: str) -> list[LifecycleEvent]:
     return found
 
 
+def zhipu_events(pages: dict[str, str]) -> list[LifecycleEvent]:
+    """Read explicit status sentences on model pages, without assuming a timetable."""
+    found: dict[str, LifecycleEvent] = {}
+    status_pattern = re.compile(
+        r"(?P<status>已下线|即将下线|将于\s*[^。；，]{0,45}?下线)"
+    )
+    for url, document in pages.items():
+        page_found = False
+        for line in document.splitlines():
+            match = status_pattern.search(line)
+            if not match:
+                continue
+            names = model_ids(line[: match.start()])
+            if not names:
+                continue
+            page_found = True
+            sentence = line[match.end() :]
+            replacements = model_ids(sentence)
+            redirect = "自动路由" in sentence
+            status = "retired" if match["status"] == "已下线" else "scheduled"
+            eos = date_value(match["status"]) if "将于" in match["status"] else None
+            if redirect:
+                behavior = "redirect"
+            elif status == "retired":
+                behavior = "unavailable"
+            else:
+                behavior = "unknown"
+            for name in names:
+                found[name] = event(
+                    name,
+                    url,
+                    eos_at=eos,
+                    replacement=replacements[0] if replacements else None,
+                    end_behavior=behavior,
+                    notice_status=status,
+                    scope="智谱 BigModel API",
+                )
+        if not page_found:
+            raise SourceError(f"Zhipu model page published no readable status: {url}")
+    return list(found.values())
+
+
+def minimax_events(document: str) -> list[LifecycleEvent]:
+    """Legacy tables are status evidence; only explicit API shutdown has a date."""
+    found: list[LifecycleEvent] = []
+    legacy = False
+    for line in document.splitlines():
+        if '<Accordion title="Legacy Models">' in line:
+            legacy = True
+        elif "</Accordion>" in line:
+            legacy = False
+        elif legacy and line.lstrip().startswith("|"):
+            match = re.search(r"\[([^]]+)\]\([^)]+\)", line.split("|", 2)[1])
+            if match:
+                found.append(
+                    event(
+                        match[1], SOURCES["minimax"], notice_status="legacy",
+                        scope="MiniMax API",
+                    )
+                )
+    for note in re.findall(r"<Note\b[^>]*>(.*?)</Note>", document, re.I | re.S):
+        if "free music generation apis" not in note.lower():
+            continue
+        music = re.search(
+            r"free music generation APIs\s*\((?P<ids>[^)]+)\)\s*"
+            r"will be discontinued",
+            note,
+            re.I | re.S,
+        )
+        eos = date_value(note)
+        if not music or not eos:
+            raise SourceError("MiniMax free music shutdown notice changed shape")
+        found.extend(
+            event(
+                name, SOURCES["minimax"], eos_at=eos,
+                end_behavior="unavailable", notice_status="scheduled",
+                scope="MiniMax free music API",
+            )
+            for name in model_ids(music["ids"])
+        )
+    return found
+
+
 class NoticeLinkParser(HTMLParser):
     """Collect official announcement links and their visible titles."""
 
@@ -498,7 +638,7 @@ def tencent_events(client: Any, index: str) -> list[LifecycleEvent]:
         replacement = None
         replacement_match = re.search(r"系统将自动为您切换至\s*([^。；]+)", body)
         if replacement_match:
-            replacement = clean_text(replacement_match[1]).removesuffix("模型")
+            replacement = clean_text(replacement_match[1]).removesuffix("模型").strip()
         for name in model_ids(match[1]):
             found.append(
                 event(
@@ -608,6 +748,7 @@ PARSERS: dict[str, Callable[[str], list[LifecycleEvent]]] = {
     "openai": openai_events,
     "anthropic": anthropic_events,
     "google": gemini_events,
+    "minimax": minimax_events,
 }
 
 
@@ -623,7 +764,22 @@ def read_events(
     url = SOURCES.get(provider_id)
     if not url:
         return None, []
-    document = client.get_text(url)
+    if provider_id == "zhipu":
+        pages = {page_url: client.get_text(page_url) for page_url in ZHIPU_NOTICE_URLS}
+        found = zhipu_events(pages)
+        if not found:
+            raise SourceError("Zhipu model pages published no readable withdrawal notices")
+        return url, found
+    document = client.get_text(
+        VOLCENGINE_NOTICE_API if provider_id == "volcengine" else url
+    )
+    if provider_id == "volcengine":
+        try:
+            document = json.loads(document)["Result"]["MDContent"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise SourceError("unexpected Volcengine retirement document response") from exc
+        if not isinstance(document, str) or not document.strip():
+            raise SourceError("Volcengine retirement document published no Markdown")
     if provider_id == "tencent":
         found = tencent_events(client, document)
     elif provider_id == "xai":

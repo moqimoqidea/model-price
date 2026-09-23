@@ -14,7 +14,7 @@ DEFAULT_SNAPSHOT_DIR = SKILL_DIR / "snapshots"
 CACHE_TTL = timedelta(hours=3)
 # Bumped whenever a provider's source or parsing changes, so entries written by an
 # older version are ignored instead of being served for the rest of their TTL.
-CACHE_SCHEMA_VERSION = 11
+CACHE_SCHEMA_VERSION = 15
 
 # Snapshots are archived baselines rather than response caches, so they are
 # versioned separately from the TTL cache. Bump this whenever their shape changes;
@@ -23,7 +23,7 @@ CACHE_SCHEMA_VERSION = 11
 SNAPSHOT_SCHEMA_VERSION = 1
 # Retirement notices have their own archived shape under lifecycle-<provider>.
 # Keep their compatibility gate independent from price catalogue baselines.
-LIFECYCLE_SCHEMA_VERSION = 1
+LIFECYCLE_SCHEMA_VERSION = 2
 
 # Successful scans are archived per provider. The hard count limit reserves the
 # last scan of each day in the recent calendar window, then fills remaining slots

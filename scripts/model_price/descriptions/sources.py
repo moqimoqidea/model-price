@@ -6,10 +6,10 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 from ..errors import SourceError
-from ..models import model_matches, normalize_model
+from ..models import normalize_model
 from ..parsing import headed_document_tables, markdown_tables
 from ..providers.aliyun import (
     ALIYUN_MODELS_URL,
@@ -19,6 +19,7 @@ from ..providers.aliyun import (
 from ..text import CELL_BREAK_RE, clean_text
 from .core import (
     ACTIVE,
+    LEGACY,
     PREVIEW,
     RETIRED,
     UNKNOWN,
@@ -47,6 +48,7 @@ KIMI_MODELS_URL = "https://platform.kimi.com/docs/models.md"
 MINIMAX_MODELS_URL = "https://platform.minimax.cn/docs/guides/models-intro.md"
 ZHIPU_MODELS_URL = "https://docs.bigmodel.cn/cn/guide/start/model-overview.md"
 XIAOMI_MODELS_URL = "https://mimo.mi.com/docs/zh-CN/quick-start/summary/model"
+XIAOMI_MODEL_ID = re.compile(r"(?<![\w.-])[A-Za-z][A-Za-z0-9]*(?:[._-][A-Za-z0-9]+)+(?![\w.-])")
 VOLCENGINE_MODELS_URL = "https://console.volcengine.com/ark/region:cn-beijing/model"
 
 DEEPSEEK_NEWS = (
@@ -428,9 +430,10 @@ class XiaomiDescriptionSource(DescriptionSource):
             if headers[:2] == ["需求场景", "推荐模型"]:
                 for row in table[1:]:
                     if len(row) >= 2:
-                        scenarios.setdefault(normalize_model(row[1]), []).append(
-                            clean_text(row[0])
-                        )
+                        for model in XIAOMI_MODEL_ID.findall(row[1]):
+                            scenarios.setdefault(normalize_model(model), []).append(
+                                clean_text(row[0])
+                            )
                 continue
             if (
                 not headers
@@ -451,7 +454,6 @@ class XiaomiDescriptionSource(DescriptionSource):
             for row in table[1:]:
                 if len(row) <= ability_index:
                     continue
-                model = clean_text(row[0])
                 capabilities = [
                     clean_text(value)
                     for value in CELL_BREAK_RE.split(row[ability_index])
@@ -462,12 +464,22 @@ class XiaomiDescriptionSource(DescriptionSource):
                     if limit_index is not None and limit_index < len(row)
                     else ""
                 )
-                entries[normalize_model(model)] = {
-                    "model": model,
-                    "capabilities": capabilities,
-                    "limits": limits,
-                    "category": category,
-                }
+                matches = list(XIAOMI_MODEL_ID.finditer(row[0]))
+                for index, match in enumerate(matches):
+                    model = match.group()
+                    next_start = (
+                        matches[index + 1].start()
+                        if index + 1 < len(matches)
+                        else len(row[0])
+                    )
+                    suffix = row[0][match.end():next_start]
+                    entries[normalize_model(model)] = {
+                        "model": model,
+                        "capabilities": capabilities,
+                        "limits": limits,
+                        "category": category,
+                        "lifecycle": LEGACY if "即将下线" in suffix else ACTIVE,
+                    }
         for key, values in scenarios.items():
             if key in entries:
                 entries[key]["scenarios"] = values
@@ -502,7 +514,7 @@ class XiaomiDescriptionSource(DescriptionSource):
             self.source_kind,
             source_name=self.source_name,
             capabilities=[entry["category"], *entry["capabilities"]],
-            lifecycle=ACTIVE,
+            lifecycle=entry["lifecycle"],
         )
 
 
@@ -520,15 +532,17 @@ class DeepSeekDescriptionSource(DescriptionSource):
         record: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         key = normalize_model(model_id).rsplit("/", 1)[-1]
-        # Prefer an exact historical page before following live aliases.
-        candidates = sorted(
-            DEEPSEEK_NEWS,
-            key=lambda item: 0 if key in map(normalize_model, item[1]) else 1,
-        )
-        for url, aliases, lifecycle in candidates:
-            exact = key in {normalize_model(alias) for alias in aliases}
-            related = any(model_matches(model_id, alias) for alias in aliases)
-            if not exact and not related:
+        # These release pages describe literal IDs. A broad family match would
+        # attach a Vision-Exp article to a separately priced preview build.
+        for url, aliases, lifecycle in DEEPSEEK_NEWS:
+            alias_keys = {normalize_model(alias) for alias in aliases}
+            exact = key in alias_keys
+            dated_version = any(
+                key.startswith(f"{alias}-")
+                and re.fullmatch(r"\d{4,8}", key[len(alias) + 1 :])
+                for alias in alias_keys
+            )
+            if not exact and not dated_version:
                 continue
             tags = meta_tags(self.client.get_text(url))
             summary = tags.get("description") or tags.get("og:description", "")
@@ -605,7 +619,7 @@ class VolcengineDescriptionSource(DescriptionSource):
         *,
         record: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        url = f"{self.source_url}/detail?name={model_id}"
+        url = f"{self.source_url}/detail?name={quote(model_id, safe='')}"
         tags = meta_tags(self.client.get_text(url))
         summary = tags.get("description") or tags.get("og:description", "")
         title = tags.get("og:title") or ""

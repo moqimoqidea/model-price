@@ -77,6 +77,18 @@ class TabularTokenPricingAdapter(PriceSource):
         heading = headings[-1] if headings else ""
         return normalize_model(heading) or self.default_offer_name
 
+    def row_offer_name(self, headings: list[str], conditions: dict[str, Any]) -> str:
+        """Name an offer after reading row conditions such as its billing mode."""
+        return self.offer_name(headings)
+
+    def row_conditions(self, conditions: dict[str, Any]) -> dict[str, Any]:
+        """Keep only the conditions that distinguish the named offer."""
+        return conditions
+
+    def model_variants(self, display_name: str) -> list[str]:
+        """Expand a model cell when one priced row names several model IDs."""
+        return [display_name]
+
     def model_conditions(self, display_name: str) -> dict[str, Any]:
         return {}
 
@@ -179,7 +191,7 @@ class TabularTokenPricingAdapter(PriceSource):
                         )
                 if not prices:
                     continue
-                conditions = self.model_conditions(display_name)
+                shared_conditions = self.model_conditions(display_name)
                 for index in range(len(headers)):
                     if index == model_index or index in price_columns:
                         continue
@@ -192,27 +204,31 @@ class TabularTokenPricingAdapter(PriceSource):
                             if time_band_label(value)
                             else self.condition_name(raw_headers[index])
                         )
-                        conditions[key] = value
-                # A trailing parenthetical often carries a real billing tier
-                # ("grok-4.6 (≥ 200k prompt tokens)"). It is dropped from the
-                # model id, so keep it as a condition instead of losing it.
-                name_without_tier, tier = split_trailing_parenthetical(display_name)
-                if tier:
-                    conditions["context_tier"] = tier
-                if note:
-                    conditions["model_note"] = note
-                conditions["billing_mode"] = "pay_as_you_go"
+                        shared_conditions[key] = value
+                shared_conditions["billing_mode"] = "pay_as_you_go"
                 if headings:
-                    conditions["source_section"] = headings[-1]
-                rows.append(
-                    {
-                        "model_id": normalize_model(name_without_tier),
-                        "display_name": display_name,
-                        "offer_name": self.offer_name(headings),
-                        "conditions": conditions,
-                        "prices": prices,
-                    }
-                )
+                    shared_conditions["source_section"] = headings[-1]
+                offer_name = self.row_offer_name(headings, shared_conditions)
+                shared_conditions = self.row_conditions(shared_conditions)
+                for model_name in self.model_variants(display_name):
+                    conditions = dict(shared_conditions)
+                    # A trailing parenthetical often carries a real billing tier
+                    # ("grok-4.6 (≥ 200k prompt tokens)"). It is dropped from the
+                    # model id, so keep it as a condition instead of losing it.
+                    name_without_tier, tier = split_trailing_parenthetical(model_name)
+                    if tier:
+                        conditions["context_tier"] = tier
+                    if note:
+                        conditions["model_note"] = note
+                    rows.append(
+                        {
+                            "model_id": normalize_model(name_without_tier),
+                            "display_name": model_name,
+                            "offer_name": offer_name,
+                            "conditions": conditions,
+                            "prices": prices,
+                        }
+                    )
         if not rows:
             raise SourceError("official token pricing table was not found")
         self._parsed_rows = rows

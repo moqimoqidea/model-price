@@ -147,6 +147,12 @@ VOLC_MARKDOWN = """# 大语言模型
 |分辨率 |宽高比 |输入视频时长（秒） |输出视频时长（秒） |doubao\\-seedance 视频价格（元/个） |
 |---|---|---|---|---|
 |480p |16:9 |2~30 |5 |3.63 |
+
+# 图片生成模型
+
+|模型名称 |输入图单价（元/张） |输出图单价（元/张） |
+|---|---|---|
+|doubao\\-seedream\\-5\\-0\\-flash |免费 |0.12 |
 """
 
 
@@ -530,6 +536,9 @@ class StructuredDocumentTests(unittest.TestCase):
     def test_a_table_without_a_model_column_is_not_a_catalogue(self):
         self.assertNotIn("480p", self.adapter().list_models())
         self.assertEqual(self.adapter().query("480p"), [])
+
+    def test_image_prices_are_not_relabeled_as_token_prices(self):
+        self.assertEqual(self.adapter().query("doubao-seedream-5-0-flash"), [])
 
     def test_tencent_rowspan_placeholders_keep_columns_aligned(self):
         def cell(value, row_span=None, col_span=None):
@@ -938,6 +947,23 @@ XIAOMI_HTML = """<div>更新时间<!-- --> <!-- -->2026 年 08 月 06 日</div>
 </table>
 """
 
+XIAOMI_CURRENT_HTML = """<div>更新时间 2026 年 09 月 22 日</div>
+<h2>模型国内定价</h2>
+<table>
+<tr><th>推理类型</th><th>模型名称</th><th>输入（命中缓存）</th><th>输入（未命中缓存）</th><th>输出</th></tr>
+<tr><td>实时推理</td><td>mimo-v2.6-pro、mimo-v2.5-pro（即将下线）</td><td>¥0.025</td><td>¥3.00</td><td>¥6.00</td></tr>
+<tr><td>实时推理</td><td>mimo-v2.6-flash、mimo-v2.5（即将下线）</td><td>¥0.02</td><td>¥1.00</td><td>¥2.00</td></tr>
+<tr><td>实时推理</td><td>mimo-v2.6-pro-ultraspeed</td><td>¥0.25</td><td>¥30.00</td><td>¥60.00</td></tr>
+<tr><td>批量推理</td><td>mimo-v2.6-pro</td><td>¥0.0125</td><td>¥1.50</td><td>¥3.00</td></tr>
+<tr><td>批量推理</td><td>mimo-v2.6-flash</td><td>¥0.01</td><td>¥0.50</td><td>¥1.00</td></tr>
+</table>
+<h2>模型海外定价</h2>
+<table>
+<tr><th>推理类型</th><th>模型名称</th><th>输入（命中缓存）</th><th>输入（未命中缓存）</th><th>输出</th></tr>
+<tr><td>实时推理</td><td>mimo-v2.6-pro</td><td>$0.0036</td><td>$0.435</td><td>$0.87</td></tr>
+</table>
+"""
+
 
 class XiaomiAdapterTests(unittest.TestCase):
     def adapter(self):
@@ -973,6 +999,40 @@ class XiaomiAdapterTests(unittest.TestCase):
             self.adapter().query("mimo-v2.5")[0]["source_updated_at"],
             "2026-08-06",
         )
+
+    def test_current_page_keeps_each_model_and_billing_mode_separate(self):
+        adapter = XiaomiAdapter(MappingClient({XIAOMI_URL: XIAOMI_CURRENT_HTML}))
+        self.assertEqual(
+            adapter.list_models(),
+            [
+                "mimo-v2.5", "mimo-v2.5-pro", "mimo-v2.6-flash",
+                "mimo-v2.6-pro", "mimo-v2.6-pro-ultraspeed",
+            ],
+        )
+        self.assertEqual(adapter.query("实时推理"), [])
+        pro = adapter.query("mimo-v2.6-pro")[0]
+        self.assertEqual([offer["name"] for offer in pro["offers"]],
+                         ["模型国内定价", "batch"])
+        self.assertEqual(price_lookup(pro["offers"][0], "input")["amount"], "3.00")
+        self.assertEqual(price_lookup(pro["offers"][1], "input")["amount"], "1.50")
+        legacy = adapter.query("mimo-v2.5-pro")[0]
+        self.assertNotIn("model_note", legacy["offers"][0]["conditions"])
+        self.assertNotIn("context_tier", legacy["offers"][0]["conditions"])
+        self.assertNotIn("推理类型", legacy["offers"][0]["conditions"])
+        self.assertEqual(legacy["source_updated_at"], "2026-09-22")
+        self.assertEqual(legacy["currency"], "CNY")
+
+    def test_current_page_does_not_relist_unchanged_legacy_prices(self):
+        before_adapter = self.adapter()
+        after_adapter = XiaomiAdapter(MappingClient({XIAOMI_URL: XIAOMI_CURRENT_HTML}))
+        before = build_snapshot(before_adapter, before_adapter.catalog_records(), "2026-09-20T23:00:00+08:00")
+        after = build_snapshot(after_adapter, after_adapter.catalog_records(), "2026-09-24T02:00:00+08:00")
+        changes = compare_snapshots(before, after)["changes"]
+        self.assertEqual(len(changes["models_added"]), 3)
+        self.assertEqual(changes["models_removed"], [])
+        self.assertEqual(changes["offers_added"], [])
+        self.assertEqual(changes["offers_removed"], [])
+        self.assertEqual(changes["price_changes"], [])
 
 
 class PriceUnitTests(unittest.TestCase):
@@ -2350,6 +2410,23 @@ def render_scan(store, providers, captured_at):
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_legacy_image_rate_does_not_become_a_false_model_removal(self):
+        current = snapshot_of([scanned_record("m1", "M1", "2", "8")])
+        legacy = json.loads(json.dumps(current))
+        image = json.loads(json.dumps(legacy["models"]["m1"]))
+        image["model_id"] = "image-model"
+        image["offers"][0]["prices"] = [{
+            "type": "output", "label": "输出图单价（元/张）",
+            "amount": "0.12", "unit": "CNY_per_million_tokens",
+        }]
+        legacy["models"]["image-model"] = image
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "fake.json").write_text(json.dumps(legacy))
+            previous = SnapshotStore(Path(directory)).read("fake")
+        self.assertIsNotNone(previous)
+        self.assertEqual(list(previous["models"]), ["m1"])
+        self.assertEqual(compare_snapshots(previous, current)["status"], UNCHANGED)
+
     def test_a_model_without_a_price_is_left_out_of_the_catalogue(self):
         unpriced = make_record(
             "fake",

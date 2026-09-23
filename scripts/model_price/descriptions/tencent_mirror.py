@@ -6,6 +6,7 @@ import re
 from copy import deepcopy
 from datetime import date, datetime
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 from ..models import normalize_model
 from ..text import clean_text
@@ -82,6 +83,9 @@ def _apply_sunset_lifecycle(
     """Distinguish a scheduled legacy model from one already retired."""
     try:
         captured = datetime.fromisoformat(str(captured_at).replace("Z", "+00:00"))
+        if captured.tzinfo is None:
+            return
+        captured = captured.astimezone(ZoneInfo("Asia/Shanghai"))
     except (TypeError, ValueError):
         return
     for item in models:
@@ -145,9 +149,11 @@ def validate_tencent_mirror(payload: dict[str, Any]) -> None:
         errors.append("schema_version must be 1")
     captured_at = payload.get("captured_at")
     try:
-        datetime.fromisoformat(str(captured_at).replace("Z", "+00:00"))
+        parsed_at = datetime.fromisoformat(str(captured_at).replace("Z", "+00:00"))
+        if parsed_at.tzinfo is None:
+            raise ValueError("timestamp has no offset")
     except (TypeError, ValueError):
-        errors.append("captured_at must be an ISO-8601 timestamp")
+        errors.append("captured_at must be an ISO-8601 timestamp with offset")
     if payload.get("source_url") != TENCENT_MODELS_URL:
         errors.append("source_url must identify the TokenHub model square")
     models = payload.get("models")

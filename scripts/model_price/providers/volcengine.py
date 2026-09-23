@@ -13,7 +13,7 @@ from typing import Any
 
 from .base import TabularTokenPricingAdapter
 from ..errors import SourceError
-from ..parsing import describes_request_length
+from ..parsing import describes_request_length, non_token_billing_header
 from ..text import clean_text, numeric_values
 
 VOLCENGINE_PAGE_URL = "https://docs.volcengine.com/docs/82379/1544106"
@@ -42,6 +42,8 @@ def price_type_from_header(header: str) -> str:
         return "other"
     if "缓存存储" in compact:
         return "cache_storage"
+    if non_token_billing_header(header):
+        return "other"
     if "缓存命中" in compact and "音频" in compact and "非音频" not in compact:
         return "audio_cache_hit"
     if "缓存命中" in compact:
