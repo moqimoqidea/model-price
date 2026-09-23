@@ -22,6 +22,7 @@ from .diffing import (
     compare_snapshots,
 )
 from .models import normalize_model
+from .lifecycle import scan_lifecycle
 from .snapshots import (
     BaselineSelection,
     SnapshotStore,
@@ -53,6 +54,7 @@ def scan_providers(
     captured_at: str | None = None,
     descriptions: DescriptionResolver | None = None,
     baseline: BaselineSelection | None = None,
+    lifecycle_client: Any | None = None,
 ) -> dict[str, Any]:
     """Scan each provider, compare it with the requested baseline, and archive it."""
     started = captured_at or now_iso()
@@ -66,6 +68,7 @@ def scan_providers(
             descriptions=descriptions,
             selection=selection,
             reference_at=reference,
+            lifecycle_client=lifecycle_client,
         )
         for adapter in adapters
     ]
@@ -85,6 +88,7 @@ def scan_provider(
     *,
     descriptions: DescriptionResolver | None = None,
     baseline: BaselineSelection | None = None,
+    lifecycle_client: Any | None = None,
 ) -> dict[str, Any]:
     """Read one provider's catalogue, then report it against the stored baseline.
 
@@ -99,6 +103,7 @@ def scan_provider(
         descriptions=descriptions,
         selection=baseline or parse_baseline_selection(None),
         reference_at=reference,
+        lifecycle_client=lifecycle_client,
     )
 
 
@@ -110,6 +115,7 @@ def _scan_provider(
     descriptions: DescriptionResolver | None,
     selection: BaselineSelection,
     reference_at: datetime,
+    lifecycle_client: Any | None,
 ) -> dict[str, Any]:
     """Run one scan after its shared timestamp and selection are validated."""
     latest = store.read(adapter.provider_id)
@@ -120,13 +126,16 @@ def _scan_provider(
             adapter.provider_id, selection, reference_at=reference_at
         )
     )
+    records: list[dict[str, Any]] | None = None
     try:
         records = adapter.catalog_records()
         snapshot = build_snapshot(adapter, records, captured_at)
     except Exception as exc:
-        return failed(adapter, previous, latest, captured_at, str(exc))
-    if not snapshot["models"]:
-        return failed(
+        report = failed(adapter, previous, latest, captured_at, str(exc))
+    else:
+        report = None
+    if report is None and not snapshot["models"]:
+        report = failed(
             adapter,
             previous,
             latest,
@@ -134,19 +143,29 @@ def _scan_provider(
             "the source published no priced model",
             status=EMPTY_SCAN,
         )
-    store.write(adapter.provider_id, snapshot)
-    report = compare_snapshots(
-        previous,
-        snapshot,
-        no_baseline_status=(
-            BASELINE_CREATED if selection.is_latest else BASELINE_NOT_FOUND
-        ),
-    )
-    report["last_successful_at"] = (latest or {}).get("captured_at")
-    if descriptions is not None and report["status"] == CHANGED:
-        report["model_descriptions"] = descriptions.resolve_many(
-            changed_model_targets(report, records, adapter.provider_id)
+    if report is None:
+        store.write(adapter.provider_id, snapshot)
+        report = compare_snapshots(
+            previous,
+            snapshot,
+            no_baseline_status=(
+                BASELINE_CREATED if selection.is_latest else BASELINE_NOT_FOUND
+            ),
         )
+        report["last_successful_at"] = (latest or {}).get("captured_at")
+    if lifecycle_client is not None:
+        report["lifecycle"] = scan_lifecycle(
+            adapter, lifecycle_client, records, store, captured_at, selection, reference_at
+        )
+    if descriptions is not None:
+        targets = changed_model_targets(report, records or [], adapter.provider_id)
+        for change in (report.get("lifecycle") or {}).get("changes", []):
+            item = change["event"]
+            name = item["model_id"]
+            if not any(normalize_model(target["model_id"]) == normalize_model(name) for target in targets):
+                targets.append({"model_id": name, "display_name": name, "provider_id": adapter.provider_id, "record": None})
+        if targets:
+            report["model_descriptions"] = descriptions.resolve_many(targets)
     return report
 
 
@@ -215,4 +234,9 @@ def summarize(reports: Iterable[dict[str, Any]]) -> dict[str, Any]:
         summary[report["status"]] = summary.get(report["status"], 0) + 1
         for field in CHANGE_FIELDS:
             summary[field] += len((report.get("changes") or {}).get(field, []))
+        if "lifecycle" in report:
+            lifecycle = report["lifecycle"]
+            summary["lifecycle_changes"] = summary.get("lifecycle_changes", 0) + len(lifecycle.get("changes") or [])
+            if lifecycle.get("status") == SOURCE_ERROR:
+                summary["lifecycle_source_errors"] = summary.get("lifecycle_source_errors", 0) + 1
     return summary

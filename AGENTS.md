@@ -55,6 +55,8 @@ Standard library only, Python 3, no install step, no build step.
 │       ├── snapshots.py         archived baselines, retention, and point-in-time selection
 │       ├── diffing.py           what moved between two baselines
 │       ├── delta.py             the scan-every-catalogue run
+│       ├── lifecycle_sources.py official retirement notice readers
+│       ├── lifecycle.py         independent notice history and milestone changes
 │       ├── reporting.py         the shared wording: one value, written once
 │       ├── messages.py          the two plain-text messages those values are laid into
 │       ├── budget.py            how much of a message fits the channel carrying it
@@ -97,6 +99,8 @@ delta
   ├── SnapshotStore.select()          previous, yesterday, last month, or a timestamp
   ├── snapshots.build_snapshot() → SnapshotStore.write() archives every success
   ├── diffing.compare_snapshots(selected, current)
+  ├── lifecycle_sources.read_events()        fresh official notice evidence
+  ├── lifecycle.scan_lifecycle()             independent history and date crossings
   ├── descriptions.resolve_many(changed models only)
   └── messages.scan_message(payload)
 ```
@@ -236,6 +240,11 @@ even when the tests still pass.
     through `PriceSource.document()`. `HttpClient` retries only safe requests,
     respects short `Retry-After` values, and enforces a per-host request budget.
     POST is never retried unless its caller marks the operation idempotent.
+19. **Retirement evidence is independent of catalogue disappearance.** A missing
+    price row alone does not prove EOS. Keep each hosting platform's literal ID
+    and distinguish announcement, EOM, automatic redirect, and EOS. A failed or
+    empty notice read cannot overwrite the prior notice history. The earliest
+    possible shutdown date never becomes an asserted actual shutdown.
 
 ## Where a change goes
 
@@ -251,6 +260,7 @@ even when the tests still pass.
 | Change a DingTalk version, command, target check, or delivery recommendation | `im/dingtalk.md`; keep `SKILL.md` and `README.md` as links to that contract |
 | Change which providers a query covers | `registry.py` |
 | Change the cache or snapshot shape | `paths.py` version, then the reader and writer together |
+| Change retirement sources or milestone semantics | `lifecycle_sources.py` or `lifecycle.py`, plus `references/source-notes.md` and `references/schema.md` |
 | Change retries, timeouts, request budgets, or HTTP diagnostics | `core.py`, plus the network policy in `references/source-notes.md` |
 | Refresh the Tencent mirror | `scripts/update_tencent_model_mirror.py` |
 | Change the CLI surface | `query_model_prices.py` — and `SKILL.md` and `README.md`, which both document it |

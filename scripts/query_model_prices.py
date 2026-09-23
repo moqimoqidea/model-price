@@ -241,6 +241,7 @@ def main() -> int:
             ),
             SnapshotStore(args.snapshot_dir),
             descriptions=descriptions,
+            lifecycle_client=client,
             baseline=args.since,
             captured_at=(
                 datetime.now(args.timezone).isoformat(timespec="seconds")

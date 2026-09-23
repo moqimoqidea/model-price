@@ -21,6 +21,9 @@ CACHE_SCHEMA_VERSION = 11
 # an older baseline is then absent from comparisons instead of looking like every
 # model changed.
 SNAPSHOT_SCHEMA_VERSION = 1
+# Retirement notices have their own archived shape under lifecycle-<provider>.
+# Keep their compatibility gate independent from price catalogue baselines.
+LIFECYCLE_SCHEMA_VERSION = 1
 
 # Successful scans are archived per provider. The hard count limit reserves the
 # last scan of each day in the recent calendar window, then fills remaining slots

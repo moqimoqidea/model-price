@@ -94,6 +94,36 @@ Explicit refreshes also add `skill_update` before querying official sources:
 }
 ```
 
+When the CLI runs `delta`, each provider also carries an independent `lifecycle`
+result. Its `status` is `changed`, `unchanged`, `baseline_created`,
+`baseline_not_found`, `source_error`, or `no_public_schedule`. A price-source
+failure does not suppress a readable retirement notice, and a notice-source
+failure does not erase a successful price comparison. `source` names the official
+notice/index, `baseline_at` names the selected retirement baseline,
+`last_successful_at` names its most recent successful read, and `event_count`
+counts retained model records. `changes[]` contains:
+
+- `kind`: `new_notice`, `date_revised`, `detail_revised`, or `milestone_reached`
+- `event`: the vendor's literal `model_id`, `scope`, `source_url`, optional
+  `announced_at`, `eom_at`, `redirect_at`, `eos_at`, `replacement`,
+  `end_behavior`, and `eos_earliest`
+- for `date_revised`, `milestone`, `before`, and `after`; for
+  `milestone_reached`, `milestone`; for `detail_revised`, `field`, `before`,
+  and `after`
+
+Dates remain at the precision the vendor published. `eos_earliest` means the
+vendor gave the earliest possible shutdown date, so crossing it is not evidence
+that service actually stopped. `end_behavior` is `redirect`, `unavailable`,
+`existing_access_continues`, or `unknown`. Model IDs are scoped to the hosting
+provider: the same model name on two platforms can have different dates.
+`summary.lifecycle_changes` and `summary.lifecycle_source_errors` count these
+results separately from price changes when lifecycle scanning is enabled.
+
+Notice archives are under `snapshots/lifecycle-<provider>/`, independent of the
+price archives and with their own `lifecycle_schema_version`. A failed or empty
+notice read writes no retirement baseline. Older notices absent from a shortened
+index are retained as known evidence rather than treated as retractions.
+
 Each successful entry of `providers` carries `provider`, `status`, `baseline_at`,
 `last_successful_at`, `captured_at`, `source`, `model_count`, and `changes`.
 `baseline_at` is the archive actually selected for comparison;

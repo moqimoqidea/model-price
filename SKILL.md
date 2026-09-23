@@ -1,6 +1,6 @@
 ---
 name: model-price
-description: Find and compare major AI models by purpose, main capabilities, specifications, lifecycle exceptions, availability, version, service mode, and current official price, or scan every catalogue for model launches, withdrawals, billing changes, and price moves since the previous run or a retained historical baseline. Use for model research, capability and positioning comparisons, provider availability, token or cache pricing, and catalogue-change tracking involving Aliyun, Volcengine, Tencent Cloud, Baidu Qianfan, DeepSeek, Kimi, Zhipu, MiniMax, Xiaomi MiMo, OpenAI, Anthropic, Google Gemini, or xAI Grok.
+description: Find and compare major AI models by purpose, capabilities, specifications, lifecycle exceptions, availability, version, service mode, and official price, or scan catalogues and official retirement notices for launches, withdrawals, announcement dates, EOM, automatic redirects, EOS, billing changes, and price moves. Use for model research, provider availability, pricing, and change tracking involving Aliyun, Volcengine, Tencent Cloud, Baidu Qianfan, DeepSeek, Kimi, Zhipu, MiniMax, Xiaomi MiMo, OpenAI, Anthropic, Google Gemini, or xAI Grok.
 ---
 
 # Model Price
@@ -53,11 +53,13 @@ History retention is per provider and hard-capped at 1000 snapshots. Before prun
 
 Report every scanned provider in 渠道结论, including the ones that did not move. A first default run reports `baseline_created` and how many models it recorded, instead of claiming nothing changed. A historical request with no matching archive reports `baseline_not_found`. `unchanged` is stated plainly as 无变化. `changed` lists all change counts in 渠道结论; 模型价格 shows standard offers and price moves, keeping context tiers separate. Other offer prices remain in JSON and baselines but are omitted from the default message. A provider that fails (`source_error`) or yields no priced model (`empty_scan`) is named with its reason and writes no new archive, so every previous good baseline survives and the change stays visible once the source recovers.
 
+The same `delta` run checks official retirement notices independently of prices. Its 退役公告与时间节点 section reports newly published records, corrected dates, and EOM, redirect, or EOS dates reached since the selected baseline. The JSON has a separate `lifecycle` status per provider. Do not say an ID is unavailable solely because a price row vanished or a date arrived: a vendor may keep existing access, automatically route the old ID to a replacement, or publish only an earliest possible shutdown date. Keep the exact hosting provider, model ID, milestone, date precision, replacement, and source URL. A failed notice read keeps the last successful notice archive. Zhipu and MiniMax currently report `no_public_schedule` for per-model retirement dates; continue to report their price-catalogue changes.
+
 The JSON payload retains official source update times and the most recent successful snapshot time. Tencent, Baidu, and Xiaomi expose official stamps; DeepSeek is checked for a matching official news URL in the most recent seven days. Never label a fallback scan time as an official vendor update.
 
 For every model named in a `changed` provider's detail (new, removed, offer change, or price change), keep the 「模型能力」 block the scan opens with: it introduces each of those models once, before prices. Only changed models are looked up during `delta`; unchanged catalogues must not trigger hundreds of detail-page requests.
 
-The scan message follows this order: 模型价格自动检测 with the scan time and selected baseline, 模型能力, 模型价格, 渠道结论. Empty capability or price sections drop out. The price section names only changed channels and their standard prices. The conclusion gives total counts and names every channel by status, with failure reasons. Do not add a separate channel overview, channel pricing source list, or Skill update section.
+The scan message follows this order: 模型价格自动检测 with the scan time and selected baseline, 模型能力, 退役公告与时间节点, 模型价格, 渠道结论. Empty sections drop out. The price section names only changed channels and their standard prices. The conclusion gives total counts and names every channel by status, with failure reasons. Do not add a separate channel overview, channel pricing source list, or Skill update section.
 
 A scan that read every channel and found none of them moved prints its title and 渠道结论, naming the unchanged channels without repeating the catalogue.
 

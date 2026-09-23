@@ -539,7 +539,12 @@ def all_unchanged(payload: dict[str, Any]) -> bool:
     would claim knowledge the scan never had.
     """
     reports = payload.get("providers", [])
-    return bool(reports) and all(report["status"] == UNCHANGED for report in reports)
+    return bool(reports) and all(
+        report["status"] == UNCHANGED
+        and (report.get("lifecycle") or {}).get("status", UNCHANGED)
+        in (UNCHANGED, "no_public_schedule")
+        for report in reports
+    )
 
 
 def scan_conclusion(payload: dict[str, Any]) -> list[str]:
@@ -562,6 +567,10 @@ def scan_conclusion(payload: dict[str, Any]) -> list[str]:
         f"{summary.get(CHANGED, 0)} 个有变化",
         f"{summary.get(UNCHANGED, 0)} 个无变化",
     ]
+    if summary.get("lifecycle_changes"):
+        counts.append(f"退役公告及时间节点变化 {summary['lifecycle_changes']} 项")
+    if summary.get("lifecycle_source_errors"):
+        counts.append(f"退役公告读取失败 {summary['lifecycle_source_errors']} 个")
     if summary.get(BASELINE_CREATED):
         counts.append(f"{summary[BASELINE_CREATED]} 个首次建立基线")
     if summary.get(BASELINE_NOT_FOUND):
@@ -569,3 +578,78 @@ def scan_conclusion(payload: dict[str, Any]) -> list[str]:
     failed = summary.get(EMPTY_SCAN, 0) + summary.get(SOURCE_ERROR, 0)
     counts.append(f"{failed} 个未能完成")
     return [f"{scope}：{'，'.join(counts)}。"]
+
+
+LIFECYCLE_MILESTONE_LABELS = {
+    "announced_at": "公告日期",
+    "eom_at": "停止新购",
+    "redirect_at": "自动切换",
+    "eos_at": "服务下线",
+}
+
+LIFECYCLE_BEHAVIOR_LABELS = {
+    "redirect": "旧 ID 自动切换",
+    "unavailable": "旧 ID 停止服务",
+    "existing_access_continues": "存量服务继续可用",
+    "unknown": "后续行为未明确",
+}
+
+LIFECYCLE_DETAIL_LABELS = {
+    "replacement": "替换模型",
+    "end_behavior": "旧 ID 后续行为",
+    "eos_earliest": "仅最早可能下线日",
+}
+
+
+def lifecycle_detail_value(field: str, value: Any) -> str:
+    if value is None:
+        return "未公布"
+    if field == "end_behavior":
+        return LIFECYCLE_BEHAVIOR_LABELS.get(str(value), str(value))
+    if field == "eos_earliest":
+        return "是" if value else "否"
+    return str(value)
+
+
+def lifecycle_schedule_text(event: dict[str, Any]) -> str:
+    """Describe only dates and effects that the vendor actually published."""
+    parts = [
+        f"{LIFECYCLE_MILESTONE_LABELS[field]} {format_moment(event[field])}"
+        for field in LIFECYCLE_MILESTONE_LABELS
+        if event.get(field)
+    ]
+    if event.get("eos_earliest") and event.get("eos_at"):
+        parts[-1] += "（最早可能日期）"
+    if event.get("replacement"):
+        parts.append(f"推荐/切换至 {event['replacement']}")
+    behavior = event.get("end_behavior", "unknown")
+    if behavior != "unknown":
+        parts.append(LIFECYCLE_BEHAVIOR_LABELS.get(behavior, behavior))
+    return "；".join(parts)
+
+
+def lifecycle_change_text(change: dict[str, Any]) -> str:
+    """Name an announcement, correction, or crossed date without guessing state."""
+    event = change["event"]
+    model = f"{event['model_id']}（{event['scope']}）"
+    kind = change["kind"]
+    if kind == "new_notice":
+        return f"{model}：新增官方退役记录；{lifecycle_schedule_text(event)}"
+    if kind == "date_revised":
+        field = change["milestone"]
+        old = format_moment(change.get("before")) if change.get("before") else "未公布"
+        new = format_moment(change.get("after")) if change.get("after") else "未公布"
+        return f"{model}：{LIFECYCLE_MILESTONE_LABELS[field]}修订，{old} → {new}"
+    if kind == "milestone_reached":
+        field = change["milestone"]
+        label = LIFECYCLE_MILESTONE_LABELS[field]
+        if field == "eos_at" and event.get("eos_earliest"):
+            label = "最早可能下线日期已到，实际下线待官方确认"
+        elif field == "eos_at" and event.get("end_behavior") == "redirect":
+            label = "旧 ID 下线/自动切换日期已到"
+        else:
+            label += "日期已到"
+        return f"{model}：{label}（{format_moment(event[field])}）"
+    field = change.get("field", "详情")
+    label = LIFECYCLE_DETAIL_LABELS.get(field, field)
+    return f"{model}：{label}修订，{lifecycle_detail_value(field, change.get('before'))} → {lifecycle_detail_value(field, change.get('after'))}"

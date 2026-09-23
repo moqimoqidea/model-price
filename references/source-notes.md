@@ -5,6 +5,37 @@ markup: its own Markdown copy when the tables are real Markdown tables, otherwis
 its public structured JSON. Parse rendered HTML only when the vendor publishes
 neither.
 
+## Model retirement notices
+
+Retirement dates are read independently of price tables on every `delta` run.
+Do not infer an official EOS from a model disappearing from a price catalogue:
+catalogue removal can also reflect a parser or billing change. The notice reader
+keeps each hosting platform's literal model ID, published date precision,
+replacement, behavior of the old ID, and exact source URL. An unreadable or empty
+source keeps its last successful notice archive.
+
+| Platform | Official evidence | Meaning and limits |
+| --- | --- | --- |
+| Volcengine Ark | [Model deprecation notice](https://docs.volcengine.com/docs/ark/model-deprecation-notice) | Batch timeline gives announcement/start, EOM, EOS; model rows may override EOS. Some embedding rows state EOM while existing access continues. |
+| Tencent TokenHub | [Product announcement index](https://cloud.tencent.com/document/product/1823/130758) and its linked [individual notices](https://cloud.tencent.com/announce/detail/2469) | A notice gives exact `model` parameters, Beijing shutdown time, and possible automatic replacement. The general announcement feed also contains price notices, so title filtering alone is insufficient evidence of retirement. The index is a rolling list; previous notice records remain archived when a link rolls off. |
+| Baidu Qianfan | [Retirement mechanism and history](https://cloud.baidu.com/doc/qianfan/s/zmh4stou3) | Historical table gives registration and retirement dates per hosted model, plus recommended replacement. Its example row is excluded. |
+| Aliyun Bailian | [Deprecation policy](https://help.aliyun.com/zh/model-studio/model-depreciation) and public [model market](https://www.qianwenai.com/models) | The anonymous market API exposes per-model `OfflineInfo.Inference.OfflineTime`. Read it from the fresh catalogue; convert an explicit UTC instant to Beijing time, and keep an undated or missing value unknown. |
+| DeepSeek | [Official updates](https://api-docs.deepseek.com/zh-cn/updates) | Records only explicit old-version withdrawal and continued routing stated in the changelog; there is no complete future retirement timetable. |
+| Kimi | [Model list](https://platform.kimi.com/docs/models) | Retired-model section gives series-level dates and literal retired IDs. Match a table ID to the longest published series prefix. |
+| Xiaomi MiMo | [Deprecation log](https://mimo.mi.com/static/docs/updates/deprecate.md) | Separates the earlier automatic replacement time from the final old-ID expiry time where both are printed. |
+| OpenAI | [API deprecations](https://developers.openai.com/api/docs/deprecations) | Published notification and shutdown tables. A row may name several aliases separated by escaped Markdown pipes; each literal ID gets its own event. |
+| Anthropic | [Model deprecations](https://platform.claude.com/docs/en/about-claude/model-deprecations) | Deprecated and retired table applies to Anthropic-operated API. Partner platform schedules may differ. Active models' “not sooner than” dates are not shutdown promises. |
+| Google Gemini | [Gemini API deprecations](https://ai.google.dev/gemini-api/docs/deprecations) | Shutdown column is explicitly the *earliest possible* date. Reaching it is reported without claiming actual unavailability. |
+| xAI | [Official migration guides](https://docs.x.ai/developers/migration/may-15-retirement) | Old slugs can continue to resolve through automatic redirection, with billing at replacement-model prices. Read the effective PT clock where given; a date-only notice remains date-only. |
+| Zhipu and MiniMax | Official model/price pages, with no public per-model retirement schedule confirmed in this source review | Report `no_public_schedule`, continue price-catalogue monitoring, and do not guess a date. |
+
+An announcement date, EOM (new purchases stop), automatic redirection, and EOS
+(service shutdown) are distinct milestones. A date revision or a date crossing
+is a change even if the price catalogue is identical. Date-only values are
+compared by the scan's local calendar day; timed values are compared as instants.
+The notice history is written under `snapshots/lifecycle-<provider>/`, separately
+from price snapshots, and is never populated from the three-hour cache.
+
 ## Model introductions
 
 Introductions live in `model_price/descriptions/`, independently of price adapters.

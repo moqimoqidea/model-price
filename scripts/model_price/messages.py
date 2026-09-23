@@ -57,6 +57,7 @@ from .reporting import (
     description_source_text,
     format_moment,
     format_price,
+    lifecycle_change_text,
     model_digest,
     offer_condition_text,
     offering_text,
@@ -418,6 +419,7 @@ def scan_blocks(payload: dict[str, Any]) -> list[list[str]]:
     return [
         header(SCAN_TITLE, subject, payload),
         section("模型能力", description_lines(changed_descriptions(payload))),
+        section("退役公告与时间节点", lifecycle_lines(reports)),
         section("模型价格", changed_blocks(reports)),
         section("渠道结论", channel_conclusion(payload)),
     ]
@@ -444,6 +446,15 @@ def channel_conclusion(payload: dict[str, Any]) -> list[str]:
         for report in reports
         if report["status"] in (EMPTY_SCAN, SOURCE_ERROR)
     )
+    for report in reports:
+        lifecycle = report.get("lifecycle") or {}
+        status = lifecycle.get("status")
+        if status == SOURCE_ERROR:
+            lines.append(sentence_text(f"{report['provider']['name']} 退役公告：读取失败；{lifecycle.get('error') or UNSTATED}；历史记录保留"))
+        elif status == "no_public_schedule":
+            lines.append(sentence_text(f"{report['provider']['name']} 退役公告：暂无可核实的公开逐模型时间表"))
+        elif status in (BASELINE_CREATED, BASELINE_NOT_FOUND):
+            lines.append(sentence_text(f"{report['provider']['name']} 退役公告：{DELTA_STATUS_LABELS[status]}；记录 {lifecycle.get('event_count', 0)} 项"))
     baselines = {
         report.get("baseline_at") for report in reports if report.get("baseline_at")
     }
@@ -456,6 +467,21 @@ def channel_conclusion(payload: dict[str, Any]) -> list[str]:
             if report.get("baseline_at")
         )
     return lines
+
+
+def lifecycle_lines(reports: list[dict[str, Any]]) -> list[str]:
+    """Lay out each changed official model ID with its own evidence URL."""
+    blocks = []
+    for report in reports:
+        changes = (report.get("lifecycle") or {}).get("changes") or []
+        if not changes:
+            continue
+        details = []
+        for change in changes:
+            details.append(bullet(sentence_text(lifecycle_change_text(change)), FIELD))
+            details.append(note(f"来源：{change['event']['source_url']}", ITEM))
+        blocks.append(entry(len(blocks) + 1, report["provider"]["name"], details))
+    return stacked(blocks)
 
 
 def changed_blocks(reports: list[dict[str, Any]]) -> list[str]:
