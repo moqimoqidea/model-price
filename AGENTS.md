@@ -178,8 +178,9 @@ even when the tests still pass.
    responses, reused inside that window. `delta` always reads the sources afresh —
    a cache hit would be handed back as "no change". Successful scans are archived
    per provider, with a hard limit of 1000 snapshots. Before pruning, reserve the
-   last scan of each day in the recent three-month calendar window, then fill the
-   remaining slots with the newest scans. This preserves yesterday/month lookups
+   last scan of each day in the recent three-month calendar window, then the
+   first scan of each day while space remains; fill the rest with the newest scans.
+   This preserves yesterday/month lookups and yesterday's first scan
    without letting a high-frequency schedule grow past the count limit.
 10. **Bump the schema version when a shape changes.** `CACHE_SCHEMA_VERSION` covers
     parsed responses (`CACHE_TTL`), `SNAPSHOT_SCHEMA_VERSION` covers baselines. A

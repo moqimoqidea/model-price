@@ -1677,10 +1677,15 @@ class MessageBudgetTests(unittest.TestCase):
     def test_delta_accepts_relative_and_exact_historical_baselines(self):
         parser = query_model_prices.build_parser()
         yesterday = parser.parse_args(["delta", "--since", "yesterday"]).since
+        yesterday_first = parser.parse_args(
+            ["delta", "--since", "yesterday-first", "--timezone", "Asia/Shanghai"]
+        )
         exact = parser.parse_args(
             ["delta", "--since", "2026-09-20T12:00:00+08:00"]
         ).since
         self.assertEqual(yesterday.mode, "yesterday")
+        self.assertEqual(yesterday_first.since.mode, "yesterday_first")
+        self.assertEqual(yesterday_first.timezone.key, "Asia/Shanghai")
         self.assertEqual(exact.mode, "at_or_before")
 
 
@@ -2648,6 +2653,29 @@ class SnapshotStoreTests(unittest.TestCase):
                 ],
             )
 
+    def test_retention_preserves_first_and_last_scan_of_recent_days(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(
+                Path(directory), retention_months=3, retention_count=6
+            )
+            for day in (15, 16, 17):
+                for hour in (9, 12, 18):
+                    captured_at = f"2026-06-{day}T{hour:02d}:00:00+08:00"
+                    store.write(
+                        "fake",
+                        snapshot_of(
+                            [scanned_record("m1", "M1", "2", "8")], captured_at
+                        ),
+                    )
+            self.assertEqual(
+                [item["captured_at"] for item in store.iter_history("fake")],
+                [
+                    f"2026-06-{day}T{hour:02d}:00:00+08:00"
+                    for day in (15, 16, 17)
+                    for hour in (9, 18)
+                ],
+            )
+
     def test_sparse_history_keeps_the_latest_count_beyond_three_months(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(
@@ -2706,6 +2734,28 @@ class SnapshotStoreTests(unittest.TestCase):
             )
             self.assertEqual(yesterday["captured_at"], "2026-09-21T23:00:00+08:00")
             self.assertEqual(last_month["captured_at"], "2026-09-21T23:00:00+08:00")
+
+    def test_yesterday_first_uses_the_scan_calendar_and_earliest_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            for captured_at in (
+                "2026-09-20T23:30:00+08:00",
+                "2026-09-21T00:30:00+08:00",
+                "2026-09-20T17:00:00Z",
+                "2026-09-21T23:00:00+08:00",
+            ):
+                store.write(
+                    "fake",
+                    snapshot_of(
+                        [scanned_record("m1", "M1", "2", "8")], captured_at
+                    ),
+                )
+            selected = store.select(
+                "fake",
+                parse_baseline_selection("yesterday-first"),
+                reference_at="2026-09-22T10:00:00+08:00",
+            )
+            self.assertEqual(selected["captured_at"], "2026-09-21T00:30:00+08:00")
 
     def test_date_and_timestamp_selection_have_distinct_boundaries(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -3149,6 +3199,33 @@ class DeltaRenderingTests(unittest.TestCase):
                 "主题：全渠道模型与计费变化（与昨天最后一次基线相比）", message
             )
             self.assertIn("对比基线：2026-09-21 20:00（UTC+8）", message)
+
+    def test_yesterday_first_report_uses_earliest_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            for captured_at, input_amount in (
+                ("2026-09-21T09:00:00+08:00", "1"),
+                ("2026-09-21T20:00:00+08:00", "2"),
+            ):
+                store.write(
+                    "fake",
+                    snapshot_of(
+                        [scanned_record("m1", "M1", input_amount, "8")],
+                        captured_at,
+                    ),
+                )
+            payload = scan_providers(
+                [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
+                store,
+                captured_at="2026-09-22T10:00:00+08:00",
+                baseline=parse_baseline_selection("yesterday-first"),
+            )
+            self.assertEqual(payload["providers"][0]["baseline_at"], "2026-09-21T09:00:00+08:00")
+            self.assertEqual(payload["providers"][0]["status"], CHANGED)
+            self.assertIn(
+                "主题：全渠道模型与计费变化（与昨天最早一次基线相比）",
+                scan_message(payload),
+            )
 
     def test_a_missing_historical_baseline_is_not_presented_as_a_first_run(self):
         with tempfile.TemporaryDirectory() as directory:

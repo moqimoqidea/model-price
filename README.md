@@ -75,6 +75,7 @@ python3 scripts/query_model_prices.py provider PROVIDER MODEL           # 单渠
 python3 scripts/query_model_prices.py list PROVIDER --prefix PREFIX     # 列模型 id
 python3 scripts/query_model_prices.py delta --format message            # 全量扫描并与上次对比
 python3 scripts/query_model_prices.py delta --since yesterday           # 与昨天最后一份基线对比
+python3 scripts/query_model_prices.py delta --since yesterday-first --timezone Asia/Shanghai --include-overseas  # 北京时间昨天最早一份，含海外
 python3 scripts/query_model_prices.py delta --since last-month          # 与上个月最后一份基线对比
 python3 scripts/query_model_prices.py delta --since 2026-09-19T23:59:59+08:00
 python3 scripts/query_model_prices.py compare MODEL --format message --max-chars 2000
@@ -104,12 +105,13 @@ dry-run 判断标准、收件人核对和字符上限，其他文档不再复制
 | 比较 deepseek-flash 的能力定位、服务方式和各平台官方价格。 | `compare deepseek-flash` | 模型能力介绍，以及各渠道的模型 id、服务方式、地域与每个计费方案的金额 |
 | 分析这一次所有渠道的模型变更。 | `delta --format message` | 「变化模型能力」＋模型上新下架、计费变化、无变化及读不到的渠道 |
 | 和昨天相比，有哪些模型发生了变化？ | `delta --since yesterday` | 每个渠道与昨天最后一份成功基线的差异 |
+| 和北京时间昨天最早一次相比，含海外渠道有哪些变化？ | `delta --since yesterday-first --timezone Asia/Shanghai --include-overseas` | 每个渠道与北京时间昨天最早一份成功基线的差异 |
 | 和上个月相比，有哪些模型发生了变化？ | `delta --since last-month` | 每个渠道与上个自然月最后一份成功基线的差异 |
 
 第一种问的是模型本身，所以报告把介绍放在价格之前；第二种问的是跨渠道口径差异，
 所以重点是逐条列出的模型版本、服务方式与计费方案；第三种问的是「这次变了什么」，
 所以它读遍所有渠道、与上次基线对比，只介绍真正有变化的模型。后两种问法的
-扫描范围相同，只是把对比基线切换成昨天或上个月的最后一份。
+扫描范围由是否包含海外渠道决定，对比基线可以选昨天最早、昨天最后或上个月最后一份。
 这些结果要发到钉钉时都加 `--format message`（`delta` 已默认）。
 
 ## 输出
@@ -173,14 +175,17 @@ DeepSeek 会检查最近 7 天的官方新闻地址；页面未公布时间或�
 不会因选了更早的回溯基线而改变，也不再用破折号占位。
 
 **回溯对比。** 每次成功扫描都会按渠道留下带时间戳的历史，目录未变也照常归档。
-`--since yesterday` 取昨天最后一份，`--since last-month` 取上一个自然月最后一份。
+`--since yesterday` 取昨天最后一份，`--since yesterday-first` 取昨天最早一份成功基线，
+`--since last-month` 取上一个自然月最后一份。相对日期默认按运行机器的时区计算；
+要求北京时间时加 `--timezone Asia/Shanghai`，同时固定报告的扫描时间为北京时间。
 `YYYY-MM-DD` 日期（如 `2026-09-19`）取当天最后一份；ISO 日历时间戳取不晚于该时刻的最后一份，
 适合在已知发布时间之前取基线。时间戳不带时区时，按本次扫描的时区解释。
 某渠道没有匹配历史时会明确报 `baseline_not_found`，不会偷换成其他日期；但本次成功结果
 仍会归档，供之后对比。
 
 每个渠道最多保留 1000 份基线。裁剪前先为最近三个月的每一天保留当天最后一份，
-再用最新扫描填满剩余名额：既保住“昨天/上个月”的回溯锚点，也防止高频调度无上限增长。
+再保留当天最早一份，最后用最新扫描填满剩余名额：既保住“昨天最早/最后”的回溯锚点，
+也防止高频调度无上限增长。
 旧版的 `snapshots/<provider>.json` 仍能直接参与对比，并在下一次成功扫描时自动迁入历史；
 无法解析的旧基线会移入 `snapshots/rejected/`，不再每轮重复读取。
 

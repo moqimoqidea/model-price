@@ -78,7 +78,7 @@ Explicit refreshes also add `skill_update` before querying official sources:
   "command": "delta",
   "retrieved_at": "ISO-8601",
   "baseline_selection": {
-    "mode": "latest|yesterday|last_month|date|at_or_before",
+    "mode": "latest|yesterday|yesterday_first|last_month|date|at_or_before",
     "requested": "original --since value, or null",
     "target": "normalized ISO date or timestamp, or null",
     "uses_scan_timezone": false

@@ -16,7 +16,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -51,7 +53,7 @@ MAX_CHARS_HELP = (
 )
 
 SINCE_HELP = (
-    "baseline to compare with: yesterday, last-month, YYYY-MM-DD, or an ISO "
+    "baseline to compare with: yesterday, yesterday-first, last-month, YYYY-MM-DD, or an ISO "
     "calendar timestamp; omit for the previous successful scan"
 )
 
@@ -62,6 +64,14 @@ def baseline_argument(value: str) -> BaselineSelection:
         return parse_baseline_selection(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def timezone_argument(value: str) -> ZoneInfo:
+    """Use an explicit calendar zone for relative baselines and scan timestamps."""
+    try:
+        return ZoneInfo(value)
+    except ZoneInfoNotFoundError as exc:
+        raise argparse.ArgumentTypeError(f"unknown timezone: {value}") from exc
 
 
 def add_message_options(
@@ -160,6 +170,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="also scan OpenAI, Anthropic, Google, and xAI",
     )
     delta.add_argument("--since", type=baseline_argument, help=SINCE_HELP)
+    delta.add_argument(
+        "--timezone",
+        type=timezone_argument,
+        help="calendar timezone for the scan and relative baselines, e.g. Asia/Shanghai",
+    )
     add_message_options(delta, default_format="message")
     delta.add_argument(
         "--snapshot-dir",
@@ -227,6 +242,11 @@ def main() -> int:
             SnapshotStore(args.snapshot_dir),
             descriptions=descriptions,
             baseline=args.since,
+            captured_at=(
+                datetime.now(args.timezone).isoformat(timespec="seconds")
+                if args.timezone
+                else None
+            ),
         )
     else:
         adapter = adapters[args.provider]

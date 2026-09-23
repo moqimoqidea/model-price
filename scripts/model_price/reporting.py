@@ -26,7 +26,7 @@ from .diffing import (
     UNCHANGED,
 )
 from .pricing import price_sort_key, primary_offer
-from .snapshots import AT_OR_BEFORE, LAST_MONTH, ON_DATE, YESTERDAY
+from .snapshots import AT_OR_BEFORE, LAST_MONTH, ON_DATE, YESTERDAY, YESTERDAY_FIRST
 
 DELIVERY_LABELS = {
     "platform_hosted": "平台托管",
@@ -197,6 +197,8 @@ def baseline_selection_text(payload: dict[str, Any]) -> str:
     target = selection.get("target")
     if mode == YESTERDAY:
         return "与昨天最后一次基线相比"
+    if mode == YESTERDAY_FIRST:
+        return "与昨天最早一次基线相比"
     if mode == LAST_MONTH:
         return "与上个月最后一次基线相比"
     if mode == ON_DATE:

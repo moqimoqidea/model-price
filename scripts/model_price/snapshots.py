@@ -3,7 +3,7 @@
 Snapshots are deliberately not the TTL cache: cached responses are reused for
 three hours, which would hide a catalogue change, while every successful scan is
 an independent baseline. The store has a hard per-provider count bound while
-reserving daily anchors in the recent calendar window for human time requests.
+reserving daily first and last anchors for recent calendar comparisons.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from .pricing import offer_priority, price_sort_key
 
 LATEST = "latest"
 YESTERDAY = "yesterday"
+YESTERDAY_FIRST = "yesterday_first"
 LAST_MONTH = "last_month"
 ON_DATE = "date"
 AT_OR_BEFORE = "at_or_before"
@@ -74,6 +75,8 @@ def parse_baseline_selection(value: str | None) -> BaselineSelection:
     alias = requested.lower().replace("_", "-")
     if alias == YESTERDAY:
         return BaselineSelection(YESTERDAY, requested)
+    if alias == "yesterday-first":
+        return BaselineSelection(YESTERDAY_FIRST, requested)
     if alias == "last-month":
         return BaselineSelection(LAST_MONTH, requested)
     try:
@@ -86,7 +89,7 @@ def parse_baseline_selection(value: str | None) -> BaselineSelection:
         moment = datetime.fromisoformat(requested.replace("Z", "+00:00"))
     except ValueError as exc:
         raise ValueError(
-            "expected yesterday, last-month, YYYY-MM-DD, or an ISO calendar timestamp"
+            "expected yesterday, yesterday-first, last-month, YYYY-MM-DD, or an ISO calendar timestamp"
         ) from exc
     return BaselineSelection(AT_OR_BEFORE, requested, moment=moment)
 
@@ -273,7 +276,7 @@ class SnapshotStore:
             return entry[0].astimezone(local_zone)
 
         candidates = entries
-        if selection.mode == YESTERDAY:
+        if selection.mode in (YESTERDAY, YESTERDAY_FIRST):
             target_day = reference.date() - timedelta(days=1)
             candidates = [
                 entry for entry in entries if local_moment(entry).date() == target_day
@@ -301,6 +304,11 @@ class SnapshotStore:
             candidates = [entry for entry in entries if entry[0] <= target]
         else:
             raise ValueError(f"unknown baseline selection mode: {selection.mode}")
+        if selection.mode == YESTERDAY_FIRST:
+            for _, path in candidates:
+                if payload := self._read(path):
+                    return payload
+            return None
         return self._last_valid(candidates)
 
     def write(self, provider_id: str, snapshot: dict[str, Any]) -> None:
@@ -409,12 +417,19 @@ class SnapshotStore:
 
         cutoff = _subtract_months(reference, self.retention_months)
         local_zone = reference.tzinfo or timezone.utc
-        daily: dict[date, SnapshotRef] = {}
+        daily_first: dict[date, SnapshotRef] = {}
+        daily_last: dict[date, SnapshotRef] = {}
         for entry in archives:
             if entry[0] >= cutoff:
-                daily[entry[0].astimezone(local_zone).date()] = entry
-        anchors = sorted(daily.values(), key=_entry_order)[-self.retention_count :]
-        kept = {path for _, path in anchors}
+                day = entry[0].astimezone(local_zone).date()
+                daily_first.setdefault(day, entry)
+                daily_last[day] = entry
+        latest_anchors = sorted(daily_last.values(), key=_entry_order)
+        kept = {path for _, path in latest_anchors[-self.retention_count :]}
+        for _, path in reversed(sorted(daily_first.values(), key=_entry_order)):
+            if len(kept) >= self.retention_count:
+                break
+            kept.add(path)
         for _, path in reversed(archives):
             if len(kept) >= self.retention_count:
                 break
