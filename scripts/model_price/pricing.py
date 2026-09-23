@@ -86,6 +86,11 @@ def offer_priority(offer: dict[str, Any]) -> int:
     return 0 if not tier else 1
 
 
+def is_standard_offer(offer: dict[str, Any]) -> bool:
+    """Select the base offer for the scan's default price presentation."""
+    return offer_priority(offer) == 0
+
+
 def primary_offer(offers: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Choose the offer a short model digest should show, independent of order."""
     if not offers:

@@ -120,6 +120,9 @@ where a line goes, and never let `budget.py` know what a message says.
 Every block a report can carry is always rendered. Two limits exist and both are
 handled the same way — by measuring and saying so, never by cutting:
 
+The scan's default presentation includes standard prices only. Other offers
+remain in JSON and snapshots; this choice is made before measuring length.
+
 - **The introduction limit** (300 characters) lives at `descriptions.core`: a
   vendor summary longer than that is kept whole and marked
   `summary_needs_condensing`. `reporting.summary_label` turns that flag into a
@@ -192,18 +195,19 @@ even when the tests still pass.
     `summary_needs_condensing` (`descriptions.core.SUMMARY_MAX_CHARS`), and the
     label says so and names the original length. A message over `--max-chars`
     (default 3000) is rendered complete with one closing line naming the overrun;
-    no block is dropped, no list is capped, no string is sliced. This is not
+    no selected block is dropped, no list is capped, no string is sliced. This is not
     cosmetic: a cut price loses its decimal point and the reader cannot tell what
     was left out. The tool takes no credentials and has no model, so it never
     summarizes either — it measures and says so, and whoever sends the message
     summarizes. Those are the only two length rules; nothing in `messages` may
     measure or slice a string, and `budget` only counts characters.
-12. **The message carries no Markdown.** No `**`, no `#`, no tables, no links —
+12. **The message carries no Markdown.** No `**`, no `#`, no tables, no Markdown links —
     hierarchy is numbering and indentation, and each source URL is written last
-    on its line. DingTalk reads a document back through its own parser, which
+    on its line. Any displayed source URL starts with `https://` so a reader can
+    open it directly. DingTalk reads a document back through its own parser, which
     mangles a report this dense.
 13. **The model introduction opens every message.** Both `comparison_blocks` and
-    `scan_blocks` put it first, after the header and before the conclusion: a
+    `scan_blocks` put it first, after the header and before prices or conclusions: a
     reader who does not know what a model is for cannot judge what it costs.
     Never move it below a price, and never print it per channel — what a model
     does is a property of the model, so a scan introduces each moved model once
@@ -211,17 +215,17 @@ even when the tests still pass.
     Its source line is never optional: an unsourced capability claim is not a
     fact. The message omits an `active` lifecycle because a newly listed model is
     necessarily available; preview, legacy, retired, and unknown remain visible.
-14. **Statuses are reported, never softened.** `source_error`, `not_found`,
-    `empty_scan`, `update_skipped`, `check_failed` all reach the reader. A provider
-    that held still is still named, because that is what shows the scan covered it.
+14. **Statuses are reported, never softened.** `source_error`, `not_found`, and
+    `empty_scan` reach the scan reader. `update_skipped` and `check_failed` remain
+    in JSON while the scan message omits the Skill update check. A provider that
+    held still is still named, because that shows the scan covered it.
 15. **No credentials, ever.** The only authenticated path is refreshing the
     explicit Tencent mirror through a user-owned logged-in session, offline.
 16. **An official update time needs official evidence.** A vendor-labelled date or
     a matching official DeepSeek news page may populate `source_updated_at`. When
-    no such evidence exists, the message labels the most recent successful
-    snapshot before the current run as 上次更新时间, even when the comparison selected
-    an older historical baseline; it never calls that fallback 官方更新时间. A date-only
-    source remains date-only rather than acquiring an invented midnight.
+    no such evidence exists, JSON retains the most recent successful snapshot
+    before the current run. The scan message does not print update times. A
+    date-only source remains date-only rather than acquiring an invented midnight.
 17. **IM transport facts have one owner per channel.** `SKILL.md` routes a sender
     to the selected channel contract; it does not restate versions or commands.
     DingTalk's DWS minimum version, exact route, preflight, target checks, and

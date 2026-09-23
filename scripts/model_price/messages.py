@@ -7,9 +7,8 @@ here is an ordinary message instead — plain characters only, hierarchy carried
 numbering and indentation, one blank line between blocks, and each source URL
 written last on its line so nothing trails into the link DingTalk draws round it.
 
-Both messages open with what the model is for rather than what it costs — a reader
-who does not yet know what the model does cannot judge a price for it — and run
-conclusion, detail, then summary from there.
+Both messages open with what the model is for rather than what it costs. A scan
+then shows standard prices before closing with the channel outcomes.
 
 A message also has to fit the channel it is sent through, and this module neither
 measures nor shortens anything to make it fit: every block the sources support is
@@ -27,6 +26,7 @@ from .budget import DEFAULT_MAX_CHARS, overage
 from .delta import EMPTY_SCAN, SOURCE_ERROR
 
 from .descriptions.core import AVAILABLE as DESCRIPTION_AVAILABLE
+from .pricing import is_standard_offer
 from .diffing import (
     BASELINE_CREATED,
     BASELINE_NOT_FOUND,
@@ -40,14 +40,12 @@ from .reporting import (
     DELTA_STATUS_LABELS,
     DESCRIPTION_STATUS_LABELS,
     LIFECYCLE_LABELS,
-    NO_CHANGE,
     NO_SUMMARY,
     NO_WINDOW,
     SOURCE_STATUS_LABELS,
     UNKNOWN,
     UNPRICED,
     UNSTATED,
-    all_unchanged,
     banded_records,
     baseline_selection_text,
     change_digest,
@@ -65,7 +63,6 @@ from .reporting import (
     price_movement,
     provider_name,
     scan_conclusion,
-    scan_summary,
     sentence_text,
     shared_conditions,
     skill_update_text,
@@ -79,27 +76,13 @@ COMPARISON_SUBJECT = "{model} 在各渠道的价格与服务方式"
 SCAN_TITLE = "模型价格自动检测"
 SCAN_SUBJECT = "全渠道模型与计费变化"
 
-# The order a reader wants the channels in: what needs a look first, then what is
-# merely fine. Sorting is stable, so channels of one status keep the order the
-# scan covered them in, and two reports stay comparable line by line.
-STATUS_ORDER = (
-    CHANGED,
-    EMPTY_SCAN,
-    SOURCE_ERROR,
-    BASELINE_NOT_FOUND,
-    BASELINE_CREATED,
-    UNCHANGED,
-)
-
-STATUS_RANK = {status: rank for rank, status in enumerate(STATUS_ORDER)}
-
 # Said instead of sending an over-long report as if it were complete. The tool
 # neither cuts the message nor shortens it by dropping a block — a reader cannot
 # tell an omitted channel from one the scan never reached — so what it states is
 # the overrun and what a summary is not allowed to lose.
 SUMMARIZE_NOTE = (
     "本消息 {chars} 字，超过 {limit} 字上限 {over} 字；"
-    "发送前需总结压缩到 {limit} 字内，保留标题、结论、各渠道条目与全部金额"
+    "发送前需总结压缩到 {limit} 字内，保留标题、渠道状态与已展示的全部金额"
 )
 
 # One step of hierarchy. A message is read on a phone, so a level is added by
@@ -423,140 +406,95 @@ def source_status_text(check: dict[str, Any]) -> str:
 def scan_message(
     payload: dict[str, Any], *, max_chars: int = DEFAULT_MAX_CHARS
 ) -> str:
-    """Render a whole-catalogue scan as the message a scheduled task sends.
-
-    A scan that read every channel and found none of them changed collapses to
-    its conclusion: a run that repeats the whole catalogue daily is one a reader
-    stops reading, and the point of the message is to say it ran. Anything else
-    keeps the full shape — a channel that moved, a channel that could not be
-    read, or a first run with nothing to compare against — because in each of
-    those cases the detail is what the message is for.
-    """
+    """Render a scan with model capabilities, standard prices, and outcomes."""
     return finalize(scan_blocks(payload), max_chars)
 
 
 def scan_blocks(payload: dict[str, Any]) -> list[list[str]]:
-    """The blocks of a scan, in the order a reader wants them.
-
-    A change is worth knowing about, not just countable, so every model the scan
-    reports as moved is introduced once at the top: what it is for and what it can
-    do, before any channel's before-and-after. One model can move on several
-    channels, and its purpose does not change with the channel, so the block is
-    keyed by model rather than by the change that mentioned it.
-    """
+    """Introduce changed models once, then show prices and channel outcomes."""
     reports = payload.get("providers", [])
     comparison = baseline_selection_text(payload)
     subject = f"{SCAN_SUBJECT}（{comparison}）" if comparison else SCAN_SUBJECT
-    blocks = [
+    return [
         header(SCAN_TITLE, subject, payload),
-        section("变化模型能力", description_lines(changed_descriptions(payload))),
-        section("结论", scan_conclusion(payload)),
+        section("模型能力", description_lines(changed_descriptions(payload))),
+        section("模型价格", changed_blocks(reports)),
+        section("渠道结论", channel_conclusion(payload)),
     ]
-    if not all_unchanged(payload):
-        blocks.extend(
-            [
-                section("渠道概览", channel_entries(reports)),
-                section("变化详情", changed_blocks(reports)),
-                section("未能完成的渠道", failed_lines(reports)),
-                section("小结", scan_summary(payload)),
-            ]
-        )
-    blocks.append(section("Skill 更新检查", bullets([skill_update_text(payload)])))
-    return blocks
 
 
-def status_rank(report: dict[str, Any]) -> int:
-    return STATUS_RANK.get(report["status"], len(STATUS_ORDER))
-
-
-def channel_entries(reports: list[dict[str, Any]]) -> list[str]:
-    """Every scanned channel with its size, its state, and what this scan found.
-
-    Every channel appears, including the ones that failed: a list showing only
-    the interesting rows would leave the reader unable to tell a silent channel
-    from one the scan never reached. A failure has no model count of its own, so
-    its entry says so rather than borrowing the baseline's number.
-    """
-    return stacked(
-        channel_entry(position, report)
-        for position, report in enumerate(sorted(reports, key=status_rank), start=1)
-    )
-
-
-def channel_entry(position: int, report: dict[str, Any]) -> list[str]:
-    updated_at = (report.get("source") or {}).get("updated_at")
-    status = DELTA_STATUS_LABELS.get(report["status"], report["status"])
-    model_count = report.get("model_count") or NO_CHANGE
-    facts = [
-        field("状态", sentence_text(status)),
-        field("模型数", sentence_text(model_count)),
-    ]
-    if report["status"] != UNCHANGED:
-        facts.append(field("本次变化", sentence_text(change_digest(report))))
-    if updated_at:
-        facts.append(
-            field("官方更新时间", sentence_text(format_moment(updated_at)))
-        )
-    elif report.get("last_successful_at"):
-        facts.append(
-            field(
-                "上次更新时间",
-                sentence_text(format_moment(report["last_successful_at"])),
+def channel_conclusion(payload: dict[str, Any]) -> list[str]:
+    """Count the scan and name every channel without a second overview."""
+    reports = payload.get("providers", [])
+    lines = scan_conclusion(payload)
+    for status in (CHANGED, UNCHANGED, BASELINE_CREATED, BASELINE_NOT_FOUND):
+        matching = [report for report in reports if report["status"] == status]
+        if not matching:
+            continue
+        label = DELTA_STATUS_LABELS[status]
+        if status == UNCHANGED:
+            lines.append(f"{label}：{'、'.join(report['provider']['name'] for report in matching)}。")
+        else:
+            lines.extend(
+                f"{report['provider']['name']}：{label}；{change_digest(report)}。"
+                for report in matching
             )
-        )
-    return entry(
-        position,
-        report["provider"]["name"],
-        facts,
+    lines.extend(
+        failed_text(report)
+        for report in reports
+        if report["status"] in (EMPTY_SCAN, SOURCE_ERROR)
     )
+    baselines = {
+        report.get("baseline_at") for report in reports if report.get("baseline_at")
+    }
+    if len(baselines) == 1:
+        lines.append(f"对比基线：{format_moment(baselines.pop())}。")
+    elif baselines:
+        lines.extend(
+            f"{report['provider']['name']} 对比基线：{format_moment(report['baseline_at'])}。"
+            for report in reports
+            if report.get("baseline_at")
+        )
+    return lines
 
 
 def changed_blocks(reports: list[dict[str, Any]]) -> list[str]:
-    """The detail of every channel that moved — a channel that held still is a
-    line in the overview, never a block of its own."""
-    moved = [report for report in reports if report["status"] == CHANGED]
-    return stacked(
-        changed_entry(position, report)
-        for position, report in enumerate(moved, start=1)
-    )
+    """Standard prices for models and offers that changed."""
+    blocks = []
+    for report in reports:
+        if report["status"] == CHANGED:
+            if lines := changed_entry(len(blocks) + 1, report):
+                blocks.append(lines)
+    return stacked(blocks)
 
 
 def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
-    """Detail everything one channel moved.
-
-    The changed models are not introduced here: every one of them is already in
-    the message's opening block, which an introduction belongs in because it is a
-    property of the model rather than of the channel that reported the change.
-    """
+    """Show standard prices while keeping distinct conditions separate."""
     changes = report.get("changes") or {}
-    lines = entry(
-        position,
-        report["provider"]["name"],
-        [
-            field(
-                "对比基线", sentence_text(format_moment(report.get("baseline_at")))
-            ),
-            field(
-                "本次扫描", sentence_text(f"{report.get('model_count', 0)} 个模型")
-            ),
-        ],
-    )
+    details: list[str] = []
     for field_name in BULLET_CHANGE_FIELDS:
         items = changes.get(field_name) or []
-        lines.extend(
+        if field_name in ("offers_added", "offers_removed"):
+            items = [item for item in items if is_standard_offer(item.get("offer") or {})]
+        details.extend(
             group(
                 f"{CHANGE_FIELD_LABELS[field_name]}（{len(items)}）",
                 bullets((change_text(item) for item in items), ITEM),
             )
         )
-    moves = changes.get(PRICE_CHANGE_FIELD) or []
-    lines.extend(
+    moves = [
+        move for move in changes.get(PRICE_CHANGE_FIELD) or []
+        if is_standard_offer(
+            {"name": move.get("offer"), "conditions": move.get("conditions")}
+        )
+    ]
+    details.extend(
         group(
             f"{CHANGE_FIELD_LABELS[PRICE_CHANGE_FIELD]}（{len(moves)}）",
             bullets((price_change_text(move) for move in moves), ITEM),
         )
     )
-    return lines
+    return entry(position, report["provider"]["name"], details) if details else []
 
 
 def change_text(change: dict[str, Any]) -> str:
@@ -564,9 +502,9 @@ def change_text(change: dict[str, Any]) -> str:
     model = f"{change.get('display_name')}（{change.get('model_id')}）"
     offer = change.get("offer")
     if offer is None:
-        digest = model_digest(change)
+        digest = model_digest(change) or "标准价格未公布"
     else:
-        digest = offering_text(offer.get("name", ""), offer.get("conditions", {}))
+        digest = model_digest({"offers": [offer]})
     return sentence_text(f"{model}：{digest}" if digest else model)
 
 
@@ -580,15 +518,6 @@ def price_change_text(change: dict[str, Any]) -> str:
     label = change.get("label") or change.get("type", "")
     return sentence_text(
         f"{model}：{condition}；{label} {price_movement(change)}"
-    )
-
-
-def failed_lines(reports: list[dict[str, Any]]) -> list[str]:
-    """Name each channel that produced no catalogue, and what is kept meanwhile."""
-    return bullets(
-        failed_text(report)
-        for report in reports
-        if report["status"] in (EMPTY_SCAN, SOURCE_ERROR)
     )
 
 

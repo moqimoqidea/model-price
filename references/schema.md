@@ -123,7 +123,7 @@ daily scan never walks every model detail page merely to repeat unchanged prose.
 `changes` holds `models_added`, `models_removed`, `offers_added`, `offers_removed`,
 `price_changes`, and their `total`. A model entry is the snapshot model, offers and
 prices included, so a new model's price is readable without a second query. An
-offer entry is a model plus `offer` (`name` and `conditions`). A price change is a
+offer entry is a model plus `offer` (`name`, `conditions`, and `prices`). A price change is a
 model plus `offer`, `conditions`, `type`, `label`, and `from`/`to` — each one an
 `{amount, unit}` pair, with `null` on the side where the price did not exist.
 

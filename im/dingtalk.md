@@ -89,8 +89,8 @@ transport must also be `text`.
 A DingTalk text message accepts at most 5120 characters. Model-price defaults to
 `--max-chars 3000` to leave room for growth and last-mile edits. If the report
 marks itself over budget, summarize it according to [SKILL.md](../SKILL.md)
-before sending: shorten prose, never truncate a string or remove a channel,
-amount, condition, time window, source, or status.
+before sending: shorten prose while retaining every channel status and every
+price and condition displayed by the selected message format.
 
 If a v1.0.62-or-later dry-run shows `text` but the message read back by its exact
 message ID is `markdown`, preserve the dry-run and readback evidence and report a

@@ -2432,7 +2432,7 @@ class SnapshotTests(unittest.TestCase):
             ],
         )
 
-    def test_model_digest_keeps_every_offer_with_primary_first(self):
+    def test_model_digest_shows_standard_prices_only(self):
         digest = model_digest(
             {
                 "offers": [
@@ -2474,9 +2474,7 @@ class SnapshotTests(unittest.TestCase):
             digest,
             "standard — Base input 4 美元/百万 tokens；"
             "Cache hit 0.20 美元/百万 tokens；"
-            "Output 20 美元/百万 tokens；"
-            "batch — Input 2 美元/百万 tokens；"
-            "Output 10 美元/百万 tokens",
+            "Output 20 美元/百万 tokens",
         )
 
     def test_the_documents_own_section_is_not_part_of_an_offers_identity(self):
@@ -3119,8 +3117,8 @@ class DeltaRenderingTests(unittest.TestCase):
             message = render_scan(store, [provider], "2026-09-16T10:00:00+08:00")
             self.assertIn("1 个渠道共 1 个模型，全部无变化。", message)
             self.assertIn("时间：2026-09-16 10:00（UTC+8）", message)
-            self.assertNotIn("【渠道概览】", message)
-            self.assertNotIn("【变化详情】", message)
+            self.assertNotIn("【模型能力】", message)
+            self.assertNotIn("【模型价格】", message)
 
     def test_a_channel_that_moved_lists_what_moved(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -3272,6 +3270,89 @@ class MomentFormattingTests(unittest.TestCase):
 class DetectionReportTests(unittest.TestCase):
     """What the scan report says, and in what order it says it."""
 
+    def test_standard_tiers_remain_distinct_and_other_offers_are_hidden(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            render_scan(
+                store,
+                [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
+                "2026-09-15T10:00:00+08:00",
+            )
+            new = scanned_record("m2", "M2", "1", "5", offer="standard")
+            short = new["offers"][0]
+            short["conditions"] = {"service_tier": "standard", "context_tier": "短"}
+            long = {
+                **short,
+                "conditions": {"service_tier": "standard", "context_tier": "长"},
+                "prices": [
+                    price_item("input", "输入", "2", "CNY_per_million_tokens"),
+                    price_item("output", "输出", "8", "CNY_per_million_tokens"),
+                ],
+            }
+            fast = {**short, "name": "fast", "conditions": {"service_tier": "fast"}}
+            batch = {**short, "name": "batch", "conditions": {"service_tier": "batch"}}
+            new["offers"] = [fast, short, long, batch]
+            report = render_scan(
+                store,
+                [ScannedProvider([scanned_record("m1", "M1", "2", "8"), new])],
+                "2026-09-16T10:00:00+08:00",
+            )
+            self.assertIn("context_tier=短", report)
+            self.assertIn("context_tier=长", report)
+            self.assertIn("输入 1 元/百万 tokens", report)
+            self.assertIn("输入 2 元/百万 tokens", report)
+            self.assertNotIn("fast", report)
+            self.assertNotIn("batch", report)
+            self.assertNotIn("渠道概览", report)
+            self.assertNotIn("渠道定价来源", report)
+
+    def test_new_standard_offer_includes_its_amounts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            original = scanned_record("m1", "M1", "1", "5", offer="standard")
+            original["offers"][0]["conditions"] = {"context_tier": "短"}
+            render_scan(store, [ScannedProvider([original])], "2026-09-15T10:00:00+08:00")
+            updated = scanned_record("m1", "M1", "1", "5", offer="standard")
+            updated["offers"][0]["conditions"] = {"context_tier": "短"}
+            updated["offers"].append(
+                {
+                    "name": "standard",
+                    "conditions": {"context_tier": "长"},
+                    "prices": [price_item("input", "输入", "2", "CNY_per_million_tokens")],
+                }
+            )
+            report = render_scan(
+                store, [ScannedProvider([updated])], "2026-09-16T10:00:00+08:00"
+            )
+            self.assertIn("新增计费方式（1）", report)
+            self.assertIn("standard；context_tier=长 — 输入 2 元/百万 tokens", report)
+
+    def test_nonstandard_price_change_is_counted_without_showing_its_price(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            render_scan(
+                store,
+                [ScannedProvider([
+                    scanned_offers(
+                        "m1", "M1", ("standard", None, "1", "5"),
+                        ("fast", None, "2", "10"),
+                    )
+                ])],
+                "2026-09-15T10:00:00+08:00",
+            )
+            report = render_scan(
+                store,
+                [ScannedProvider([
+                    scanned_offers(
+                        "m1", "M1", ("standard", None, "1", "5"),
+                        ("fast", None, "3", "10"),
+                    )
+                ])],
+                "2026-09-16T10:00:00+08:00",
+            )
+            self.assertNotIn("【模型价格】", report)
+            self.assertIn("假渠道：有变化；价格变化 1。", report)
+
     def test_the_report_opens_with_its_title_and_the_time_it_scanned(self):
         with tempfile.TemporaryDirectory() as directory:
             report = render_scan(
@@ -3310,10 +3391,10 @@ class DetectionReportTests(unittest.TestCase):
                 "2026-09-16T10:00:00+08:00",
             )
             self.assertIn(
-                "【结论】\n\n2 个渠道共 2 个模型：1 个有变化，1 个无变化，0 个未能完成。",
+                "【渠道结论】\n\n2 个渠道共 2 个模型：1 个有变化，1 个无变化，0 个未能完成。",
                 report,
             )
-            self.assertLess(report.index("【结论】"), report.index("【渠道概览】"))
+            self.assertLess(report.index("【模型价格】"), report.index("【渠道结论】"))
 
     def test_every_scanned_channel_is_named_even_when_it_failed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -3337,15 +3418,11 @@ class DetectionReportTests(unittest.TestCase):
                 "2026-09-16T10:00:00+08:00",
             )
             self.assertIn("好渠道", report)
-            self.assertIn("   状态：无变化。", report)
-            self.assertIn("   官方更新时间：2026-09-14 03:03（UTC+0）。", report)
+            self.assertIn("无变化：好渠道。", report)
             self.assertIn("坏渠道", report)
-            self.assertIn("   状态：来源解析失败", report)
-            self.assertIn("   本次变化：offline", report)
-            self.assertIn("   模型数：—", report)
-            self.assertNotIn("本次变化：—", report)
+            self.assertIn("坏渠道：来源解析失败；offline。", report)
 
-    def test_a_source_without_an_official_stamp_uses_the_previous_snapshot_time(self):
+    def test_a_source_without_an_official_stamp_keeps_the_comparison_baseline(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
             provider = ScannedProvider([scanned_record("m1", "M1", "2", "8")])
@@ -3364,7 +3441,7 @@ class DetectionReportTests(unittest.TestCase):
                 "2026-09-16T10:00:00+08:00",
             )
             self.assertIn(
-                "上次更新时间：2026-09-15 10:00（UTC+8）。",
+                "对比基线：2026-09-15 10:00（UTC+8）。",
                 report,
             )
 
@@ -3423,7 +3500,7 @@ class DetectionReportTests(unittest.TestCase):
                 "2026-09-16T10:00:00+08:00",
             )
             self.assertIn("没动的渠道", report)
-            detail = report.split("【变化详情】")[1]
+            detail = report.split("【模型价格】")[1].split("【渠道结论】")[0]
             self.assertIn("1. 动了的渠道", detail)
             self.assertNotIn("没动的渠道", detail)
 
@@ -3447,7 +3524,7 @@ class DetectionReportTests(unittest.TestCase):
                 ],
                 "2026-09-16T10:00:00+08:00",
             )
-            self.assertIn("   本次变化：新增模型 1；价格变化 1", report)
+            self.assertIn("假渠道：有变化；新增模型 1；价格变化 1。", report)
 
     def test_the_scan_closes_with_what_its_channels_add_up_to(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -3471,12 +3548,12 @@ class DetectionReportTests(unittest.TestCase):
                 ],
                 "2026-09-16T10:00:00+08:00",
             )
-            self.assertIn("【小结】", report)
-            self.assertIn("1 个渠道读取成功；1 个未能完成", report)
-            self.assertIn("1 个有变化，见上「变化详情」", report)
-            self.assertGreater(report.index("【小结】"), report.index("【变化详情】"))
+            self.assertIn("【渠道结论】", report)
+            self.assertIn("1 个有变化，0 个无变化，1 个未能完成", report)
+            self.assertIn("坏渠道：来源解析失败；offline。", report)
+            self.assertGreater(report.index("【渠道结论】"), report.index("【模型价格】"))
 
-    def test_the_scan_reports_its_own_skill_update_check(self):
+    def test_the_scan_omits_its_skill_update_check(self):
         with tempfile.TemporaryDirectory() as directory:
             payload = scan_providers(
                 [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
@@ -3488,8 +3565,8 @@ class DetectionReportTests(unittest.TestCase):
                 "checked_at": "2026-09-16T13:37:00+08:00",
             }
             report = scan_message(payload)
-            self.assertIn("【Skill 更新检查】", report)
-            self.assertIn("当前 skill 已是远端版本；检查时间 2026-09-16 13:37（UTC+8）", report)
+            self.assertNotIn("Skill 更新检查", report)
+            self.assertNotIn("当前 skill 已是远端版本", report)
 
 
 if __name__ == "__main__":

@@ -157,4 +157,5 @@ def _offer_brief(offer: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": offer.get("name", ""),
         "conditions": dict(offer.get("conditions") or {}),
+        "prices": list(offer.get("prices") or []),
     }

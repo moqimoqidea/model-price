@@ -25,7 +25,7 @@ from .diffing import (
     PRICE_CHANGE_FIELD,
     UNCHANGED,
 )
-from .pricing import offer_priority, price_sort_key
+from .pricing import is_standard_offer, price_sort_key
 from .snapshots import AT_OR_BEFORE, LAST_MONTH, ON_DATE, YESTERDAY, YESTERDAY_FIRST
 
 DELIVERY_LABELS = {
@@ -499,13 +499,10 @@ def comparison_differences(results: list[dict[str, Any]]) -> list[str]:
 
 
 def model_digest(model: dict[str, Any]) -> str:
-    """Name every billing offer of a newly listed or withdrawn model."""
-    offers = model.get("offers", [])
-    ordered = sorted(
-        enumerate(offers), key=lambda item: (offer_priority(item[1]), item[0])
-    )
+    """Show the standard prices of a newly listed or withdrawn model."""
+    offers = [offer for offer in model.get("offers", []) if is_standard_offer(offer)]
     digests = []
-    for _, offer in ordered:
+    for offer in offers:
         charges = "；".join(
             f"{price.get('label') or price.get('type')} {format_price(price)}"
             for price in sorted(offer.get("prices", []), key=price_sort_key)
@@ -572,37 +569,3 @@ def scan_conclusion(payload: dict[str, Any]) -> list[str]:
     failed = summary.get(EMPTY_SCAN, 0) + summary.get(SOURCE_ERROR, 0)
     counts.append(f"{failed} 个未能完成")
     return [f"{scope}：{'，'.join(counts)}。"]
-
-
-def scan_summary(payload: dict[str, Any]) -> list[str]:
-    """Close the scan with what its per-channel states add up to.
-
-    The overview lists every channel, so this line is where a reader learns which
-    parts of it deserve a second look — what moved, what could not be read — and
-    that the rest matched the selected baseline rather than being omitted.
-    """
-    reports = payload.get("providers", [])
-    summary = payload.get("summary", {})
-    failed = summary.get(EMPTY_SCAN, 0) + summary.get(SOURCE_ERROR, 0)
-    parts = [f"{len(reports) - failed} 个渠道读取成功"]
-    if failed:
-        parts.append(f"{failed} 个未能完成，见上「未能完成的渠道」")
-    if summary.get(CHANGED):
-        parts.append(f"{summary[CHANGED]} 个有变化，见上「变化详情」")
-    if summary.get(BASELINE_CREATED):
-        parts.append(
-            f"{summary[BASELINE_CREATED]} 个首次建立基线，下次扫描起参与对比"
-        )
-    if summary.get(BASELINE_NOT_FOUND):
-        parts.append(
-            f"{summary[BASELINE_NOT_FOUND]} 个未找到匹配的历史基线，"
-            "本次扫描已归档"
-        )
-    if summary.get(UNCHANGED):
-        comparison = (
-            "与所选历史基线一致"
-            if baseline_selection_text(payload)
-            else "与上次扫描一致"
-        )
-        parts.append(f"{summary[UNCHANGED]} 个无变化，{comparison}，不再展开")
-    return ["；".join(parts) + "。"]

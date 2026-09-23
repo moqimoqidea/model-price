@@ -657,8 +657,8 @@ class DeltaLimitTests(unittest.TestCase):
         resolver = DescriptionResolver({"fake": NamedDescriptionSource("fake", "")})
         message = self.scan(resolver, crowded_catalogue())
         self.assertGreater(len(message), 3000)
-        self.assertIn("【变化模型能力】", message)
-        self.assertLess(message.index("【变化模型能力】"), message.index("【结论】"))
+        self.assertIn("【模型能力】", message)
+        self.assertLess(message.index("【模型能力】"), message.index("【模型价格】"))
         for position in (0, 29):
             self.assertIn(f"new-{position} 的官方说明", message)
         self.assertIn("发送前需总结压缩到 3000 字内", message)
@@ -687,7 +687,7 @@ class DeltaLimitTests(unittest.TestCase):
         # A channel that answered with nothing keeps its reason too.
         self.assertIn("official document changed shape", message)
         # And what the summary has to preserve is named for whoever writes it.
-        self.assertIn("保留标题、结论、各渠道条目与全部金额", message)
+        self.assertIn("保留标题、渠道状态与已展示的全部金额", message)
 
     def test_a_scan_that_fits_carries_no_such_note(self):
         resolver = DescriptionResolver({"fake": NamedDescriptionSource("fake", "")})
@@ -717,12 +717,12 @@ class DeltaDescriptionTests(unittest.TestCase):
         descriptions = payload["providers"][0]["model_descriptions"]
         self.assertEqual([item["model_id"] for item in descriptions], ["m2"])
         message = scan_message(payload)
-        self.assertIn("【变化模型能力】", message)
+        self.assertIn("【模型能力】", message)
         self.assertIn("适合代码与智能体任务", message)
         # What a model is for is a property of the model, not of the channel that
         # reported the change, so the scan opens with it. The channel's own block
         # then carries the before-and-after without repeating the introduction.
-        self.assertLess(message.index("【变化模型能力】"), message.index("【结论】"))
+        self.assertLess(message.index("【模型能力】"), message.index("【模型价格】"))
         self.assertEqual(message.count("适合代码与智能体任务"), 1)
 
     def test_a_removed_model_keeps_its_introduction_in_the_delta(self):
