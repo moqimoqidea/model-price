@@ -25,7 +25,7 @@ from .diffing import (
     PRICE_CHANGE_FIELD,
     UNCHANGED,
 )
-from .pricing import price_sort_key, primary_offer
+from .pricing import offer_priority, price_sort_key
 from .snapshots import AT_OR_BEFORE, LAST_MONTH, ON_DATE, YESTERDAY, YESTERDAY_FIRST
 
 DELIVERY_LABELS = {
@@ -499,19 +499,20 @@ def comparison_differences(results: list[dict[str, Any]]) -> list[str]:
 
 
 def model_digest(model: dict[str, Any]) -> str:
-    """Name what a newly listed model charges from its primary billing offer."""
+    """Name every billing offer of a newly listed or withdrawn model."""
     offers = model.get("offers", [])
-    head = primary_offer(offers)
-    if head is None:
-        return ""
-    charges = "；".join(
-        f"{price.get('label') or price.get('type')} {format_price(price)}"
-        for price in sorted(head.get("prices", []), key=price_sort_key)
+    ordered = sorted(
+        enumerate(offers), key=lambda item: (offer_priority(item[1]), item[0])
     )
-    condition = offering_text(head.get("name", ""), head.get("conditions", {}))
-    digest = f"{condition} — {charges}" if charges else condition
-    remaining = len(offers) - 1
-    return f"{digest}（另有 {remaining} 种计费方式）" if remaining else digest
+    digests = []
+    for _, offer in ordered:
+        charges = "；".join(
+            f"{price.get('label') or price.get('type')} {format_price(price)}"
+            for price in sorted(offer.get("prices", []), key=price_sort_key)
+        )
+        condition = offering_text(offer.get("name", ""), offer.get("conditions", {}))
+        digests.append(f"{condition} — {charges}" if charges else condition)
+    return "；".join(digests)
 
 
 def change_digest(report: dict[str, Any]) -> str:

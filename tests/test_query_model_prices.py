@@ -2432,7 +2432,7 @@ class SnapshotTests(unittest.TestCase):
             ],
         )
 
-    def test_model_digest_selects_a_primary_offer_from_legacy_ordering(self):
+    def test_model_digest_keeps_every_offer_with_primary_first(self):
         digest = model_digest(
             {
                 "offers": [
@@ -2474,7 +2474,9 @@ class SnapshotTests(unittest.TestCase):
             digest,
             "standard — Base input 4 美元/百万 tokens；"
             "Cache hit 0.20 美元/百万 tokens；"
-            "Output 20 美元/百万 tokens（另有 1 种计费方式）",
+            "Output 20 美元/百万 tokens；"
+            "batch — Input 2 美元/百万 tokens；"
+            "Output 10 美元/百万 tokens",
         )
 
     def test_the_documents_own_section_is_not_part_of_an_offers_identity(self):
