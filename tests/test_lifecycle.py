@@ -607,6 +607,7 @@ class LifecycleScanTests(unittest.TestCase):
             "source": {"url": "https://official.example/index"},
             "models": {"API|old": old},
         })
+        self.store = SnapshotStore(Path(self.temp.name))
         new = event("new", "https://official.example/new", eos_at="2026-10-01")
         with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/index", [new])):
             report = scan_lifecycle(
@@ -616,6 +617,59 @@ class LifecycleScanTests(unittest.TestCase):
         self.assertEqual(report["status"], "baseline_created")
         self.assertEqual(report["event_count"], 2)
         self.assertEqual(report["retired_model_ids"], ["old"])
+
+    def test_price_schema_change_keeps_yesterdays_notice_baseline(self):
+        old = event("old", "https://official.example/old", eos_at="2026-10-01")
+        self.store.write("lifecycle-openai", {
+            "schema_version": 1, "lifecycle_schema_version": 2,
+            "provider": {"id": "openai", "name": "OpenAI"},
+            "captured_at": self.first,
+            "source": {"url": "https://official.example/index", "kind": "official_retirement_notice"},
+            "models": {"API|old": old},
+        })
+        self.store = SnapshotStore(Path(self.temp.name))
+        self.assertEqual(
+            self.store.select(
+                "lifecycle-openai", parse_baseline_selection("yesterday"),
+                reference_at=self.second,
+            )["captured_at"],
+            self.first,
+        )
+        with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/index", [old])):
+            report = scan_lifecycle(
+                self.provider, object(), [], self.store, self.second,
+                parse_baseline_selection("yesterday"), require_moment(self.second),
+            )
+        self.assertEqual(report["status"], "unchanged")
+        self.assertEqual(report["baseline_at"], self.first)
+
+    def test_historical_notice_restores_an_entry_missing_from_latest_archive(self):
+        old = event("old", "https://official.example/old", eos_at="2026-10-01")
+        base = {
+            "schema_version": 1, "lifecycle_schema_version": 2,
+            "provider": {"id": "openai", "name": "OpenAI"},
+            "source": {"url": "https://official.example/index", "kind": "official_retirement_notice"},
+        }
+        self.store.write("lifecycle-openai", {
+            **base, "captured_at": self.first, "models": {"API|old": old},
+        })
+        self.store.write("lifecycle-openai", {
+            **base, "schema_version": 2, "captured_at": self.second, "models": {},
+        })
+        self.store = SnapshotStore(Path(self.temp.name))
+        new = event("new", "https://official.example/new", eos_at="2026-10-02")
+        at = "2026-09-23T11:00:00+08:00"
+        with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/index", [new])):
+            report = scan_lifecycle(
+                self.provider, object(), [], self.store, at,
+                parse_baseline_selection("yesterday"), require_moment(at),
+            )
+        self.assertEqual(report["status"], "changed")
+        self.assertEqual(report["event_count"], 2)
+        self.assertEqual(
+            set(self.store.read("lifecycle-openai")["models"]),
+            {"API|old", "API|new"},
+        )
 
 
 class AuditScriptTests(unittest.TestCase):

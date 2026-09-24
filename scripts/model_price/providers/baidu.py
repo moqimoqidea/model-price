@@ -251,6 +251,17 @@ class BaiduAdapter(PriceSource):
                     ),
                 }
             )
+        if not entries:
+            entries.append(
+                {
+                    "model_id": normalize_model(version),
+                    "display_name": name,
+                    "item": item,
+                    "channel": None,
+                    "conditions": conditions,
+                    "price": None,
+                }
+            )
         return entries
 
     def _records(self) -> list[dict[str, Any]]:
@@ -288,6 +299,8 @@ class BaiduAdapter(PriceSource):
         """Merge a model's entries into offers, one per channel and settlement."""
         offers: dict[tuple[Any, ...], dict[str, Any]] = {}
         for entry in group:
+            if entry["price"] is None:
+                continue
             key = (entry["channel"], tuple(sorted(entry["conditions"].items())))
             offer = offers.setdefault(
                 key,

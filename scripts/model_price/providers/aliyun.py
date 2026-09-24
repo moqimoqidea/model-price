@@ -120,7 +120,12 @@ def qianwen_lifecycle(
     item: dict[str, Any], *, at: datetime | None = None
 ) -> str:
     """Translate the market's preview and scheduled-withdrawal evidence."""
-    if str(item.get("VersionTag", "")).upper() == "PREVIEW":
+    name = str(item.get("Name") or "")
+    if (
+        str(item.get("VersionTag", "")).upper() == "PREVIEW"
+        or "preview" in name.lower()
+        or "预览" in name
+    ):
         return "preview"
     offline = ((item.get("OfflineInfo") or {}).get("Inference") or {}).get(
         "OfflineTime"
@@ -268,7 +273,9 @@ class AliyunAdapter(PriceSource):
         for item in self._catalogue_items():
             key = normalize_model(str(item.get("Model") or ""))
             if key:
-                records.setdefault(key, self._record_for(item))
+                record = self._record_for(item)
+                if key not in records or (not records[key]["offers"] and record["offers"]):
+                    records[key] = record
         return [records[key] for key in sorted(records)]
 
     def query(self, model: str) -> list[dict[str, Any]]:

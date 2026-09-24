@@ -157,7 +157,7 @@ one of:
 - `unchanged` — `changes` is empty; the models and prices are the baseline's
 - `baseline_created` — there was no baseline yet, so `changes` is empty and the run is not a comparison
 - `baseline_not_found` — `--since` matched no archive for this provider; the current successful scan is still archived
-- `empty_scan` — the source yielded no priced model; all existing archives are kept
+- `empty_scan` — the source yielded no model; all existing archives are kept
 - `source_error` — the source failed; `error` says why and all existing archives are kept
 
 The two failure statuses omit `model_count` and `changes`. `baseline_at` is `null`
@@ -172,9 +172,12 @@ A `changed` provider also carries `model_descriptions`, covering each unique mod
 named anywhere in its changes. Unchanged and first-baseline providers omit it, so a
 daily scan never walks every model detail page merely to repeat unchanged prose.
 
-`changes` holds `models_added`, `models_removed`, `offers_added`, `offers_removed`,
+`model_count` includes listed models with no parseable price. `changes` holds `models_added`, `models_removed`, `offers_added`, `offers_removed`,
 `price_changes`, and their `total`. A model entry is the snapshot model, offers and
-prices included, so a new model's price is readable without a second query. An
+prices included, so a new model's price is readable without a second query. Each
+model has `price_status` (`published` or `unknown`); an unknown price has `offers: []`
+and still appears in `models_added`. When its price is later published, the change
+appears in `offers_added`, not `models_added` again. An
 offer entry is a model plus `offer` (`name`, `conditions`, and `prices`). A price change is a
 model plus `offer`, `conditions`, `type`, `label`, and `from`/`to` — each one an
 `{amount, unit}` pair, with `null` on the side where the price did not exist.
@@ -188,4 +191,5 @@ successful write; an unreadable one moves to `snapshots/rejected/`. Baselines ar
 not cache entries and not this payload:
 a baseline keeps the catalogue keyed by normalized model id, with each offer
 identified by its name and the conditions that describe what is billed rather
-than where the document filed it.
+than where the document filed it. Snapshot schema version 2 retains unpriced
+listings; older version 1 baselines are not compared with it.

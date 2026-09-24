@@ -22,6 +22,7 @@ from .models import normalize_model
 from .parsing import non_token_billing_header
 from .paths import (
     DEFAULT_SNAPSHOT_DIR,
+    LIFECYCLE_SCHEMA_VERSION,
     SNAPSHOT_RETENTION_COUNT,
     SNAPSHOT_RETENTION_MONTHS,
     SNAPSHOT_SCHEMA_VERSION,
@@ -134,8 +135,9 @@ def build_snapshot(
     identical source data yields an identical snapshot. A snapshot that differed
     run to run would make every comparison report a change.
 
-    Models the source lists without a single parseable price are left out: they
-    carry no price to compare, and the report's subject is the price catalogue.
+    A model listed without a parseable price remains in the baseline. Its empty
+    offers and unknown price status let a later scan detect both its listing and
+    the eventual publication of a price.
 
     A source that answers with the same model twice contributes both answers: the
     offers are merged and deduplicated by identity, so an adapter that splits one
@@ -149,7 +151,7 @@ def build_snapshot(
             for offer in record.get("offers", [])
             if offer.get("prices")
         ]
-        if not key or not offers:
+        if not key:
             continue
         entry = models.setdefault(
             key,
@@ -160,6 +162,7 @@ def build_snapshot(
                 "region": record.get("region"),
                 "currency": record.get("currency"),
                 "updated_at": record.get("source_updated_at"),
+                "price_status": "unknown",
                 "offers": [],
             },
         )
@@ -171,6 +174,8 @@ def build_snapshot(
         # shortest-context row ahead of its larger tiers without sacrificing the
         # explicit standard-before-batch ordering above it.
         entry["offers"] = sorted(unique.values(), key=offer_priority)
+        if entry["offers"]:
+            entry["price_status"] = "published"
     return {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "provider": {"id": provider.provider_id, "name": provider.provider_name},
@@ -458,6 +463,14 @@ def _read_snapshot(path: Path) -> dict[str, Any] | None:
         return None
     if not isinstance(payload, dict):
         return None
+    # Notice history has its own compatibility version. A price snapshot bump
+    # must not hide yesterday's still-valid retirement announcements.
+    if path.parent.name.startswith("lifecycle-") or path.stem.startswith("lifecycle-"):
+        return (
+            payload
+            if payload.get("lifecycle_schema_version") in (1, LIFECYCLE_SCHEMA_VERSION)
+            else None
+        )
     if payload.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
         return None
     return _without_mislabeled_token_prices(payload)
@@ -496,7 +509,7 @@ def _without_mislabeled_token_prices(payload: dict[str, Any]) -> dict[str, Any]:
                 offers.append({**offer, "prices": prices})
             else:
                 changed = True
-        if offers:
+        if offers or not model["offers"]:
             cleaned_models[key] = {**model, "offers": offers}
         else:
             changed = True

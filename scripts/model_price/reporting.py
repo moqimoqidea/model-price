@@ -128,7 +128,7 @@ CACHE_PRICE_TYPES = {"cache_hit", "cache_write", "cache_storage"}
 NO_CHANGE = "—"
 UNKNOWN = "未知"
 UNSTATED = "未说明原因"
-UNPRICED = "官方文档未给出本工具可解析的价格"
+UNPRICED = "价格未知（官方文档未给出本工具可解析的价格）"
 NO_WINDOW = "官方文档未公布具体时段"
 NO_SUMMARY = "官方页面未给出文字摘要"
 
@@ -581,7 +581,7 @@ def scan_conclusion(payload: dict[str, Any]) -> list[str]:
 
     A reader who only ever sees the first screen should still learn whether
     anything moved and how much was covered, so the counts of what moved come
-    before the detail. A run that priced nothing omits the model total rather
+    before the detail. A run that found no model omits the model total rather
     than claiming zero.
     """
     reports = payload.get("providers", [])

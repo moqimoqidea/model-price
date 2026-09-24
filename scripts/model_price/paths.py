@@ -14,13 +14,13 @@ DEFAULT_SNAPSHOT_DIR = SKILL_DIR / "snapshots"
 CACHE_TTL = timedelta(hours=3)
 # Bumped whenever a provider's source or parsing changes, so entries written by an
 # older version are ignored instead of being served for the rest of their TTL.
-CACHE_SCHEMA_VERSION = 15
+CACHE_SCHEMA_VERSION = 16
 
 # Snapshots are archived baselines rather than response caches, so they are
 # versioned separately from the TTL cache. Bump this whenever their shape changes;
 # an older baseline is then absent from comparisons instead of looking like every
 # model changed.
-SNAPSHOT_SCHEMA_VERSION = 1
+SNAPSHOT_SCHEMA_VERSION = 2
 # Retirement notices have their own archived shape under lifecycle-<provider>.
 # Keep their compatibility gate independent from price catalogue baselines.
 LIFECYCLE_SCHEMA_VERSION = 2

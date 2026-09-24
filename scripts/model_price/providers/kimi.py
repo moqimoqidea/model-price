@@ -124,15 +124,14 @@ class KimiAdapter(PriceSource):
                                 unit,
                             )
                         )
-                    if prices:
-                        parsed.append(
-                            {
-                                "url": url,
-                                "model_id": display_name,
-                                "display_name": display_name,
-                                "prices": prices,
-                            }
-                        )
+                    parsed.append(
+                        {
+                            "url": url,
+                            "model_id": display_name,
+                            "display_name": display_name,
+                            "prices": prices,
+                        }
+                    )
         if not parsed:
             raise SourceError("official Kimi token pricing table was not found")
         self._parsed_rows = parsed
@@ -146,19 +145,20 @@ class KimiAdapter(PriceSource):
         return sorted(models, key=str.lower)
 
     def _record_for(self, row: dict[str, Any]) -> dict[str, Any]:
+        offers = [
+            {
+                "name": "online_standard",
+                "conditions": {},
+                "prices": row["prices"],
+            }
+        ] if row["prices"] else []
         return make_record(
             self.provider_id,
             self.provider_name,
             row["model_id"],
             row["display_name"],
             "中国区",
-            [
-                {
-                    "name": "online_standard",
-                    "conditions": {},
-                    "prices": row["prices"],
-                }
-            ],
+            offers,
             row["url"],
             self.source_kind,
             now_iso(),
@@ -169,7 +169,9 @@ class KimiAdapter(PriceSource):
     def _rows_by_model(self) -> dict[str, dict[str, Any]]:
         rows: dict[str, dict[str, Any]] = {}
         for row in self._model_rows():
-            rows.setdefault(normalize_model(row["model_id"]), row)
+            key = normalize_model(row["model_id"])
+            if key not in rows or (not rows[key]["prices"] and row["prices"]):
+                rows[key] = row
         return rows
 
     def query(self, model: str) -> list[dict[str, Any]]:

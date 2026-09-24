@@ -544,7 +544,7 @@ def change_text(change: dict[str, Any]) -> str:
     model = f"{change.get('display_name')}（{change.get('model_id')}）"
     offer = change.get("offer")
     if offer is None:
-        digest = model_digest(change) or "标准价格未公布"
+        digest = model_digest(change) or UNPRICED
     else:
         digest = model_digest({"offers": [offer]})
     return sentence_text(f"{model}：{digest}" if digest else model)

@@ -571,6 +571,19 @@ class StructuredDocumentTests(unittest.TestCase):
             ],
         )
 
+    def test_tencent_catalogue_keeps_a_model_missing_from_the_price_page(self):
+        adapter = TencentAdapter(MappingClient({}))
+        listed = [{
+            "model_id": "future-preview",
+            "display_name": "Future Preview",
+            "delivery_mode": "platform_hosted",
+        }]
+        with mock.patch.object(adapter, "_catalog", return_value=listed), \
+             mock.patch.object(adapter, "_price_offers", return_value={}), \
+             mock.patch.object(adapter, "source_updated_at", return_value=None), \
+             mock.patch.object(adapter, "_band_document", return_value=""):
+            self.assertEqual(adapter.catalog_records()[0]["offers"], [])
+
 
 class CacheTests(unittest.TestCase):
     def test_cache_is_provider_scoped_and_expires_after_three_hours(self):
@@ -714,6 +727,15 @@ class OverseasParserTests(unittest.TestCase):
             "$0.20 / MTok",
         )
 
+    def test_anthropic_lists_a_model_before_publishing_its_rates(self):
+        markdown = """## Model pricing
+| Model | Base input tokens | 5m cache writes | 1h cache writes | Cache hits and refreshes | Output tokens |
+| --- | --- | --- | --- | --- | --- |
+| Claude Preview | - | - | - | - | - |
+"""
+        adapter = AnthropicAdapter(MappingClient({ANTHROPIC_MARKDOWN_URL: markdown}))
+        self.assertEqual(adapter.query("claude-preview")[0]["offers"], [])
+
     def test_gemini_markdown_parser_uses_paid_tier(self):
         adapter = GeminiAdapter(MappingClient({GEMINI_MARKDOWN_URL: GEMINI_MARKDOWN}))
         record = adapter.query("gemini-test")[0]
@@ -762,6 +784,13 @@ class CatalogueRequestCountTests(unittest.TestCase):
                     adapter_type.catalog_records,
                     PriceSource.catalog_records,
                 )
+
+    def test_minimax_keeps_an_unpriced_language_model_row(self):
+        document = self.MINIMAX.replace(
+            "## 语音", "| MiniMax-Preview | - | - | - | - |\n## 语音"
+        )
+        adapter = MiniMaxAdapter(MappingClient({MINIMAX_URL: document}))
+        self.assertEqual(adapter.query("minimax-preview")[0]["offers"], [])
 
 
 XAI_MARKDOWN = """# Pricing
@@ -1180,6 +1209,13 @@ class BaiduAdapterTests(unittest.TestCase):
     def test_a_table_billed_per_page_is_not_token_pricing(self):
         self.assertEqual(self.adapter().query("ocr-test-0.9b"), [])
 
+    def test_a_listed_token_model_with_blank_rates_has_no_offer(self):
+        preview = """<h3>预览</h3><table>
+<tr><th>模型名称</th><th>版本名称</th><th>服务内容</th><th>子项</th><th>在线推理</th><th>单位</th></tr>
+<tr><td>Future Preview</td><td>future-preview</td><td>推理服务</td><td>输入</td><td>-</td><td>元/千tokens</td></tr>
+</table>"""
+        self.assertEqual(self.adapter(body=BAIDU_HTML + preview).query("future-preview")[0]["offers"], [])
+
     def test_a_page_without_a_data_link_is_reported_as_a_broken_source(self):
         with self.assertRaises(SourceError):
             self.adapter(page="<html><body>no link here</body></html>").list_models()
@@ -1228,7 +1264,7 @@ class ZhipuAdapterTests(unittest.TestCase):
     def test_only_per_token_tables_are_read(self):
         self.assertEqual(
             self.adapter().list_models(),
-            ["glm-test", "glm-test-flash", "glm-tiered"],
+            ["glm-free", "glm-test", "glm-test-flash", "glm-tiered"],
         )
         self.assertEqual(self.adapter().query("glm-image-test"), [])
 
@@ -1247,7 +1283,7 @@ class ZhipuAdapterTests(unittest.TestCase):
         self.assertIsNone(price_lookup(offer, "cache_storage"))
 
     def test_a_free_model_produces_no_price_rows(self):
-        self.assertEqual(self.adapter().query("glm-free"), [])
+        self.assertEqual(self.adapter().query("glm-free")[0]["offers"], [])
 
     def test_context_tiers_stay_separate_offers(self):
         record = self.adapter().query("glm-tiered")[0]
@@ -1340,6 +1376,17 @@ class KimiAdapterTests(unittest.TestCase):
 
     def test_chat_document_is_found_without_a_version_suffix(self):
         self.assertEqual(self.adapter().list_models(), ["kimi-k3", "kimi-k3-mini"])
+
+    def test_a_new_row_without_rates_remains_in_the_catalogue(self):
+        document = KIMI_CHAT + '["kimi-preview", "1M tokens", "-", "-", "-", "1M tokens"],\n'
+        self.assertEqual(self.adapter(document).query("kimi-preview")[0]["offers"], [])
+
+    def test_an_unpriced_row_does_not_hide_a_later_priced_row(self):
+        document = '''# 对话模型价格
+["kimi-preview", "1M tokens", "-", "-", "-", "1M tokens"],
+["kimi-preview", "1M tokens", "¥1", "¥2", "¥3", "1M tokens"],
+'''
+        self.assertTrue(self.adapter(document).catalog_records()[0]["offers"])
 
     def test_row_layout_maps_cache_hit_input_and_output(self):
         offer = self.adapter().query("kimi-k3")[0]["offers"][0]
@@ -1434,6 +1481,18 @@ class DeepSeekAdapterTests(unittest.TestCase):
         records = DeepSeekAdapter(client).catalog_records()
         self.assertEqual(len(records), 2)
         self.assertEqual(client.requests.count(DEEPSEEK_URL), 1)
+
+    def test_an_empty_preview_column_does_not_erase_other_model_prices(self):
+        html = """<table>
+<tr><th>模型</th><th>deepseek-paid</th><th>deepseek-preview</th></tr>
+<tr><td>百万tokens输入 （缓存未命中）</td><td>空闲时段</td><td>1元</td><td></td></tr>
+<tr><td>百万tokens输出</td><td>空闲时段</td><td>4元</td><td></td></tr>
+</table>"""
+        adapter = DeepSeekAdapter(MappingClient({DEEPSEEK_URL: html}))
+        self.assertEqual(adapter.query("deepseek-preview")[0]["offers"], [])
+        paid = adapter.query("deepseek-paid")[0]["offers"][0]
+        self.assertEqual(price_lookup(paid, "input")["amount"], "1")
+        self.assertEqual(price_lookup(paid, "output")["amount"], "4")
 
 
 class ModelNameCouplingTests(unittest.TestCase):
@@ -2062,6 +2121,33 @@ class QianwenCatalogueTests(unittest.TestCase):
         ).query("free-entitlement")[0]
         self.assertEqual(record["offers"], [])
 
+    def test_a_zero_price_preview_stays_listed_with_preview_metadata(self):
+        item = {
+            "Model": "decision-model-preview",
+            "Name": "决策模型（预览版）",
+            "VersionTag": "MAJOR",
+            "Prices": [{"Type": "input_token", "Price": "0", "PriceUnit": "每百万tokens"}],
+        }
+        adapter = AliyunAdapter(QianwenPagingClient([qianwen_page([item], 1)]))
+        record = adapter.catalog_records()[0]
+        self.assertEqual(record["offers"], [])
+        self.assertEqual(record["model_metadata"]["lifecycle"], "preview")
+        self.assertEqual(
+            build_snapshot(adapter, [record], "2026-09-25T00:00:00+08:00")["models"]
+            ["decision-model-preview"]["price_status"],
+            "unknown",
+        )
+
+    def test_a_duplicate_unpriced_item_does_not_hide_a_priced_item(self):
+        items = [
+            {"Model": "m-preview", "Prices": []},
+            {"Model": "m-preview", "Prices": [{
+                "Type": "input_token", "Price": "2", "PriceUnit": "每百万tokens",
+            }]},
+        ]
+        adapter = AliyunAdapter(QianwenPagingClient([qianwen_page(items, 1)]))
+        self.assertEqual(adapter.catalog_records()[0]["offers"][0]["prices"][0]["amount"], "2")
+
     def test_time_bands_use_each_models_derived_market_page(self):
         model_id = "deepseek-v4.1-flash"
         item = {
@@ -2427,7 +2513,7 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(list(previous["models"]), ["m1"])
         self.assertEqual(compare_snapshots(previous, current)["status"], UNCHANGED)
 
-    def test_a_model_without_a_price_is_left_out_of_the_catalogue(self):
+    def test_a_model_without_a_price_stays_in_the_catalogue(self):
         unpriced = make_record(
             "fake",
             "假渠道",
@@ -2440,7 +2526,10 @@ class SnapshotTests(unittest.TestCase):
             "2026-09-16T00:00:00+08:00",
         )
         snapshot = snapshot_of([scanned_record("m1", "M1", "2", "8"), unpriced])
-        self.assertEqual(list(snapshot["models"]), ["m1"])
+        self.assertEqual(list(snapshot["models"]), ["m1", "m2"])
+        self.assertEqual(snapshot["models"]["m1"]["price_status"], "published")
+        self.assertEqual(snapshot["models"]["m2"]["price_status"], "unknown")
+        self.assertEqual(snapshot["models"]["m2"]["offers"], [])
 
     def test_the_same_catalogue_builds_the_same_snapshot(self):
         first = snapshot_of([scanned_record("m1", "M1", "2", "8")], "2026-09-16T10:00:00+08:00")
@@ -2600,7 +2689,7 @@ class SnapshotStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
             store.path("fake").write_text(
-                json.dumps({"schema_version": 0, "models": {}}), encoding="utf-8"
+                json.dumps({"schema_version": 1, "models": {}}), encoding="utf-8"
             )
             self.assertIsNone(store.read("fake"))
 
@@ -2896,6 +2985,22 @@ class DiffingTests(unittest.TestCase):
         self.assertEqual([model["model_id"] for model in added], ["m2"])
         self.assertEqual(price_lookup(added[0]["offers"][0], "input")["amount"], "3")
 
+    def test_an_unpriced_listing_precedes_an_offer_without_a_second_launch(self):
+        unpriced = make_record(
+            "fake", "假渠道", "m2-preview", "M2 Preview", "中国区", [],
+            "https://example.test/fake", "test", "2026-09-16T00:00:00+08:00",
+        )
+        base = [scanned_record("m1", "M1", "2", "8")]
+        listed = self.report(base, [*base, unpriced])
+        self.assertEqual(
+            [model["model_id"] for model in listed["changes"]["models_added"]],
+            ["m2-preview"],
+        )
+        self.assertEqual(listed["changes"]["models_added"][0]["offers"], [])
+        priced = self.report([*base, unpriced], [*base, scanned_record("m2-preview", "M2 Preview", "3", "12")])
+        self.assertEqual(priced["changes"]["models_added"], [])
+        self.assertEqual(len(priced["changes"]["offers_added"]), 1)
+
     def test_a_withdrawn_model_keeps_the_price_it_had(self):
         report = self.report(
             [scanned_record("m1", "M1", "2", "8"), scanned_record("m2", "M2", "3", "12")],
@@ -3000,6 +3105,21 @@ class DeltaScanTests(unittest.TestCase):
             self.assertEqual(report["model_count"], 1)
             self.assertIsNotNone(store.read("fake"))
 
+    def test_a_catalogue_containing_only_an_unpriced_model_is_not_empty(self):
+        unpriced = make_record(
+            "fake", "假渠道", "preview", "Preview", "中国区", [],
+            "https://example.test/fake", "test", "2026-09-16T00:00:00+08:00",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            report = scan_providers(
+                [ScannedProvider([unpriced])], store,
+                captured_at="2026-09-16T10:00:00+08:00",
+            )["providers"][0]
+            self.assertEqual(report["status"], BASELINE_CREATED)
+            self.assertEqual(report["model_count"], 1)
+            self.assertEqual(store.read("fake")["models"]["preview"]["offers"], [])
+
     def test_a_second_identical_scan_reports_no_change(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
@@ -3086,7 +3206,7 @@ class DeltaScanTests(unittest.TestCase):
             )
             self.assertEqual(recovered["providers"][0]["status"], CHANGED)
 
-    def test_a_scan_that_prices_nothing_keeps_the_baseline_too(self):
+    def test_a_scan_that_finds_no_model_keeps_the_baseline_too(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
             scan_providers(
@@ -3382,6 +3502,22 @@ class DetectionReportTests(unittest.TestCase):
             self.assertNotIn("batch", report)
             self.assertNotIn("渠道概览", report)
             self.assertNotIn("渠道定价来源", report)
+
+    def test_a_new_unpriced_model_appears_with_unknown_price(self):
+        unpriced = make_record(
+            "fake", "假渠道", "preview", "Preview", "中国区", [],
+            "https://example.test/fake", "test", "2026-09-16T00:00:00+08:00",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            render_scan(store, [ScannedProvider([scanned_record("m1", "M1", "2", "8")])], "2026-09-15T10:00:00+08:00")
+            message = render_scan(
+                store,
+                [ScannedProvider([scanned_record("m1", "M1", "2", "8"), unpriced])],
+                "2026-09-16T10:00:00+08:00",
+            )
+            self.assertIn("新增模型（1）", message)
+            self.assertIn("Preview（preview）：价格未知", message)
 
     def test_new_standard_offer_includes_its_amounts(self):
         with tempfile.TemporaryDirectory() as directory:

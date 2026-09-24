@@ -291,8 +291,6 @@ class TencentAdapter(PriceSource):
         records = []
         for name_key, entries in grouped.items():
             offers = offers_by_name.get(name_key, [])
-            if not offers:
-                continue
             aliases = sorted(
                 {entry["model_id"] for entry in entries},
                 key=lambda value: (len(value), value),
@@ -315,16 +313,20 @@ class TencentAdapter(PriceSource):
                     delivery_mode=delivery_mode,
                     model_family=model_family(display_name),
                     source_updated_at=self.source_updated_at(),
-                    time_bands=time_bands_for(
-                        self._band_document(),
-                        model_id=aliases[0],
-                        display_name=display_name,
-                        labels=(
-                            TENCENT_BAND_LABELS
-                            if delivery_mode == "upstream_direct"
-                            else ()
-                        ),
-                        source_url=self.source_url,
+                    time_bands=(
+                        time_bands_for(
+                            self._band_document(),
+                            model_id=aliases[0],
+                            display_name=display_name,
+                            labels=(
+                                TENCENT_BAND_LABELS
+                                if delivery_mode == "upstream_direct"
+                                else ()
+                            ),
+                            source_url=self.source_url,
+                        )
+                        if offers
+                        else {}
                     ),
                 )
             )

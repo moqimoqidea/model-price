@@ -146,12 +146,13 @@ class DeepSeekAdapter(PriceSource):
             band = next((b for b in ("空闲时段", "高峰时段") if b in row), None)
             if not band or not current_kind:
                 continue
-            amounts = [
-                re.sub(r"元$", "", value)
-                for value in row
-                if re.fullmatch(r"\d+(?:\.\d+)?元", value)
-            ]
-            if len(amounts) != len(models):
+            # Keep column positions even when a newly listed model has an empty
+            # price cell; filtering numeric cells would shift every earlier
+            # amount into the wrong model or discard the whole row.
+            if len(row) <= len(models):
+                continue
+            price_cell = row[-len(models):][model_index]
+            if not re.fullmatch(r"\d+(?:\.\d+)?元", price_cell):
                 continue
             offer = offers.setdefault(
                 band,
@@ -165,7 +166,7 @@ class DeepSeekAdapter(PriceSource):
                 price_item(
                     current_kind,
                     current_label,
-                    amounts[model_index],
+                    re.sub(r"元$", "", price_cell),
                     "CNY_per_million_tokens",
                 )
             )

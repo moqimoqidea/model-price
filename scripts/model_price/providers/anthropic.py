@@ -72,7 +72,7 @@ class AnthropicAdapter(PriceSource):
             ]
             # Rows are identified by pricing content, never by a name prefix, so a
             # renamed or newly branded model family is picked up without a code fix.
-            if not model_id or not prices:
+            if not model_id:
                 continue
             conditions: dict[str, Any] = {"service_tier": "standard"}
             status = re.search(
@@ -107,7 +107,7 @@ class AnthropicAdapter(PriceSource):
                         )
                         if item
                     ]
-                    if not model_id or not prices:
+                    if not model_id:
                         continue
                     rows.append(
                         {
@@ -137,7 +137,7 @@ class AnthropicAdapter(PriceSource):
             first["model_id"],
             first["display_name"],
             "全球",
-            [row["offer"] for row in matched],
+            [row["offer"] for row in matched if row["offer"]["prices"]],
             self.source_url,
             self.source_kind,
             now_iso(),

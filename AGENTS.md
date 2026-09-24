@@ -181,7 +181,9 @@ even when the tests still pass.
    `not_found` — not a cue to infer capabilities from a name.
 8. **A failed or empty scan never writes a baseline.** `source_error` and
    `empty_scan` are reported and every prior successful archive is kept, so the
-   change survives into the run after the source recovers.
+   change survives into the run after the source recovers. A listed model with
+   no price is not an empty scan: keep it in the snapshot with unknown price so
+   its listing and later price publication are detected separately.
 9. **Cache and baseline are different things.** The cache is a 3-hour TTL store of
    responses, reused inside that window. `delta` always reads the sources afresh —
    a cache hit would be handed back as "no change". Successful scans are archived

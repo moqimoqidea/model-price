@@ -65,7 +65,8 @@ def scan_lifecycle(
         # interpreting an omitted link as a vendor withdrawing the announcement.
         # A schema bump starts a new comparison baseline, but the older archive
         # still carries notices that a rolling index may no longer link to.
-        known = dict((archived or {}).get("models") or {})
+        known = dict((previous or {}).get("models") or {})
+        known.update((archived or {}).get("models") or {})
         seen: set[str] = set()
         for item in fresh:
             model_key = f"{item['scope']}|{item['model_id']}"

@@ -103,6 +103,10 @@ only models present in an actual change.
   literal model id; their server-rendered tooltip is the official source for the
   peak/off-peak window. Catalogue fields also supply the model introduction,
   capabilities, modalities, limits, update time, and scheduled withdrawal.
+  A listed preview may publish no charge or only a zero placeholder; it remains
+  a catalogue model with unknown price. The public `Name` can say `Preview` or
+  `预览版` even when `VersionTag` says `MAJOR`, so the displayed label also supplies
+  preview lifecycle evidence.
 - Volcengine Ark: the page's `getDocDetail` JSON, reading `Result.MDContent` — the
   Markdown its "复制markdown" button produces. `Result.Content` is the same
   document as Slate JSON and is no longer parsed. Markdown table headings keep the

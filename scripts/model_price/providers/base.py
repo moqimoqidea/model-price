@@ -189,8 +189,6 @@ class TabularTokenPricingAdapter(PriceSource):
                                 display=clean_text(cells[index]),
                             )
                         )
-                if not prices:
-                    continue
                 shared_conditions = self.model_conditions(display_name)
                 for index in range(len(headers)):
                     if index == model_index or index in price_columns:
@@ -266,6 +264,7 @@ class TabularTokenPricingAdapter(PriceSource):
                     "prices": row["prices"],
                 }
                 for row in rows
+                if row["prices"]
             ],
             self.source_url,
             self.source_kind,

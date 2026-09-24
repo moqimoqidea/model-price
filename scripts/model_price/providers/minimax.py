@@ -49,7 +49,7 @@ class MiniMaxAdapter(PriceSource):
                 continue
             model_parts = CELL_BREAK_RE.split(cells[0], maxsplit=1)
             model_name = clean_text(model_parts[0])
-            if not model_name or not numeric_values(" ".join(cells[1:])):
+            if not model_name:
                 continue
             condition = clean_text(model_parts[1]) if len(model_parts) > 1 else ""
             amounts = []
@@ -99,6 +99,8 @@ class MiniMaxAdapter(PriceSource):
                 conditions["context_tier"] = row["condition"]
             if row["historical"]:
                 conditions["status"] = "historical"
+            if not row["prices"]:
+                continue
             offers.append(
                 {
                     "name": row["tier"],

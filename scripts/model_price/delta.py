@@ -32,10 +32,9 @@ from .snapshots import (
 )
 
 SOURCE_ERROR = "source_error"
-# A scan that prices nothing is far more likely to be a parser losing the document
-# than a vendor withdrawing its whole catalogue. It is reported, and it does not
-# replace the baseline: overwriting a full catalogue with an empty one would make
-# the next scan read as every model having been withdrawn.
+# An empty catalogue is far more likely to be a parser losing the document than
+# a vendor withdrawing every model. A listed model with no published price is
+# still a model and must survive into the baseline.
 EMPTY_SCAN = "empty_scan"
 STATUSES = (
     CHANGED,
@@ -140,7 +139,7 @@ def _scan_provider(
             previous,
             latest,
             captured_at,
-            "the source published no priced model",
+            "the source published no model",
             status=EMPTY_SCAN,
         )
     if report is None:
