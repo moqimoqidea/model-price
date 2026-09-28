@@ -6,7 +6,7 @@ import json
 import re
 from datetime import datetime
 from html.parser import HTMLParser
-from typing import Any, NamedTuple
+from typing import Any, Iterable, NamedTuple
 
 from .models import model_family, normalize_model
 from .pricing import FREE_AMOUNT, is_free_statement
@@ -741,3 +741,97 @@ def dated_rate_terms(value: str) -> dict[str, str]:
     if match["next"]:
         terms["list_amount"] = match["next"]
     return terms
+
+
+# Words a vendor writes when it is saying a price is not its ordinary one. Nothing
+# here decides what the price is — the price table does — so the list is deliberately
+# wide: a sentence carrying one of these, and naming a model, is that model's own
+# explanation of what it costs.
+PROMOTION_WORDS = (
+    "promotional",
+    "promotion",
+    "discount",
+    "限时",
+    "优惠",
+    "折扣",
+    "折",
+    "特价",
+)
+
+# Sentence-final punctuation, split so that a decimal point is not treated as one. A
+# model name carries dots (``gpt-5.6-sol``, ``seedance-2.0``), and cutting at every
+# dot leaves a name in halves that name nothing.
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?])\s*|(?<=[.!?])(?=\s)")
+
+
+def models_named_in(text: str, names: Iterable[str]) -> set[str]:
+    """Which of these names a vendor's own text states, as a whole name.
+
+    A dot separates one spelling and belongs to a version in another, so a name is
+    matched part by part with any of ``-``, ``_``, ``.`` or a space between its
+    parts. Where two names start in the same place the longer one wins: a sentence
+    about ``GPT-5.6 Sol`` names that model and not the ``gpt-5.6`` its name also
+    begins with, and settling for the shorter one would attribute a promotion to a
+    model the sentence is not about.
+    """
+    candidates = {
+        name: [part for part in re.split(r"[-_.\s]+", name.strip()) if part]
+        for name in names
+        if name and name.strip()
+    }
+    candidates = {name: parts for name, parts in candidates.items() if parts}
+    if not candidates:
+        return set()
+    alternation = "|".join(
+        r"[-_.\s]+".join(re.escape(part) for part in candidates[name])
+        for name in sorted(candidates, key=lambda name: -len(candidates[name]))
+    )
+    stated = re.compile(
+        r"(?<![A-Za-z0-9])(?:" + alternation + r")(?![A-Za-z0-9._-])", re.I
+    )
+    found: set[str] = set()
+    for match in stated.finditer(text):
+        written = re.sub(r"[-_.\s]+", "-", match.group()).lower()
+        found.update(
+            name
+            for name in candidates
+            if re.sub(r"[-_.\s]+", "-", name).lower() == written
+        )
+    return found
+
+
+def promotion_notes(document: str, *, names: Iterable[str]) -> dict[str, list[str]]:
+    """The vendor's own sentences about each named model's price, quoted as written.
+
+    Every name is offered at once, which is what makes a sentence naming one model
+    read as naming that one rather than another whose id it begins with: at each
+    place a name starts, the longest one wins. A sentence naming none of them belongs
+    to none of them, and a name the document explains nothing about gets no entry.
+
+    Nothing here is reduced to a field — "at least through November 21, 2026" is not
+    an end date, and 达到用量上限后恢复按刊例价结算 is not a multiplier — so the amount
+    each sentence explains is still read from the price table and the sentence travels
+    beside it as the vendor's own wording.
+    """
+    candidates = {name for name in names if name and name.strip()}
+    if not candidates:
+        return {}
+    notes: dict[str, list[str]] = {}
+    for sentence in _sentences(document):
+        if not any(word in sentence.lower() for word in PROMOTION_WORDS):
+            continue
+        for name in models_named_in(sentence, candidates):
+            explained = notes.setdefault(name, [])
+            if sentence not in explained:
+                explained.append(sentence)
+    return notes
+
+
+def _sentences(document: str) -> list[str]:
+    """The document's own sentences, in the order it published them."""
+    return [
+        stripped
+        for line in HTML_TEXT_BREAK_RE.sub("\n", document).splitlines()
+        for part in SENTENCE_SPLIT_RE.split(clean_text(line))
+        if (stripped := _strip_list_marker((part or "").strip()))
+    ]

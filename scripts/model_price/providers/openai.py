@@ -7,7 +7,7 @@ from typing import Any
 
 from ..core import PriceSource, now_iso
 from ..models import model_family, normalize_model, without_trailing_parenthetical
-from ..parsing import markdown_link_text, markdown_tables
+from ..parsing import markdown_link_text, markdown_tables, promotion_notes
 from ..pricing import make_record, usd_price
 from ..text import clean_text
 
@@ -31,6 +31,7 @@ class OpenAIAdapter(PriceSource):
     def __init__(self, client: Any) -> None:
         super().__init__(client)
         self._parsed_rows: list[dict[str, Any]] | None = None
+        self._note_map: dict[str, list[str]] | None = None
 
     def _rows(self) -> list[dict[str, Any]]:
         if self._parsed_rows is not None:
@@ -82,6 +83,22 @@ class OpenAIAdapter(PriceSource):
         self._parsed_rows = rows
         return self._parsed_rows
 
+    def _notes(self) -> dict[str, list[str]]:
+        """What the document says about each model's price, read once.
+
+        OpenAI announces its promotions in the prose beside the tables rather than in
+        a column, and names the model it means ("GPT-5.6 Sol's promotional pricing is
+        available at least through November 21, 2026"). The whole catalogue is offered
+        at once so that the sentence reads as naming gpt-5.6-sol and not the shorter
+        ids it begins with, and the sentence is kept as written: at least through a
+        date is not a date, and the price it explains is still read from the table.
+        """
+        if self._note_map is None:
+            self._note_map = promotion_notes(
+                self.document(OPENAI_MARKDOWN_URL), names=self.list_models()
+            )
+        return self._note_map
+
     def _rows_by_model(self) -> dict[str, list[dict[str, Any]]]:
         grouped: dict[str, list[dict[str, Any]]] = {}
         for row in self._rows():
@@ -90,6 +107,15 @@ class OpenAIAdapter(PriceSource):
 
     def _record_for(self, matched: list[dict[str, Any]]) -> dict[str, Any]:
         first = matched[0]
+        # A model is priced in several tiers and the document states what it says
+        # once, so the same sentence must not arrive once per tier.
+        notes = list(
+            dict.fromkeys(
+                note
+                for row in matched
+                for note in self._notes().get(row["model_id"], [])
+            )
+        )
         return make_record(
             self.provider_id,
             self.provider_name,
@@ -104,6 +130,9 @@ class OpenAIAdapter(PriceSource):
             delivery_mode="first_party",
             model_family=model_family(first["model_id"]),
             source_api=OPENAI_MARKDOWN_URL,
+            # A model the document explains no promotion for carries no note at all,
+            # rather than an empty one: the report prints a note where there is one.
+            **({"pricing_notes": notes} if notes else {}),
         )
 
     def list_models(self, prefix: str = "") -> list[str]:

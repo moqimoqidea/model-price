@@ -239,17 +239,30 @@ Read, because the vendor states them as data beside the amount:
   separately, and deriving one would put a number in the report the row itself does
   not print for that price. The badge is kept verbatim in the row's `context_tier`.
 
-Published, but only in a sentence beside the table — **not read**, because a sentence
-is not a field and "at least through November 21, 2026" is not the same fact as "ends
-November 21, 2026". The prices these describe are still read as the current billed
-rate, so nothing is misstated; what is missing is the vendor's own caveat:
+Published, but only in a sentence beside the table — the sentence is kept verbatim as
+the record's `pricing_notes` and the price stays the rate billed today. A sentence is
+not a field: "at least through November 21, 2026" is not the same fact as an end date,
+and 达到用量上限后恢复按刊例价结算 is not a multiplier, so nothing is parsed out of one.
+A note is kept only when the sentence names the model, matched against the whole
+catalogue at once so that a sentence about `GPT-5.6 Sol` is not also read as being
+about `gpt-5.6`:
 
 - **OpenAI** — `GPT-5.6 Sol's promotional pricing is available at least through
-  November 21, 2026.` The table publishes the promotional rate and no list price.
+  November 21, 2026.` The table publishes the promotional rate and no list price, so
+  this sentence is the only place the price is said to be temporary. It reaches
+  `gpt-5.6-sol` and no other model.
 - **Volcengine** — `Seedance 2.0 mini 与 Seedance 2.0 fast 现已开启限时优惠活动…达到规定
-  的 token 用量上限后将恢复按刊例价结算`, with the rules behind a separate link.
-- **xAI** — `Batch discounts by model: 20% off standard rates`, plus a 2× priority
-  multiplier. The discount belongs to the batch API, which is not read as an offer.
+  的 token 用量上限后将恢复按刊例价结算`. Both models are video generators, and the video
+  tables are kept out of the catalogue because they bill per token of generated video
+  rather than per token of inference. There is therefore no record for the sentence to
+  attach to. When that table is read, its cells state the promotion structurally
+  anyway (`输入不含视频：原价 37.00 ``限时75折```), which is the same shape Aliyun and
+  Google publish and belongs with `list_amount` and `discount` rather than with a note.
+- **xAI** — `Batch discounts by model: **20% off standard rates**` heads a list of four
+  grok models. The sentence names none of them, and the prices it discounts are Batch
+  prices, which this document does not publish at all (the page asks the reader to
+  toggle them on a model's detail page). A sentence naming no model is attached to
+  none, so xAI carries no note.
 - **Xiaomi** — `缓存写入：限时免费` and `mimo-v2.5-tts* 限时免费`. The first is preserved
   through the free wording; the second prices models the catalogue does not list.
 

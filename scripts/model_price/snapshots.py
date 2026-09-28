@@ -171,6 +171,13 @@ def build_snapshot(
                 "offers": [],
             },
         )
+        # The vendor's own sentence about what its price is. It stays out of every
+        # comparison — a note is not a price and does not move — but a scan reports
+        # the model it belongs to, so the baseline carries it to the report.
+        if notes := record.get("pricing_notes"):
+            entry["pricing_notes"] = list(
+                dict.fromkeys([*entry.get("pricing_notes", []), *notes])
+            )
         entry["offers"].extend(offers)
     for entry in models.values():
         unique = {offer_identity(offer): offer for offer in entry["offers"]}

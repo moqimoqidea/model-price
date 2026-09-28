@@ -43,6 +43,8 @@ from model_price.parsing import (
     document_update_stamp,
     headed_document_tables,
     markdown_tables,
+    models_named_in,
+    promotion_notes,
     split_markdown_row,
     time_bands_for,
     token_price_kind,
@@ -756,6 +758,188 @@ class OverseasParserTests(unittest.TestCase):
         record = adapter.query("gemini-test")[0]
         self.assertEqual(record["offers"][0]["conditions"]["billing_tier"], "paid")
         self.assertEqual(record["offers"][0]["prices"][0]["amount"], "0.50")
+
+
+class PromotionNoteTests(unittest.TestCase):
+    """A promotion a vendor announces in prose is kept in the vendor's own words.
+
+    Nothing here reduces a sentence to a field: "at least through November 21, 2026"
+    is not an end date. The amount it explains is still read from the price table.
+    """
+
+    def test_a_sentence_naming_the_model_is_kept_verbatim(self):
+        document = (
+            "Priority processing was renamed Fast mode on July 30, 2026. "
+            "GPT-5.6 Sol\u2019s promotional pricing is available at least through "
+            "November 21, 2026."
+        )
+        self.assertEqual(
+            promotion_notes(document, names={"gpt-5.6-sol"}),
+            {
+                "gpt-5.6-sol": [
+                    "GPT-5.6 Sol\u2019s promotional pricing is available at least "
+                    "through November 21, 2026."
+                ]
+            },
+        )
+
+    def test_a_model_the_document_explains_nothing_about_gets_no_note(self):
+        document = (
+            "GPT-5.6 Sol\u2019s promotional pricing is available at least through "
+            "November 21, 2026."
+        )
+        self.assertEqual(
+            promotion_notes(
+                document, names={"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6"}
+            ),
+            {
+                "gpt-5.6-sol": [
+                    "GPT-5.6 Sol\u2019s promotional pricing is available at least "
+                    "through November 21, 2026."
+                ]
+            },
+        )
+
+    def test_a_sentence_naming_a_longer_id_is_not_read_as_its_prefix(self):
+        names = {"grok-4.20", "grok-4.20-0309-reasoning"}
+        self.assertEqual(
+            models_named_in("grok-4.20-0309-reasoning gets 20% off", names),
+            {"grok-4.20-0309-reasoning"},
+        )
+        self.assertEqual(
+            models_named_in("grok-4.20 gets 20% off", names), {"grok-4.20"}
+        )
+
+    def test_a_decimal_point_does_not_end_the_sentence_around_a_name(self):
+        # Cutting at every dot would leave ``5.6`` and ``2.0`` in halves that name
+        # nothing, and the note would go to no model at all.
+        for model_id, document in (
+            ("gpt-5.6-sol", "GPT-5.6 Sol\u2019s promotional pricing is still running."),
+            ("seedance-2.0-mini", "Seedance 2.0 mini 现已开启限时优惠活动。"),
+        ):
+            self.assertEqual(
+                len(promotion_notes(document, names={model_id}).get(model_id, [])),
+                1,
+                model_id,
+            )
+
+    def test_a_sentence_about_no_particular_price_is_not_a_note(self):
+        for sentence in (
+            "Inference discounts are available if you enable data sharing.",
+            "Your invoice is in the billing console.",
+            "Models not listed above have no batch discount.",
+        ):
+            self.assertEqual(
+                promotion_notes(sentence, names={"gpt-5.6-sol"}), {}, sentence
+            )
+
+    def test_one_sentence_reaches_every_model_it_names(self):
+        document = "Seedance 2.0 mini 与 Seedance 2.0 fast 开启限时优惠活动。"
+        self.assertEqual(
+            promotion_notes(
+                document, names={"seedance-2.0-mini", "seedance-2.0-fast"}
+            ),
+            {
+                "seedance-2.0-mini": [document],
+                "seedance-2.0-fast": [document],
+            },
+        )
+
+    def test_the_note_reaches_the_record_and_leaves_the_untouched_model_alone(self):
+        markdown = """### Standard pricing data
+| Model | Short context input | Short context cached input | Short context cache writes | Short context output | Long context input | Long context cached input | Long context cache writes | Long context output |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| gpt-5.6-sol | $4.00 | $0.40 | $5.00 | $20.00 | $8.00 | $0.80 | $10.00 | $30.00 |
+| gpt-5.6-terra | $2.00 | $0.20 | $2.50 | $12.00 | $4.00 | $0.40 | $5.00 | $18.00 |
+
+GPT-5.6 Sol\u2019s promotional pricing is available at least through November 21, 2026.
+"""
+        adapter = OpenAIAdapter(MappingClient({OPENAI_MARKDOWN_URL: markdown}))
+        priced = adapter.query("gpt-5.6-sol")[0]
+        self.assertEqual(
+            priced["pricing_notes"],
+            [
+                "GPT-5.6 Sol\u2019s promotional pricing is available at least "
+                "through November 21, 2026."
+            ],
+        )
+        self.assertNotIn("pricing_notes", adapter.query("gpt-5.6-terra")[0])
+        # The sentence explains the price; it does not replace it.
+        self.assertEqual(
+            price_lookup(priced["offers"][0], "input")["amount"], "4.00"
+        )
+
+
+class PromotionNoteScanTests(unittest.TestCase):
+    """The note reaches the report, and on its own it is not a change."""
+
+    NOTE = (
+        "GPT-5.6 Sol\u2019s promotional pricing is available at least through "
+        "November 21, 2026."
+    )
+
+    def record(self, amount, *, notes=None):
+        return make_record(
+            "fake",
+            "假渠道",
+            "gpt-5.6-sol",
+            "GPT-5.6 Sol",
+            "全球",
+            [
+                {
+                    "name": "standard",
+                    "conditions": {},
+                    "prices": [
+                        price_item("input", "输入", amount, "USD_per_million_tokens")
+                    ],
+                }
+            ],
+            "https://example.test/fake",
+            "test",
+            "2026-09-16T00:00:00+08:00",
+            **({"pricing_notes": notes} if notes else {}),
+        )
+
+    def scan(self, before, after):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            scan_providers(
+                [ScannedProvider(before)], store, captured_at="2026-09-15T10:00:00+08:00"
+            )
+            return scan_message(
+                scan_providers(
+                    [ScannedProvider(after)],
+                    store,
+                    captured_at="2026-09-16T10:00:00+08:00",
+                )
+            )
+
+    def test_a_changed_model_carries_the_vendors_own_sentence(self):
+        message = self.scan(
+            [self.record("4.00", notes=[self.NOTE])],
+            [self.record("6.00", notes=[self.NOTE])],
+        )
+        self.assertIn("价格说明：", message)
+        self.assertIn("promotional pricing is available at least through", message)
+
+    def test_the_note_is_not_itself_a_change(self):
+        # The same catalogue with one model's note reworded is still the same
+        # catalogue: a note explains a price, it does not move one.
+        report = compare_snapshots(
+            snapshot_of([self.record("4.00", notes=[self.NOTE])]),
+            snapshot_of([self.record("4.00", notes=["A reworded sentence."])]),
+        )
+        self.assertEqual(report["status"], UNCHANGED)
+        self.assertEqual(report["changes"]["total"], 0)
+
+    def test_the_note_reaches_the_baseline(self):
+        snapshot = snapshot_of([self.record("4.00", notes=[self.NOTE])])
+        self.assertEqual(
+            snapshot["models"]["gpt-5.6-sol"]["pricing_notes"], [self.NOTE]
+        )
+        self.assertNotIn(
+            "pricing_notes", snapshot_of([self.record("4.00")])["models"]["gpt-5.6-sol"]
+        )
 
 
 class CatalogueRequestCountTests(unittest.TestCase):

@@ -178,10 +178,17 @@ def _price_brief(price: dict[str, Any]) -> dict[str, Any]:
 
 
 def _model_brief(model: dict[str, Any]) -> dict[str, Any]:
-    return {
+    brief = {
         "model_id": model.get("model_id", ""),
         "display_name": model.get("display_name", ""),
     }
+    # The vendor's own sentence about what the price is travels with the change, so
+    # the scan can print it beside the model it explains rather than only in JSON.
+    # It takes no part in deciding the change: it is the same sentence before and
+    # after, and it is not a price.
+    if notes := model.get("pricing_notes"):
+        brief["pricing_notes"] = list(notes)
+    return brief
 
 
 def _offer_brief(offer: dict[str, Any]) -> dict[str, Any]:

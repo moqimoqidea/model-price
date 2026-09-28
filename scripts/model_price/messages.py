@@ -243,6 +243,7 @@ def provider_entry(position: int, record: dict[str, Any]) -> list[str]:
     )
     if not offers:
         lines.append(field("价格", sentence_text(UNPRICED)))
+    lines.extend(price_note_lines(record))
     shared = shared_conditions(record)
     # Tested after filtering, not before: a channel whose shared terms are all
     # unprinted ones has nothing to state here, and an empty label reads as a
@@ -274,6 +275,20 @@ def price_text(price: dict[str, Any]) -> str:
     """One price as ``输入（未命中缓存）：2 元/百万 tokens``."""
     label = price.get("label") or price.get("type", "价格")
     return sentence_text(f"{label}：{format_price(price)}")
+
+
+def price_note_lines(record: dict[str, Any]) -> list[str]:
+    """What the vendor says about a model's price, in the vendor's own words.
+
+    A vendor that announces a price change in prose keeps the wording a reader needs
+    — "at least through November 21, 2026" says something an end date would not — so
+    the sentence is quoted rather than reduced to a term, and it is quoted beside the
+    prices it explains rather than in a section of its own.
+    """
+    return [
+        field("价格说明", sentence_text(note))
+        for note in record.get("pricing_notes") or []
+    ]
 
 
 def band_lines(results: list[dict[str, Any]]) -> list[str]:
@@ -502,6 +517,20 @@ PRICE_BULLET_CHANGE_FIELDS = tuple(
 )
 
 
+def changed_notes(changes: dict[str, Any]) -> list[str]:
+    """What the vendor says about the price of the models this entry names.
+
+    One model's change is reported as several bullets and each of them carries the
+    same sentence, so it is taken once: repeated per bullet it would read as several
+    notes saying one thing.
+    """
+    for field_name in CHANGE_FIELDS:
+        for item in changes.get(field_name) or []:
+            if notes := item.get("pricing_notes"):
+                return list(notes)
+    return []
+
+
 def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
     """Show standard prices while keeping distinct conditions separate."""
     changes = report.get("changes") or {}
@@ -533,6 +562,7 @@ def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
             bullets((price_change_text(move) for move in moves), ITEM),
         )
     )
+    details.extend(price_note_lines({"pricing_notes": changed_notes(changes)}))
     return entry(position, report["provider"]["name"], details) if details else []
 
 

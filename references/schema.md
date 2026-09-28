@@ -41,6 +41,19 @@ A vendor that runs an activity prices it as an offer of its own: `name` is the a
 
 A charge the vendor publishes as free is a price of `"0"` with `display` carrying the vendor's own wording (`免费`, `限时免费`, `Free of charge`), never a missing `amount`. `amount` is `null` only when the source priced nothing this tool can read — a per-second or per-request rate, or a tier the page does not quote. The two are different facts and are never made to look alike.
 
+A vendor that explains a price in prose rather than in a column gives the record a `pricing_notes` list holding its own sentences, verbatim:
+
+```json
+{
+  "model_id": "gpt-5.6-sol",
+  "pricing_notes": [
+    "GPT-5.6 Sol’s promotional pricing is available at least through November 21, 2026."
+  ]
+}
+```
+
+The sentence is kept as written because it says something a field cannot: *at least through* a date is not an end date, and 达到用量上限后恢复按刊例价结算 is not a multiplier. It never replaces the price — that is still read from the table and is the rate billed today — and it is never compared, so a note that is reworded is not a change. Only sentences naming that model are kept, and a model no sentence names carries no key at all.
+
 `delivery_mode` is `self_deployed`, `platform_hosted`, `third_party_hosted`, `upstream_direct`, or `first_party`. Source status is `available`, `not_found`, or `source_error`; the last means availability and price are unknown.
 
 When a vendor bills by time of day the result also carries `time_bands`:
