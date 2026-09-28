@@ -31,6 +31,8 @@ Each result contains:
 
 Price fields are `type`, `label`, `amount`, `unit`, and optional `display`, `list_amount`, or `discount`. Common units are `CNY_per_million_tokens`, `USD_per_million_tokens`, their `_per_hour` storage variants, `CNY_per_10k_characters`, and `CNY_per_request`.
 
+A charge the vendor publishes as free is a price of `"0"` with `display` carrying the vendor's own wording (`免费`, `限时免费`, `Free of charge`), never a missing `amount`. `amount` is `null` only when the source priced nothing this tool can read — a per-second or per-request rate, or a tier the page does not quote. The two are different facts and are never made to look alike.
+
 `delivery_mode` is `self_deployed`, `platform_hosted`, `third_party_hosted`, `upstream_direct`, or `first_party`. Source status is `available`, `not_found`, or `source_error`; the last means availability and price are unknown.
 
 When a vendor bills by time of day the result also carries `time_bands`:
@@ -175,8 +177,10 @@ daily scan never walks every model detail page merely to repeat unchanged prose.
 `model_count` includes listed models with no parseable price. `changes` holds `models_added`, `models_removed`, `offers_added`, `offers_removed`,
 `price_changes`, and their `total`. A model entry is the snapshot model, offers and
 prices included, so a new model's price is readable without a second query. Each
-model has `price_status` (`published` or `unknown`); an unknown price has `offers: []`
-and still appears in `models_added`. When its price is later published, the change
+model has `price_status` (`published` or `unknown`); `unknown` means the source
+published no price for it at all, so `offers: []`, and it still appears in
+`models_added`. A model the vendor publishes as free is `published`, because a zero
+is a price. When an unpriced model's price is later published, the change
 appears in `offers_added`, not `models_added` again. An
 offer entry is a model plus `offer` (`name`, `conditions`, and `prices`). A price change is a
 model plus `offer`, `conditions`, `type`, `label`, and `from`/`to` — each one an

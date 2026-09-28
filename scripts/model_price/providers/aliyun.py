@@ -18,7 +18,13 @@ from ..core import PriceSource, now_iso
 from ..errors import SourceError
 from ..models import model_family, normalize_model
 from ..parsing import time_bands_for
-from ..pricing import make_record, price_item, unit_code
+from ..pricing import (
+    FREE_AMOUNT,
+    is_free_amount,
+    make_record,
+    price_item,
+    unit_code,
+)
 
 ALIYUN_MODELS_URL = "https://www.qianwenai.com/models"
 ALIYUN_API_PRODUCT = "AliyunDeliveryService"
@@ -190,7 +196,13 @@ def time_band_label(value: str) -> str:
 def discounted_amount(
     amount: Any, discount: Any
 ) -> tuple[str | None, str | None]:
-    """Return the effective amount and its list amount when a discount applies."""
+    """Return the effective amount and its list amount when a discount applies.
+
+    The market quotes ``Discount`` as the multiplier a promotion applies, so
+    ``1`` is no promotion at all. A multiplier of ``0`` is not a price of
+    nothing — no vendor discounts a paid model to zero — and is read as the
+    field being unset, so an untouched rate is never silently deleted.
+    """
     if amount is None:
         return None, None
     listed = str(amount)
@@ -198,22 +210,12 @@ def discounted_amount(
         return listed, None
     try:
         ratio = Decimal(str(discount))
-        if ratio == 1:
+        if ratio == 1 or ratio == 0:
             return listed, None
         current = Decimal(listed) * ratio
     except InvalidOperation:
         return listed, None
     return format(current.normalize(), "f"), listed
-
-
-def is_zero_amount(value: str | None) -> bool:
-    """Identify a free entitlement regardless of how its zero is formatted."""
-    if value is None:
-        return False
-    try:
-        return Decimal(value) == 0
-    except InvalidOperation:
-        return False
 
 
 def price_groups(item: dict[str, Any]) -> Iterator[tuple[str, list[dict[str, Any]]]]:
@@ -294,9 +296,17 @@ class AliyunAdapter(PriceSource):
                 amount, list_amount = discounted_amount(
                     price.get("Price"), price.get("Discount")
                 )
-                # A zero is a free entitlement, not a monetary model price.
-                if amount is None or is_zero_amount(amount):
+                if amount is None:
                     continue
+                # The promotion is reported only when it moved the rate: a
+                # market entry that states one has a list price beside it.
+                discount = price.get("Discount") if list_amount else None
+                if is_free_amount(amount):
+                    # A free entitlement is what the model costs. Recording it
+                    # as a zero keeps it a published price instead of leaving
+                    # the model looking like one whose price is not out yet,
+                    # and leaves no promotion to report against it.
+                    amount, list_amount, discount = FREE_AMOUNT, None, None
                 band = str(price.get("TimeBand") or "standard")
                 grouped.setdefault((tier, band), []).append(
                     price_item(
@@ -307,7 +317,7 @@ class AliyunAdapter(PriceSource):
                         amount,
                         unit_code(str(price.get("PriceUnit") or "")),
                         list_amount=list_amount,
-                        discount=price.get("Discount"),
+                        discount=discount,
                     )
                 )
 

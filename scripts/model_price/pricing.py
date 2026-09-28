@@ -14,6 +14,36 @@ from .text import clean_text
 
 MILLION = 1_000_000
 
+# A vendor that charges nothing says so in words instead of printing a zero. That
+# statement is still the model's price — a free model costs nothing — so it is
+# recorded as an amount rather than dropped. Dropping it would leave the model
+# indistinguishable from one whose price has not been published yet, and the
+# promotion ending would be invisible.
+FREE_AMOUNT = "0"
+
+# The whole cell has to be the statement. A cell that names a free allowance
+# beside a rate ("首张免费 / 第 2 张起：0.02", "1 GB 内存储免费") prices something
+# else and is read on its own terms.
+FREE_STATEMENT_RE = re.compile(
+    r"^(?:免费|限时免费|不收费|free|free of charge|no charge)[.。!！]?$", re.I
+)
+
+
+def is_free_statement(value: str) -> bool:
+    """Say whether a cell states a charge of nothing, and states nothing else."""
+    return bool(FREE_STATEMENT_RE.match(clean_text(value)))
+
+
+def is_free_amount(value: Any) -> bool:
+    """Identify a price of nothing, however the vendor's zero was formatted."""
+    if value is None:
+        return False
+    try:
+        return Decimal(str(value)) == 0
+    except (InvalidOperation, ValueError):
+        return False
+
+
 # A catalogue can publish a base service beside faster and discounted variants.
 # The order in the source is useful, but snapshots have to be deterministic, so
 # their ordering needs an explicit business meaning instead of an alphabetical
@@ -157,6 +187,18 @@ def price_item(
     return item
 
 
+def free_price(
+    kind: str, label: str, unit: str, *, display: str | None = None
+) -> dict[str, Any]:
+    """Build the price of a charge a vendor publishes as free.
+
+    The unit stays the one the vendor would bill in, and ``display`` keeps the
+    vendor's own wording ("免费", "限时免费", "Free of charge") so a promotion that
+    ends is readable in the report that records the change.
+    """
+    return price_item(kind, label, FREE_AMOUNT, unit, display=display)
+
+
 def make_record(
     provider_id: str,
     provider_name: str,
@@ -219,6 +261,11 @@ def usd_amount(value: str) -> str | None:
 
 
 def usd_price(kind: str, label: str, value: str) -> dict[str, Any] | None:
+    """Read one USD price cell, whether it quotes an amount or a free charge."""
+    if is_free_statement(value):
+        return free_price(
+            kind, label, "USD_per_million_tokens", display=clean_text(value)
+        )
     amount = usd_amount(value)
     if not amount:
         return None

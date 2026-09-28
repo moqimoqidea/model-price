@@ -8,6 +8,7 @@ from html.parser import HTMLParser
 from typing import Any, NamedTuple
 
 from .models import model_family, normalize_model
+from .pricing import FREE_AMOUNT, is_free_statement
 from .text import clean_text, numeric_values, unescape_markdown
 
 HEADING_TAGS = ("h1", "h2", "h3", "h4")
@@ -623,9 +624,16 @@ def compact_time_band_window(statement: str) -> str:
 
 
 def monetary_amount(value: str, header: str, currency: str) -> str | None:
-    """Extract a monetary amount only when the cell or header names currency."""
+    """Extract a monetary amount only when the cell or header names currency.
+
+    A cell that states a charge of nothing is that model's price, recorded as a
+    zero. A cell that merely mentions a free allowance beside other content is
+    not this row's price and is left to whatever else the cell says.
+    """
     cell = clean_text(value).replace(",", "")
     heading = clean_text(header).lower()
+    if is_free_statement(cell):
+        return FREE_AMOUNT
     if re.search(r"\bfree\b", cell, re.I) or any(
         label in cell for label in ("免费", "不收费")
     ):

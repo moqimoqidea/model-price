@@ -10,7 +10,7 @@ from ..core import PriceSource, now_iso
 from ..errors import SourceError
 from ..models import model_family, model_matches, normalize_model
 from ..parsing import SpanGrid, normalize_update_stamp, time_bands_for
-from ..pricing import make_record, price_item
+from ..pricing import free_price, is_free_statement, make_record, price_item
 from ..text import clean_text
 
 TENCENT_LIST_URL = "https://cloud.tencent.com/document/product/1823/130051"
@@ -234,6 +234,7 @@ class TencentAdapter(PriceSource):
                     "output": index_containing("推理输出"),
                     "cache_hit": index_containing("缓存命中"),
                 }
+                unit = "CNY_per_million_tokens"
                 for row in rows[1:]:
                     name_pos = indexes["name"]
                     if name_pos is None or name_pos >= len(row):
@@ -250,13 +251,12 @@ class TencentAdapter(PriceSource):
                             or row[position] in ("", "-")
                         ):
                             continue
+                        figure = row[position]
+                        label = clean_text(headers[position].split("（", 1)[0])
                         prices.append(
-                            price_item(
-                                kind,
-                                clean_text(headers[position].split("（", 1)[0]),
-                                row[position],
-                                "CNY_per_million_tokens",
-                            )
+                            free_price(kind, label, unit)
+                            if is_free_statement(figure)
+                            else price_item(kind, label, figure, unit)
                         )
                     conditions = {}
                     for key in ("condition", "time_band"):

@@ -14,7 +14,7 @@ from ..core import PriceSource, now_iso
 from ..errors import SourceError
 from ..models import model_family, model_matches, normalize_model
 from ..parsing import markdown_link_text, markdown_tables
-from ..pricing import make_record, price_item, usd_price
+from ..pricing import is_free_amount, make_record, price_item, usd_amount, usd_price
 from ..text import clean_text
 
 GEMINI_URL = "https://ai.google.dev/gemini-api/docs/pricing"
@@ -91,6 +91,10 @@ class GeminiAdapter(PriceSource):
             )
             if paid_index is None:
                 continue
+            free_index = next(
+                (index for index, cell in enumerate(headers) if "free tier" in cell),
+                None,
+            )
             prices = []
             for row in rows[1:]:
                 if len(row) <= paid_index:
@@ -106,7 +110,16 @@ class GeminiAdapter(PriceSource):
                 )
                 if not kind:
                     continue
+                # The free tier prices what the paid tier leaves unpriced: a
+                # model with "Free of charge" beside "Not available" is free,
+                # while one the paid tier does quote keeps the paid rate.
                 cell = row[paid_index]
+                if (
+                    free_index is not None
+                    and len(row) > free_index
+                    and not usd_amount(cell)
+                ):
+                    cell = row[free_index]
                 storage = CACHE_STORAGE_RE.search(cell) if kind == "cache_hit" else None
                 if storage:
                     cell = CACHE_STORAGE_RE.sub("", cell).strip()
@@ -127,7 +140,17 @@ class GeminiAdapter(PriceSource):
                 offers.append(
                     {
                         "name": normalize_model(tier) or "standard",
-                        "conditions": {"service_tier": tier, "billing_tier": "paid"},
+                        "conditions": {
+                            "service_tier": tier,
+                            # A model the page prices entirely at nothing is
+                            # billed on the free tier, whatever the table calls
+                            # the column it came from.
+                            "billing_tier": (
+                                "free"
+                                if all(is_free_amount(p["amount"]) for p in prices)
+                                else "paid"
+                            ),
+                        },
                         "prices": prices,
                     }
                 )

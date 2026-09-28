@@ -35,7 +35,13 @@ from ..parsing import (
     time_band_label,
     token_price_kind,
 )
-from ..pricing import make_record, per_million_tokens, price_item, tokens_per_price_unit
+from ..pricing import (
+    is_free_amount,
+    make_record,
+    per_million_tokens,
+    price_item,
+    tokens_per_price_unit,
+)
 from ..text import clean_text, first_cell_line
 
 BAIDU_PAGE_URL = "https://cloud.baidu.com/doc/qianfan/s/wmh4sv6ya"
@@ -235,6 +241,10 @@ class BaiduAdapter(PriceSource):
             amount = monetary_amount(figure, unit_label, self.currency)
             if amount is None:
                 continue
+            # The vendor's own figure travels in the display text so the figure
+            # on its page stays checkable against the rescaled amount. A charge
+            # of nothing has no figure to rescale and keeps the vendor's word.
+            display = figure if is_free_amount(amount) else f"{amount} {unit_label}"
             entries.append(
                 {
                     "model_id": normalize_model(version),
@@ -247,7 +257,7 @@ class BaiduAdapter(PriceSource):
                         item,
                         per_million_tokens(amount, tokens),
                         "CNY_per_million_tokens",
-                        display=f"{amount} {unit_label}",
+                        display=display,
                     ),
                 }
             )

@@ -26,7 +26,7 @@ from .diffing import (
     UNCHANGED,
 )
 from .models import normalize_model
-from .pricing import is_standard_offer, price_sort_key
+from .pricing import is_free_amount, is_standard_offer, price_sort_key
 from .snapshots import AT_OR_BEFORE, LAST_MONTH, ON_DATE, YESTERDAY, YESTERDAY_FIRST
 
 DELIVERY_LABELS = {
@@ -129,6 +129,8 @@ NO_CHANGE = "—"
 UNKNOWN = "未知"
 UNSTATED = "未说明原因"
 UNPRICED = "价格未知（官方文档未给出本工具可解析的价格）"
+# A charge of nothing, for a vendor that published the zero without a word for it.
+FREE_LABEL = "免费"
 NO_WINDOW = "官方文档未公布具体时段"
 NO_SUMMARY = "官方页面未给出文字摘要"
 
@@ -220,6 +222,11 @@ def format_price(item: dict[str, Any] | None) -> str:
     display = item.get("display")
     amount = item.get("amount")
     unit = item.get("unit")
+    if is_free_amount(amount):
+        # A charge of nothing reads as the vendor's own wording when it has one
+        # ("免费", "限时免费", "Free of charge") and as 免费 when it does not,
+        # never as an amount of zero next to a unit it is not billed in.
+        return display or FREE_LABEL
     if display and (
         "免费" in display
         or len(re.findall(r"\$\s*\d", display)) > 1

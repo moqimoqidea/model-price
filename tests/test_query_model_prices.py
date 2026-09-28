@@ -39,6 +39,8 @@ from model_price.parsing import (
     token_price_kind,
 )
 from model_price.pricing import (
+    is_free_amount,
+    is_free_statement,
     make_record,
     per_million_tokens,
     price_item,
@@ -104,6 +106,7 @@ from model_price.descriptions.core import (
 from model_price.messages import band_lines, comparison_message, scan_message
 from model_price.reporting import (
     format_moment,
+    format_price,
     model_digest,
     offer_condition_text,
     offering_text,
@@ -889,7 +892,7 @@ class GeminiAdapterTests(unittest.TestCase):
         self.assertEqual(GeminiAdapter.source_kind, "official_markdown")
         self.assertEqual(GEMINI_MARKDOWN_URL, f"{GEMINI_URL}.md.txt")
 
-    def test_paid_tier_is_read_and_the_free_tier_is_not(self):
+    def test_a_model_the_paid_tier_prices_keeps_the_paid_rate(self):
         record = self.adapter().query("gemini-test")[0]
         self.assertEqual(record["currency"], "USD")
         self.assertEqual(record["model_id"], "gemini-test")
@@ -899,6 +902,14 @@ class GeminiAdapterTests(unittest.TestCase):
         self.assertEqual(price_lookup(standard, "input")["amount"], "0.50")
         self.assertEqual(price_lookup(standard, "output")["amount"], "2.00")
         self.assertEqual(price_lookup(standard, "cache_hit")["amount"], "0.25")
+
+    def test_a_model_only_the_free_tier_prices_is_published_as_free(self):
+        record = self.adapter().query("gemma-test")[0]
+        offer = record["offers"][0]
+        self.assertEqual(offer["conditions"]["billing_tier"], "free")
+        self.assertEqual(price_lookup(offer, "input")["amount"], "0")
+        self.assertEqual(price_lookup(offer, "input")["display"], "Free of charge")
+        self.assertEqual(offer["conditions"]["service_tier"], "standard")
 
     def test_each_tier_becomes_its_own_offer(self):
         record = self.adapter().query("gemini-test")[0]
@@ -1076,6 +1087,38 @@ class PriceUnitTests(unittest.TestCase):
     def test_each_token_scale_is_read_as_its_own_multiple(self):
         self.assertEqual(tokens_per_price_unit("元/千tokens"), 1_000)
         self.assertEqual(tokens_per_price_unit("元/百万 tokens"), 1_000_000)
+
+
+class FreePriceTests(unittest.TestCase):
+    """A vendor charging nothing publishes a price of zero, not a gap in one."""
+
+    def test_a_cell_stating_only_a_free_charge_is_that_rows_price(self):
+        for cell in ("免费", "限时免费", "不收费", "Free of charge", "No charge"):
+            self.assertTrue(is_free_statement(cell), cell)
+
+    def test_a_free_allowance_beside_a_rate_is_not_that_rows_price(self):
+        for cell in ("首张免费", "第 2 张起：0.02", "1 GB 内存储免费", "", "-"):
+            self.assertFalse(is_free_statement(cell), cell)
+
+    def test_a_zero_is_recognized_however_it_was_formatted(self):
+        for value in ("0", "0.00", "0.0000"):
+            self.assertTrue(is_free_amount(value), value)
+        for value in (None, "", "0.02", "免费"):
+            self.assertFalse(is_free_amount(value), value)
+
+    def test_a_free_price_keeps_the_vendors_own_word(self):
+        self.assertEqual(
+            format_price(
+                {"amount": "0", "unit": "CNY_per_million_tokens", "display": "限时免费"}
+            ),
+            "限时免费",
+        )
+
+    def test_a_free_price_without_a_word_of_its_own_reads_as_free(self):
+        self.assertEqual(
+            format_price({"amount": "0", "unit": "CNY_per_million_tokens"}),
+            "免费",
+        )
 
 
 # Baidu prices one billing item per serving channel, keeps the peak/off-peak
@@ -1278,12 +1321,18 @@ class ZhipuAdapterTests(unittest.TestCase):
         self.assertEqual(offer["conditions"]["输入模态"], "文本")
         self.assertEqual(offer["conditions"]["source_section"], "旗舰模型")
 
-    def test_a_promotional_free_storage_cell_reports_no_price(self):
+    def test_a_promotional_free_storage_cell_is_priced_at_nothing(self):
         offer = self.adapter().query("glm-test")[0]["offers"][0]
-        self.assertIsNone(price_lookup(offer, "cache_storage"))
+        storage = price_lookup(offer, "cache_storage")
+        self.assertEqual(storage["amount"], "0")
+        self.assertEqual(storage["display"], "限时免费")
 
-    def test_a_free_model_produces_no_price_rows(self):
-        self.assertEqual(self.adapter().query("glm-free")[0]["offers"], [])
+    def test_a_free_model_is_priced_at_nothing(self):
+        offer = self.adapter().query("glm-free")[0]["offers"][0]
+        self.assertEqual(price_lookup(offer, "input")["amount"], "0")
+        self.assertEqual(price_lookup(offer, "input")["display"], "免费")
+        self.assertEqual(price_lookup(offer, "output")["amount"], "0")
+        self.assertIsNone(price_lookup(offer, "cache_hit"))
 
     def test_context_tiers_stay_separate_offers(self):
         record = self.adapter().query("glm-tiered")[0]
@@ -2104,7 +2153,7 @@ class QianwenCatalogueTests(unittest.TestCase):
             "Text",
         )
 
-    def test_a_formatted_zero_is_not_reported_as_a_model_price(self):
+    def test_a_formatted_zero_is_reported_as_a_free_price(self):
         item = {
             "Model": "free-entitlement",
             "Prices": [
@@ -2119,9 +2168,13 @@ class QianwenCatalogueTests(unittest.TestCase):
         record = AliyunAdapter(
             QianwenPagingClient([qianwen_page([item], 1)])
         ).query("free-entitlement")[0]
-        self.assertEqual(record["offers"], [])
+        price = record["offers"][0]["prices"][0]
+        self.assertEqual(price["amount"], "0")
+        self.assertEqual(price["unit"], "每张")
+        self.assertNotIn("list_amount", price)
+        self.assertNotIn("discount", price)
 
-    def test_a_zero_price_preview_stays_listed_with_preview_metadata(self):
+    def test_a_free_model_is_published_rather_than_left_unpriced(self):
         item = {
             "Model": "decision-model-preview",
             "Name": "决策模型（预览版）",
@@ -2130,13 +2183,34 @@ class QianwenCatalogueTests(unittest.TestCase):
         }
         adapter = AliyunAdapter(QianwenPagingClient([qianwen_page([item], 1)]))
         record = adapter.catalog_records()[0]
-        self.assertEqual(record["offers"], [])
+        self.assertEqual(record["offers"][0]["prices"][0]["amount"], "0")
         self.assertEqual(record["model_metadata"]["lifecycle"], "preview")
         self.assertEqual(
             build_snapshot(adapter, [record], "2026-09-25T00:00:00+08:00")["models"]
             ["decision-model-preview"]["price_status"],
-            "unknown",
+            "published",
         )
+
+    def test_a_zero_multiplier_is_not_read_as_a_price_of_nothing(self):
+        """``Discount`` is the multiplier a promotion applies, not a percentage."""
+        item = {
+            "Model": "rate-with-unset-discount",
+            "Prices": [
+                {
+                    "Type": "input_token",
+                    "PriceUnit": "每百万tokens",
+                    "Price": "2",
+                    "Discount": "0",
+                    "PriceName": "输入",
+                }
+            ],
+        }
+        record = AliyunAdapter(
+            QianwenPagingClient([qianwen_page([item], 1)])
+        ).query("rate-with-unset-discount")[0]
+        price = record["offers"][0]["prices"][0]
+        self.assertEqual(price["amount"], "2")
+        self.assertNotIn("discount", price)
 
     def test_a_duplicate_unpriced_item_does_not_hide_a_priced_item(self):
         items = [

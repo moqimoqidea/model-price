@@ -14,6 +14,7 @@ from typing import Any
 from .base import TabularTokenPricingAdapter
 from ..errors import SourceError
 from ..parsing import describes_request_length, non_token_billing_header
+from ..pricing import FREE_AMOUNT, is_free_statement
 from ..text import clean_text, numeric_values
 
 VOLCENGINE_PAGE_URL = "https://docs.volcengine.com/docs/82379/1544106"
@@ -58,6 +59,9 @@ def price_type_from_header(header: str) -> str:
 
 
 def amount_from_cell(value: str) -> str | None:
+    """Read one price cell, whether it quotes a rate or a charge of nothing."""
+    if is_free_statement(value):
+        return FREE_AMOUNT
     if clean_text(value) in ("", "-"):
         return None
     values = numeric_values(value)
