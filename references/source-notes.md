@@ -353,7 +353,28 @@ priced per token. The tables that carry those units:
   are read by a second shape that finds its price columns by what their cells
   publish, with the row's own 单位 column as the evidence of currency.
 - **xAI** — `### Imagine Pricing`: 每张图与每秒视频, both stated inside the cell.
-- **Google**, **OpenAI**, **Kimi** — see their entries above.
+- **OpenAI** — the page files its tables under a line of its own rather than under a
+  heading, and every section but the first four carries the same generic heading, so
+  the words published above a table are what it is read under and a label naming a
+  service level is that table's tier (the tier vocabulary is read from the page's own
+  `... pricing data` headings). The image, realtime/audio, transcription, and
+  specialized tables are read this way, with the modality, use case, or category
+  filed as a condition. The tools table names a tool in its first column and the
+  fine-tuning tables head a training charge, so neither prices a model's use.
+- **Google** — a family lists its API ids on one italic line and prices its variants
+  one row at a time ("Veo Test Fast …" for `veo-test-fast-generate`), so each row is
+  matched to the id whose own name carries a word the sibling ids do not; the id with
+  no such word takes the row that carries none. A section whose rows cannot be
+  matched one-to-one is left whole rather than guessed at. Only a column billed in
+  something other than tokens prices variants: a token column's rows say which charge
+  they price. A rate the page restates in another unit is kept in both units — in
+  brackets beside the token rate (`$6.50 ($0.00016 per second)`), as a whole-cell rate
+  (`$0.039 per image`), or as a stated equivalent (`Equivalent to $0.045 per 1K
+  image`), whose resolution stays in the price's label.
+- **Kimi** — the batch document is read with the chat document and its `（Batch）`
+  suffix is a service level rather than part of the model's id, so one model sold two
+  ways is one record with a standard offer and a batch offer. The other sibling
+  documents price tools, sandboxes, plugins, and account tiers.
 
 ## Time bands
 

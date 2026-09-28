@@ -1932,6 +1932,11 @@ KIMI_CHAT = """# 对话模型价格
 ["kimi-k3-mini", "1M tokens", "¥0.50", "¥5.00", "¥25.00", "262,144 tokens"],
 """
 
+KIMI_BATCH = """# 批量推理价格
+
+["kimi-k3（Batch）", "1M tokens", "¥1.20", "¥12.00", "¥60.00", "1,048,576 tokens"],
+"""
+
 KIMI_CHAT_WITH_CACHE_WRITES = '''# 模型推理价格说明
 
 <DocTable
@@ -1953,14 +1958,16 @@ KIMI_CHAT_WITH_CACHE_WRITES = '''# 模型推理价格说明
 
 
 class KimiAdapterTests(unittest.TestCase):
-    def adapter(self, document=KIMI_CHAT):
-        # Only the chat document is mapped: any other URL would raise, so this
-        # also proves the sibling pricing documents are never fetched.
+    def adapter(self, document=KIMI_CHAT, batch=KIMI_BATCH):
+        # Only the two model-pricing documents are mapped: any other URL would
+        # raise, so this also proves the tool and account documents are never
+        # fetched.
         return KimiAdapter(
             MappingClient(
                 {
                     KIMI_INDEX_URL: KIMI_INDEX,
                     "https://platform.kimi.com/docs/pricing/chat.md": document,
+                    "https://platform.kimi.com/docs/pricing/batch.md": batch,
                 }
             )
         )
@@ -4515,6 +4522,193 @@ class DetectionReportTests(unittest.TestCase):
             report = scan_message(payload)
             self.assertNotIn("Skill 更新检查", report)
             self.assertNotIn("当前 skill 已是远端版本", report)
+
+
+class BillingUnitTests(unittest.TestCase):
+    """Prices a vendor bills in something other than tokens.
+
+    A video model billed per second, an image model billed per picture, and a
+    speech model billed per character are all models with prices, and each keeps
+    the unit its vendor published rather than being restated as a token rate.
+    """
+
+    def openai(self, markdown):
+        return OpenAIAdapter(MappingClient({OPENAI_MARKDOWN_URL: markdown}))
+
+    def test_openai_reads_images_audio_and_transcription_in_their_own_units(self):
+        markdown = """### Image generation models
+
+Standard
+
+
+### Grouped Pricing Table data
+| Model | Modality | Input | Cached input | Output |
+| --- | --- | --- | --- | --- |
+| gpt-image-test | Image | $8.00 | $2.00 | $30.00 |
+| gpt-image-test | Text | $5.00 | $1.25 | - |
+
+Batch
+
+
+### Grouped Pricing Table data
+| Model | Modality | Input | Cached input | Output |
+| --- | --- | --- | --- | --- |
+| gpt-image-test | Image | $4.00 | $1.00 | $15.00 |
+
+Realtime and audio generation models
+
+
+### Grouped Pricing Table data
+| Model | Modality | Input | Cached input | Output / cost |
+| --- | --- | --- | --- | --- |
+| tts-test | Text | $15.00 / 1M characters | - | - |
+
+Transcription models
+
+
+### Grouped Pricing Table data
+| Model | Use case | Input | Output | Estimated cost |
+| --- | --- | --- | --- | --- |
+| whisper-test | Transcription | - | - | $0.006 / minute |
+
+GPT-Live sessions
+
+
+### Pricing Table data
+| Model | Price per minute |
+| --- | --- |
+| gpt-live-test | $0.05 |
+"""
+        adapter = self.openai(markdown)
+        # One model, two price lists: the batch rate is another offer, not a
+        # replacement for the standard one.
+        image = adapter.query("gpt-image-test")[0]
+        # The image and text charges are different offers, and the batch list is a
+        # third: none of them replaces another.
+        self.assertEqual(
+            [(offer["name"], offer["conditions"]["Modality"]) for offer in image["offers"]],
+            [("standard", "Image"), ("standard", "Text"), ("batch", "Image")],
+        )
+        self.assertEqual(price_lookup(image["offers"][2], "input")["amount"], "4.00")
+        tts = adapter.query("tts-test")[0]
+        self.assertEqual(
+            tts["offers"][0]["prices"][0]["unit"], "USD_per_million_characters"
+        )
+        whisper = adapter.query("whisper-test")[0]
+        self.assertEqual(whisper["offers"][0]["prices"][0]["unit"], "USD_per_minute")
+        live = adapter.query("gpt-live-test")[0]
+        self.assertEqual(live["offers"][0]["prices"][0]["unit"], "USD_per_minute")
+
+    def test_openai_does_not_price_a_tool_or_a_training_run_as_a_model(self):
+        markdown = """Tools
+
+
+### Grouped Pricing Table data
+| Tool | Details | Pricing |
+| --- | --- | --- |
+| Web search | Web search (all models) | $10.00 / 1k calls |
+
+Finetuning
+
+
+### Pricing Table data
+| Model | Training | Input | Cached input | Output |
+| --- | --- | --- | --- | --- |
+| o4-mini-snapshot | $100.00 / hour | $4.00 | $1.00 | $16.00 |
+"""
+        adapter = self.openai(markdown)
+        self.assertEqual(adapter.list_models(), [])
+
+    def test_google_prices_a_video_family_one_variant_at_a_time(self):
+        markdown = """## Veo Test
+
+*[`veo-test-generate`](https://example.test/a), [`veo-test-fast-generate`](https://example.test/b)*
+
+|   | Free Tier | Paid Tier, per second in USD |
+|---|---|---|
+| Veo Test Standard video with audio price (default) | Not available | $0.40 (720p and 1080p) $0.60 (4k) |
+| Veo Test Fast video with audio price (default) | Not available | $0.10 (720p) |
+| Used to improve our products | [Yes](https://example.test/t) | [No](https://example.test/t) |
+"""
+        adapter = GeminiAdapter(MappingClient({GEMINI_MARKDOWN_URL: markdown}))
+        default = adapter.query("veo-test-generate")[0]
+        fast = adapter.query("veo-test-fast-generate")[0]
+        self.assertEqual(
+            [
+                (price["amount"], price["unit"], offer["conditions"]["price_scope"])
+                for offer in default["offers"]
+                for price in offer["prices"]
+            ],
+            [
+                ("0.40", "USD_per_second", "(720p and 1080p)"),
+                ("0.60", "USD_per_second", "(4k)"),
+            ],
+        )
+        self.assertEqual(
+            [price["amount"] for offer in fast["offers"] for price in offer["prices"]],
+            ["0.10"],
+        )
+
+    def test_google_prices_a_song_and_keeps_each_equivalent_unit(self):
+        markdown = """## Lyria Test
+
+*[`lyria-test`](https://example.test/c)*
+
+|   | Free Tier | Paid Tier, per request in USD |
+|---|---|---|
+| Lyria Test (Full Song) | Not available | $0.08 per song |
+
+## Image Test
+
+*[`image-test`](https://example.test/d)*
+
+### Standard
+
+|   | Free Tier | Paid Tier, per 1M tokens in USD |
+|---|---|---|
+| Input price | Not available | $0.50 per image |
+| Audio input price | Free of charge | $6.50 ($0.00016 per second) |
+| Output price | Not available | $3 (text and thinking) Equivalent to $0.045 per 1K image |
+"""
+        adapter = GeminiAdapter(MappingClient({GEMINI_MARKDOWN_URL: markdown}))
+        song = adapter.query("lyria-test")[0]
+        self.assertEqual(
+            [
+                (price["amount"], price["unit"])
+                for offer in song["offers"]
+                for price in offer["prices"]
+            ],
+            [("0.08", "USD_per_song")],
+        )
+        image = adapter.query("image-test")[0]
+        units = {
+            price["label"]: (price["amount"], price["unit"])
+            for offer in image["offers"]
+            for price in offer["prices"]
+        }
+        # A cell that is nothing but a rate in another unit prices that unit.
+        self.assertEqual(units["Input price"], ("0.50", "USD_per_image"))
+        # A rate the page restates in another unit is kept in both.
+        self.assertEqual(units["Audio input price（per second）"], ("0.00016", "USD_per_second"))
+        self.assertEqual(
+            units["Output price（Equivalent to 1K image）"], ("0.045", "USD_per_image")
+        )
+
+    def test_kimi_batch_is_a_service_tier_of_the_model_it_discounts(self):
+        adapter = KimiAdapter(
+            MappingClient(
+                {
+                    KIMI_INDEX_URL: KIMI_INDEX,
+                    "https://platform.kimi.com/docs/pricing/chat.md": KIMI_CHAT,
+                    "https://platform.kimi.com/docs/pricing/batch.md": KIMI_BATCH,
+                }
+            )
+        )
+        record = adapter.query("kimi-k3")[0]
+        self.assertEqual([offer["name"] for offer in record["offers"]], ["online_standard", "batch"])
+        self.assertEqual(price_lookup(record["offers"][1], "output")["amount"], "60.00")
+        self.assertEqual(record["offers"][1]["conditions"]["service_tier"], "batch")
+
 
 
 if __name__ == "__main__":

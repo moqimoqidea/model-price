@@ -140,7 +140,10 @@ UNIT_MEASURES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "request",
         (
-            "/次", "/request", "/requests", "/call", "/calls",
+            # A vendor that bills per call writes "次" on its own as often as it
+            # writes 元/次, and 千次/万次 are tested first for the same reason 百万
+            # is tested before 万.
+            "/次", "次/", "次", "/request", "/requests", "/call", "/calls",
             "/prompt", "/prompts", "/query", "/queries", "/search",
         ),
     ),
@@ -449,17 +452,22 @@ def per_million_tokens(amount: str, tokens_per_unit: int) -> str:
     return format(scaled.normalize(), "f")
 
 
+def usd_amounts(value: str) -> list[str]:
+    """Every USD amount in a value, in the order it published them."""
+    return re.findall(r"\$\s*(\d+(?:\.\d+)?)", value)
+
+
 def usd_amount(value: str) -> str | None:
-    match = re.search(r"\$\s*(\d+(?:\.\d+)?)", value)
-    return match.group(1) if match else None
+    found = usd_amounts(value)
+    return found[0] if found else None
 
 
-def usd_price(kind: str, label: str, value: str) -> dict[str, Any] | None:
+def usd_price(
+    kind: str, label: str, value: str, unit: str = "USD_per_million_tokens"
+) -> dict[str, Any] | None:
     """Read one USD price cell, whether it quotes an amount or a free charge."""
     if is_free_statement(value):
-        return free_price(
-            kind, label, "USD_per_million_tokens", display=clean_text(value)
-        )
+        return free_price(kind, label, unit, display=clean_text(value))
     amount = usd_amount(value)
     if not amount:
         return None
@@ -467,6 +475,6 @@ def usd_price(kind: str, label: str, value: str) -> dict[str, Any] | None:
         kind,
         label,
         amount,
-        "USD_per_million_tokens",
+        unit,
         display=clean_text(SUPERSCRIPT_RE.sub("", value)),
     )

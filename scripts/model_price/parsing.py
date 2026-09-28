@@ -794,7 +794,10 @@ def cell_rates(cell: str, *, header: str = "", currency: str = "CNY") -> list[Ce
                     billed,
                     conditions,
                     _unit_phrase(unit_tail, credit=credit),
-                    _rate_text(body),
+                    # The rate's own words, not the whole cell: a cell that prices
+                    # four tiers keeps each tier's own sentence as its evidence, so
+                    # a report of one of them does not quote the other three.
+                    _rate_text(body[spans[index - 1][1] if index else 0 : next_start]),
                     **terms,
                 )
             )

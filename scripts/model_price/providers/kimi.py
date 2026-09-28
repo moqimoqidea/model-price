@@ -7,7 +7,7 @@ from typing import Any
 
 from ..core import HttpClient, PriceSource, now_iso
 from ..errors import SourceError
-from ..models import model_family, normalize_model
+from ..models import model_family, normalize_model, split_trailing_parenthetical
 from ..parsing import (
     markdown_doc_tables,
     markdown_json_rows,
@@ -19,12 +19,12 @@ from ..text import clean_text
 
 KIMI_INDEX_URL = "https://platform.kimi.com/docs/llms.txt"
 
-# The index publishes the chat-model pricing as "chat.md" and has also served
-# dated variants such as "chat-k3.md", so match the whole family rather than
-# pinning a version. The sibling documents (batch, tools, limits) are not
-# per-model token tables and must stay out of the catalogue.
+# The index publishes the standard rate as "chat.md" and the discounted batch
+# service as "batch.md", and has also served dated variants such as "chat-k3.md",
+# so the whole family is matched rather than a pinned version. The other sibling
+# documents (search, agents, limits) price tools and accounts rather than models.
 KIMI_PRICING_DOC_RE = re.compile(
-    r"https://platform\.kimi\.com/docs/pricing/chat[^)\s]*\.md"
+    r"https://platform\.kimi\.com/docs/pricing/(?:chat|batch)[^)\s]*\.md"
 )
 
 # Older copies of the official Markdown exposed the JSON rows without their JSX
@@ -103,7 +103,13 @@ class KimiAdapter(PriceSource):
                     continue
                 for cells in table[1:]:
                     cells = [*cells, *("" for _ in range(len(headers) - len(cells)))]
-                    display_name = clean_text(cells[model_index])
+                    # The batch document marks its rows in the name itself
+                    # ("kimi-k2.7-code（Batch）"). That is a service level rather
+                    # than part of the model's id: the same model sold two ways is
+                    # one model with two offers, not two models.
+                    display_name, tier_note = split_trailing_parenthetical(
+                        clean_text(cells[model_index])
+                    )
                     if not display_name:
                         continue
                     unit = (
@@ -129,6 +135,7 @@ class KimiAdapter(PriceSource):
                             "url": url,
                             "model_id": display_name,
                             "display_name": display_name,
+                            "service_tier": normalize_model(tier_note),
                             "prices": prices,
                         }
                     )
@@ -144,39 +151,44 @@ class KimiAdapter(PriceSource):
             models = {m for m in models if normalize_model(m).startswith(normalized)}
         return sorted(models, key=str.lower)
 
-    def _record_for(self, row: dict[str, Any]) -> dict[str, Any]:
-        offers = [
+    @staticmethod
+    def _offers(row: dict[str, Any]) -> list[dict[str, Any]]:
+        if not row["prices"]:
+            return []
+        tier = row.get("service_tier") or ""
+        return [
             {
-                "name": "online_standard",
-                "conditions": {},
+                "name": tier or "online_standard",
+                "conditions": {"service_tier": tier} if tier else {},
                 "prices": row["prices"],
             }
-        ] if row["prices"] else []
+        ]
+
+    def _record_for(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        first = rows[0]
         return make_record(
             self.provider_id,
             self.provider_name,
-            row["model_id"],
-            row["display_name"],
+            first["model_id"],
+            first["display_name"],
             "中国区",
-            offers,
-            row["url"],
+            [offer for row in rows for offer in self._offers(row)],
+            first["url"],
             self.source_kind,
             now_iso(),
             delivery_mode="first_party",
-            model_family=model_family(row["model_id"]),
+            model_family=model_family(first["model_id"]),
         )
 
-    def _rows_by_model(self) -> dict[str, dict[str, Any]]:
-        rows: dict[str, dict[str, Any]] = {}
+    def _rows_by_model(self) -> dict[str, list[dict[str, Any]]]:
+        rows: dict[str, list[dict[str, Any]]] = {}
         for row in self._model_rows():
-            key = normalize_model(row["model_id"])
-            if key not in rows or (not rows[key]["prices"] and row["prices"]):
-                rows[key] = row
+            rows.setdefault(normalize_model(row["model_id"]), []).append(row)
         return rows
 
     def query(self, model: str) -> list[dict[str, Any]]:
-        row = self._rows_by_model().get(normalize_model(model))
-        return [self._record_for(row)] if row else []
+        rows = self._rows_by_model().get(normalize_model(model))
+        return [self._record_for(rows)] if rows else []
 
     def catalog_records(self) -> list[dict[str, Any]]:
         rows = self._rows_by_model()
