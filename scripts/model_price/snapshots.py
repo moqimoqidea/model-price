@@ -101,7 +101,13 @@ def parse_baseline_selection(value: str | None) -> BaselineSelection:
 # renaming a section must not read as one offer vanishing and another appearing.
 NON_IDENTITY_CONDITIONS = frozenset({"source_section"})
 
-PRICE_FIELDS = ("type", "label", "amount", "unit")
+# Every field a price line is archived with. An offer that is reported as added is
+# read out of a baseline rather than off a live record, so a field missing here is a
+# field the reader cannot print: a promotion's 原价 would reach JSON and vanish from
+# the scan message. A field added here needs no baseline bump, because the diff
+# compares amounts rather than this tuple and an older baseline reads as ``None``
+# where the key is absent.
+PRICE_FIELDS = ("type", "label", "amount", "unit", "list_amount")
 
 
 def offer_identity(offer: dict[str, Any]) -> tuple[Any, ...]:

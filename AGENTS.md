@@ -56,6 +56,7 @@ Standard library only, Python 3, no install step, no build step.
 │       ├── snapshots.py         archived baselines, retention, and point-in-time selection
 │       ├── diffing.py           what moved between two baselines
 │       ├── delta.py             the scan-every-catalogue run
+│       ├── deepseek_updates.py  DeepSeek's official update log, read once for every date consumer
 │       ├── lifecycle_sources.py official retirement notice readers
 │       ├── lifecycle.py         independent notice history and milestone changes
 │       ├── reporting.py         the shared wording: one value, written once
@@ -238,7 +239,7 @@ even when the tests still pass.
 16. **No credentials, ever.** The only authenticated path is refreshing the
     explicit Tencent mirror through a user-owned logged-in session, offline.
 17. **An official update time needs official evidence.** A vendor-labelled date or
-    a matching official DeepSeek news page may populate `source_updated_at`. When
+    a date the official update log publishes may populate `source_updated_at`. When
     no such evidence exists, JSON retains the most recent successful snapshot
     before the current run. The scan message does not print update times. A
     date-only source remains date-only rather than acquiring an invented midnight.

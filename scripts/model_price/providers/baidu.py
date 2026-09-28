@@ -11,13 +11,20 @@ the row ("子项": 输入 / 缓存命中 / 输出), the *serving channel* is a c
 (在线推理 / 批量推理), and the peak/off-peak window is written into the item's own
 text rather than stated in a note beside the table. A row is therefore read
 across the table instead of down a column.
+
+A fourth axis is time. Baidu runs promotions on the same rows: a column can be
+added for an activity, and a cell can be rewritten to publish the standing rate
+and the promoted one side by side. Each is read as its own offer, because a rate
+that ends is not the rate that stands, and a reader comparing channels has to see
+both to know which one a purchase will actually be billed at.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Any, Iterable
+from datetime import date, datetime
+from typing import Any, Iterable, NamedTuple
 from urllib.parse import urljoin
 
 from ..core import PriceSource, now_iso
@@ -29,6 +36,7 @@ from ..models import (
     trailing_parenthetical,
 )
 from ..parsing import (
+    HTML_TEXT_BREAK_RE,
     document_update_stamp,
     headed_document_tables,
     monetary_amount,
@@ -42,7 +50,7 @@ from ..pricing import (
     price_item,
     tokens_per_price_unit,
 )
-from ..text import clean_text, first_cell_line
+from ..text import CELL_BREAK_RE, clean_text, first_cell_line
 
 BAIDU_PAGE_URL = "https://cloud.baidu.com/doc/qianfan/s/wmh4sv6ya"
 # The page pre-fetches its own data file. Its address is read out of that link
@@ -59,17 +67,60 @@ BAIDU_SERVICE_HEADER = "服务内容"
 BAIDU_ITEM_HEADER = "子项"
 BAIDU_UNIT_HEADER = "单位"
 BAIDU_PLAIN_SERVICE = "推理服务"
-# One billing item is priced per serving channel, and the batch column repeats
-# once per promotion ("批量推理 （2月活动价）"). Only the undiscounted column is
-# read, so a promotion that expires is never quoted as the price.
+# One billing item is priced per serving channel, and a channel can be repeated
+# once per activity ("批量推理 （2月活动价）"). A column that names an activity is
+# that activity's rate for the channel, never the standing one.
 BAIDU_CHANNELS = ("在线推理", "批量推理")
-BAIDU_PROMOTION_MARKER = "活动价"
+BAIDU_PROMOTED_COLUMN_RE = re.compile(r"[（(]\s*(?P<activity>[^（()）]*活动[^（()）]*?)\s*[）)]")
 BAIDU_RETIRING_MARKER = "即将下线"
 # The window lives in the item name ("输入（高峰时段：8:00-22:00）").
 BAIDU_WINDOW_RE = re.compile(
     r"(高峰时段|空闲时段|低峰时段|低谷时段)[：:]\s*"
     r"(\d{1,2}:\d{2}\s*[-–—~～]\s*(?:次日\s*)?\d{1,2}:\d{2})"
 )
+
+# A cell prices the row twice when an activity covers it: the standing rate and
+# the promoted one, each under its own label ("原价：0.002" / "国庆限定价：0.0012").
+BAIDU_LIST_PRICE_LABEL = "原价"
+BAIDU_LABELLED_AMOUNT_RE = re.compile(
+    r"^(?P<label>[^：:\d]*?)\s*[：:]\s*(?P<amount>\d+(?:\.\d+)?)$"
+)
+
+# The activity banner states its own name and the window it runs for, one per
+# line. A banner is the only place the page dates an activity, so a promoted rate
+# is dated only when the banner is there to date it.
+BAIDU_ACTIVITY_LABEL = "活动时间"
+BAIDU_PROMOTION_WORD = "活动"
+# A badge, not a sentence: the longest activity tag this page has published.
+BAIDU_ACTIVITY_NAME_MAX = 12
+BAIDU_GENERIC_PROMOTION = "活动价"
+BAIDU_ACTIVITY_DATE_RE = re.compile(r"20\d\d\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日")
+BAIDU_ACTIVITY_DATE_VALUE_RE = re.compile(
+    r"(20\d\d)\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日"
+)
+# Every activity name shares these words, so what tells two of them apart is what
+# is left: the tag above a table and the one beside it name one activity.
+BAIDU_ACTIVITY_NOISE_RE = re.compile(r"活动|价")
+
+
+class Promotion(NamedTuple):
+    """One activity a rate belongs to: what it is called and how long it runs."""
+
+    name: str
+    window: str = ""
+
+
+class BaiduRate(NamedTuple):
+    """One rate a cell publishes, and how the page published it."""
+
+    amount: str
+    # The rate this one discounts, when the cell published both.
+    list_amount: str | None = None
+    # The activity that prices this rate, or ``None`` for the standing rate.
+    promotion: Promotion | None = None
+    # The vendor's own figure for this rate, kept so a charge of nothing keeps the
+    # vendor's word for it.
+    text: str = ""
 
 
 def price_data_url(page: str) -> str:
@@ -80,12 +131,19 @@ def price_data_url(page: str) -> str:
     return urljoin(BAIDU_PAGE_URL, match.group(1))
 
 
-def price_channel(header: str) -> str | None:
-    """Name the serving channel a price column belongs to."""
+def price_channel(header: str) -> tuple[str, str] | None:
+    """Name the serving channel a price column belongs to, and any activity.
+
+    A column that prices an activity names it in its own heading, so the activity
+    travels with the channel: its rate is a different offer from the standing rate
+    of the same channel rather than a second reading of it.
+    """
     label = clean_text(header)
-    if BAIDU_PROMOTION_MARKER in label:
+    channel = next((name for name in BAIDU_CHANNELS if name in label), None)
+    if channel is None:
         return None
-    return next((channel for channel in BAIDU_CHANNELS if channel in label), None)
+    match = BAIDU_PROMOTED_COLUMN_RE.search(label)
+    return channel, clean_text(match["activity"]) if match else ""
 
 
 def price_note(item: str) -> str:
@@ -123,6 +181,117 @@ def band_evidence(items: Iterable[str]) -> tuple[str, list[str]]:
     return window, list(quoted.values())
 
 
+def cell_lines(cell: str) -> list[str]:
+    """The lines a cell publishes, one for each break the vendor wrote.
+
+    A cell that prices a row twice writes each rate on its own line, so the breaks
+    are read before the text is normalised: normalising first runs the two rates
+    together and leaves only the first one readable.
+    """
+    return [
+        line
+        for line in (clean_text(part) for part in CELL_BREAK_RE.split(cell))
+        if line
+    ]
+
+
+def labelled_amounts(lines: Iterable[str]) -> dict[str, str]:
+    """Read the rates a cell publishes under labels rather than as one figure.
+
+    The labels are the page's own: ``原价`` for the rate that stands and the
+    activity's wording for the rate it promotes. Reading only the first number
+    would quote the standing rate and lose the promotion; reading only the second
+    would quote a rate that ends as though it were the one that stands.
+    """
+    amounts: dict[str, str] = {}
+    for line in lines:
+        match = BAIDU_LABELLED_AMOUNT_RE.match(line)
+        if match and match["label"]:
+            amounts.setdefault(match["label"], match["amount"])
+    return amounts
+
+
+def activity_card(document: str) -> Promotion | None:
+    """Read the page's activity banner: its tag and the window it runs for.
+
+    The banner is laid out one statement per line ("活动时间：", then the window),
+    so the window is the line under its label and the tag is the short line above
+    it. A page with no banner publishes no activity, and the rates it prices
+    simply stand. The page also keeps banners of activities that have already run
+    out, which is why the window is read as a window rather than as a rate that
+    still applies.
+    """
+    lines = _text_lines(document)
+    for index, line in enumerate(lines):
+        if not line.startswith(BAIDU_ACTIVITY_LABEL):
+            continue
+        window = lines[index + 1] if index + 1 < len(lines) else ""
+        if not BAIDU_ACTIVITY_DATE_RE.search(window):
+            window = ""
+        return Promotion(activity_name(lines, index), window)
+    return None
+
+
+def activity_name(lines: list[str], label_index: int) -> str:
+    """The activity's own tag, published above its window."""
+    for line in reversed(lines[:label_index]):
+        if len(line) <= BAIDU_ACTIVITY_NAME_MAX and line.endswith(BAIDU_PROMOTION_WORD):
+            return line
+    return BAIDU_GENERIC_PROMOTION
+
+
+def activity_is_current(window: str, today: date) -> bool:
+    """Say whether a published activity window has not already run out.
+
+    A window that has ended is the vendor's own statement that its rate no longer
+    applies, so that rate is not read. A window with no readable end date is kept:
+    an unreadable date is not evidence that an activity finished.
+    """
+    end = activity_end_date(window)
+    return end is None or end >= today
+
+
+def activity_tag(name: str) -> str:
+    """The part of an activity's name that tells it apart from other activities."""
+    return BAIDU_ACTIVITY_NOISE_RE.sub("", clean_text(name))
+
+
+def same_activity(one: str, other: str) -> bool:
+    """Say whether two published activity names are the same activity.
+
+    The page names one activity twice over — in its banner, and in the heading of
+    every column it prices — and not always in the same words, so one name counting
+    as the other is what makes them one activity rather than an equality of strings.
+    """
+    first, second = activity_tag(one), activity_tag(other)
+    return bool(first) and bool(second) and (first in second or second in first)
+
+
+def activity_end_date(window: str) -> date | None:
+    """The last day an activity window covers, when it names one."""
+    days = BAIDU_ACTIVITY_DATE_RE.findall(window or "")
+    if not days:
+        return None
+    match = BAIDU_ACTIVITY_DATE_VALUE_RE.fullmatch(days[-1])
+    if not match:
+        return None
+    try:
+        return date(int(match[1]), int(match[2]), int(match[3]))
+    except ValueError:
+        return None
+
+
+def _text_lines(document: str) -> list[str]:
+    """The document's own text lines, tags removed so each statement stands alone."""
+    return [
+        line
+        for line in (
+            clean_text(part) for part in HTML_TEXT_BREAK_RE.sub("\n", document).splitlines()
+        )
+        if line
+    ]
+
+
 class BaiduAdapter(PriceSource):
     provider_id = "baidu"
     provider_name = "百度智能云千帆"
@@ -137,6 +306,9 @@ class BaiduAdapter(PriceSource):
         self._document: str | None = None
         self._catalogue: list[dict[str, Any]] | None = None
         self._source_updated_at: str | None = None
+        self._promotion: Promotion | None = None
+        self._promotion_read = False
+        self._today: date | None = None
 
     def document_text(self) -> str:
         """Return the article body the page keeps beside the rendered portal."""
@@ -155,6 +327,19 @@ class BaiduAdapter(PriceSource):
             self._document = body
         return self._document
 
+    def promotion(self) -> Promotion | None:
+        """The page's activity banner, read once."""
+        if not self._promotion_read:
+            self._promotion = activity_card(self.document_text())
+            self._promotion_read = True
+        return self._promotion
+
+    def scan_date(self) -> date:
+        """The calendar date this scan runs on, taken once so one run is coherent."""
+        if self._today is None:
+            self._today = datetime.fromisoformat(now_iso()).date()
+        return self._today
+
     # --- parsing ----------------------------------------------------------
 
     @staticmethod
@@ -167,9 +352,9 @@ class BaiduAdapter(PriceSource):
         item = index(BAIDU_ITEM_HEADER)
         unit = index(BAIDU_UNIT_HEADER)
         channels = {
-            position: channel
+            position: priced
             for position, header in enumerate(headers)
-            if (channel := price_channel(header)) is not None
+            if (priced := price_channel(header)) is not None
         }
         if version is None or item is None or unit is None or not channels:
             return None
@@ -182,6 +367,55 @@ class BaiduAdapter(PriceSource):
             "channels": channels,
         }
 
+    def _rates(self, cell: str, unit_label: str, activity: str) -> list[BaiduRate]:
+        """Read one price cell into every rate that is still current.
+
+        A cell that labels its rates publishes several; a cell with one bare figure
+        publishes the channel's own rate, which belongs to an activity only when the
+        column it sits under names one the page still announces.
+        """
+        if activity and not self._column_activity_stands(activity):
+            return []
+        lines = cell_lines(cell)
+        amounts = labelled_amounts(lines)
+        if amounts:
+            listed = amounts.get(BAIDU_LIST_PRICE_LABEL)
+            promoted = self.promotion() or Promotion(BAIDU_GENERIC_PROMOTION)
+            rates = [BaiduRate(listed, None, None, listed)] if listed is not None else []
+            rates.extend(
+                BaiduRate(amount, listed, promoted, amount)
+                for label, amount in amounts.items()
+                if label != BAIDU_LIST_PRICE_LABEL
+            )
+        else:
+            figure = " ".join(lines)
+            amount = monetary_amount(figure, unit_label, self.currency)
+            rates = (
+                [BaiduRate(amount, None, self.promotion() if activity else None, figure)]
+                if amount is not None
+                else []
+            )
+        # An activity states how long its rate stands, so a rate whose window has run
+        # out is not the rate a purchase is billed at — however the page priced it.
+        today = self.scan_date()
+        return [
+            rate
+            for rate in rates
+            if rate.promotion is None or activity_is_current(rate.promotion.window, today)
+        ]
+
+    def _column_activity_stands(self, activity: str) -> bool:
+        """Say whether the page still announces the activity a column names.
+
+        A column dates nothing: it carries no window, and no standing rate beside
+        its figure. The banner is the only place the page states which activity is
+        running and until when, so a column naming an activity the banner does not
+        carry prices a promotion the page has stopped running, and its figure is not
+        the rate a purchase is billed at.
+        """
+        banner = self.promotion()
+        return banner is not None and same_activity(activity, banner.name)
+
     def _entries(
         self,
         cells: list[str],
@@ -189,7 +423,7 @@ class BaiduAdapter(PriceSource):
         width: int,
         headings: list[str],
     ) -> list[dict[str, Any]]:
-        """Read one table row into one entry per channel that prices it."""
+        """Read one table row into one entry per channel and rate it prices."""
         cells = [*cells, *([""] * (width - len(cells)))][:width]
 
         def raw(key: str) -> str:
@@ -235,44 +469,82 @@ class BaiduAdapter(PriceSource):
             conditions["context_tier"] = tier
         if version_note == BAIDU_RETIRING_MARKER:
             conditions["release_stage"] = "retiring"
+        model_id = normalize_model(version)
         entries = []
-        for position, channel in columns["channels"].items():
-            figure = clean_text(cells[position]) if position < width else ""
-            amount = monetary_amount(figure, unit_label, self.currency)
-            if amount is None:
-                continue
-            # The vendor's own figure travels in the display text so the figure
-            # on its page stays checkable against the rescaled amount. A charge
-            # of nothing has no figure to rescale and keeps the vendor's word.
-            display = figure if is_free_amount(amount) else f"{amount} {unit_label}"
-            entries.append(
-                {
-                    "model_id": normalize_model(version),
-                    "display_name": name,
-                    "item": item,
-                    "channel": channel,
-                    "conditions": conditions,
-                    "price": price_item(
-                        kind,
-                        item,
-                        per_million_tokens(amount, tokens),
-                        "CNY_per_million_tokens",
-                        display=display,
-                    ),
-                }
-            )
+        for position, (channel, activity) in columns["channels"].items():
+            # The cell is handed on as the page wrote it: its line breaks are what
+            # separate the rates it publishes, and reading them is the reader's job.
+            figure = cells[position] if position < width else ""
+            for rate in self._rates(figure, unit_label, activity):
+                entries.append(
+                    {
+                        "model_id": model_id,
+                        "display_name": name,
+                        "item": item,
+                        "offer_name": rate.promotion.name if rate.promotion else channel,
+                        "conditions": self._conditions(
+                            conditions, rate.promotion, channel
+                        ),
+                        "price": price_item(
+                            kind,
+                            item,
+                            per_million_tokens(rate.amount, tokens),
+                            "CNY_per_million_tokens",
+                            display=self._display(rate, unit_label),
+                            list_amount=(
+                                per_million_tokens(rate.list_amount, tokens)
+                                if rate.list_amount
+                                else None
+                            ),
+                        ),
+                    }
+                )
         if not entries:
             entries.append(
                 {
-                    "model_id": normalize_model(version),
+                    "model_id": model_id,
                     "display_name": name,
                     "item": item,
-                    "channel": None,
-                    "conditions": conditions,
+                    "offer_name": next(iter(columns["channels"].values()))[0],
+                    "conditions": dict(conditions),
                     "price": None,
                 }
             )
         return entries
+
+    @staticmethod
+    def _conditions(
+        shared: dict[str, Any], promotion: Promotion | None, channel: str
+    ) -> dict[str, Any]:
+        """Add what says where an activity's rate applies and for how long.
+
+        A standing rate is already named after its channel, so naming the channel
+        again would be a stutter; an activity's name takes the offer's, so the
+        channel it prices has nowhere else to be said and would otherwise merge the
+        batch rate into the real-time one's offer. An activity with no published
+        window adds none: the offer's own name already says which activity it
+        prices, and inventing a period for it would claim a date the vendor never
+        gave.
+        """
+        conditions = dict(shared)
+        if promotion is None:
+            return conditions
+        conditions["channel"] = channel
+        if promotion.window:
+            conditions["promotion_window"] = promotion.window
+        return conditions
+
+    @staticmethod
+    def _display(rate: BaiduRate, unit_label: str) -> str:
+        """Show the rate the way the page published it.
+
+        A charge of nothing has no figure to rescale, so it keeps the vendor's own
+        word for it rather than being rendered as a zero beside a unit it is not
+        billed in.
+        """
+        if is_free_amount(rate.amount):
+            return rate.text or BAIDU_GENERIC_PROMOTION
+        return f"{rate.amount} {unit_label}"
 
     def _records(self) -> list[dict[str, Any]]:
         """Group every priced entry into one record per model."""
@@ -306,16 +578,16 @@ class BaiduAdapter(PriceSource):
         return grouped
 
     def _record(self, model_id: str, group: list[dict[str, Any]]) -> dict[str, Any]:
-        """Merge a model's entries into offers, one per channel and settlement."""
+        """Merge a model's entries into offers, one per offer and settlement."""
         offers: dict[tuple[Any, ...], dict[str, Any]] = {}
         for entry in group:
             if entry["price"] is None:
                 continue
-            key = (entry["channel"], tuple(sorted(entry["conditions"].items())))
+            key = (entry["offer_name"], tuple(sorted(entry["conditions"].items())))
             offer = offers.setdefault(
                 key,
                 {
-                    "name": entry["channel"],
+                    "name": entry["offer_name"],
                     "conditions": dict(entry["conditions"]),
                     "prices": [],
                 },

@@ -27,6 +27,20 @@ def clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+ZERO_WIDTH_SPACE = "\u200b"
+
+
+def clean_zero_width_text(value: str) -> str:
+    """Normalise text a documentation site writes with a zero-width space in it.
+
+    A generated permalink anchor puts one beside every heading. It comes off before
+    whitespace is collapsed: collapsing first leaves behind the space the mark was
+    separating from, and a caller matching a whole line then sees a trailing blank
+    the published text does not have.
+    """
+    return clean_text(value.replace(ZERO_WIDTH_SPACE, ""))
+
+
 def unescape_markdown(value: str) -> str:
     """Remove the backslashes Markdown escapes punctuation with.
 

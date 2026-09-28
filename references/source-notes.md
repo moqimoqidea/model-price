@@ -20,7 +20,7 @@ source keeps its last successful notice archive.
 | Tencent TokenHub | [Product announcement index](https://cloud.tencent.com/document/product/1823/130758) and its linked [individual notices](https://cloud.tencent.com/announce/detail/2469) | A notice gives exact `model` parameters, Beijing shutdown time, and possible automatic replacement. The general announcement feed also contains price notices, so title filtering alone is insufficient evidence of retirement. The index is a rolling list; previous notice records remain archived when a link rolls off. |
 | Baidu Qianfan | [Retirement mechanism and history](https://cloud.baidu.com/doc/qianfan/s/zmh4stou3) | Historical table gives registration and retirement dates per hosted model, plus recommended replacement. Its example row is excluded. |
 | Aliyun Bailian | [Deprecation policy](https://help.aliyun.com/zh/model-studio/model-depreciation) and public [model market](https://www.qianwenai.com/models) | The anonymous market API exposes per-model `OfflineInfo.Inference.OfflineTime`. Read it from the fresh catalogue; convert an explicit UTC instant to Beijing time, and keep an undated or missing value unknown. |
-| DeepSeek | [Official updates](https://api-docs.deepseek.com/zh-cn/updates/) | The trailing slash is required: without it, the site can return a generic docs page with HTTP 200. Record only explicit old-version withdrawal and continued routing stated in the changelog; there is no complete future retirement timetable. |
+| DeepSeek | [Official updates](https://api-docs.deepseek.com/zh-cn/updates/) | One dated entry per release, newest first: `h2` carries `时间: YYYY-MM-DD` and each `h3` under it names a model. A route that does not exist answers HTTP 200 with the docs home page, and the site marks only one of the two spellings canonical, so a response counts only when it names the log. Record only explicit old-version withdrawal and continued routing stated in the changelog; there is no complete future retirement timetable. |
 | Kimi | [Model list](https://platform.kimi.com/docs/models) | Retired-model section gives series-level dates and literal retired IDs. Match a table ID to the longest published series prefix. |
 | Xiaomi MiMo | [Deprecation log](https://mimo.mi.com/static/docs/updates/deprecate.md) | Separates the earlier automatic replacement time from the final old-ID expiry time where both are printed. |
 | OpenAI | [API deprecations](https://developers.openai.com/api/docs/deprecations) | Published notification and shutdown tables. A row may name several aliases separated by escaped Markdown pipes; each literal ID gets its own event. |
@@ -67,8 +67,9 @@ only models present in an actual change.
 - Kimi, MiniMax, and Zhipu use the official overview Markdown tables. Section
   headings contribute category/lifecycle information, including Kimi's explicit
   已下线 section.
-- DeepSeek uses the official release/news pages. Their server-rendered metadata is
-  the narrowest public representation carrying the release summary. A page is
+- DeepSeek uses the official update log (`deepseek_updates.py`): the same dated
+  entries serve the price stamp, the retirement audit, and the introductions, so
+  none of them has to guess a date-shaped news URL per release. An entry is
   attached only to its literal published ID or a dated build of that ID; a broad
   family match would misattribute the Vision-Exp release to a separate preview
   model in a hosting provider's price table.
@@ -142,9 +143,16 @@ only models present in an actual change.
   carries the build's asset prefix. A row is priced along three axes at once: the
   billing item is named inside the row (`子项`: 输入 / 命中缓存 / 输出), the serving
   channel is a column (`在线推理` / `批量推理`), and the peak/off-peak window is
-  written into the item's own text (`输入（高峰时段：8:00-22:00）`). Only
-  `批量推理 （原价）` is read — the `2月活动价` / `3月活动价` columns are promotions
-  that expire. Prices are quoted per thousand tokens and restated per million. The
+  written into the item's own text (`输入（高峰时段：8:00-22:00）`). A fourth axis is
+  time: an activity announces its own name and window in a banner above the tables,
+  and prices itself either in a cell that labels its two rates (`原价：0.002</br>国庆限定价：0.0012`
+  — the vendor writes the break in its closing form) or in a column that names it
+  (`批量推理 （2月活动价）`). Each rate is its own offer: the standing one is named
+  after the channel, the promoted one after the activity, and only the latter
+  carries `channel` and `promotion_window`. A rate whose window has run out is not
+  read, and neither is a column naming an activity the banner does not carry —
+  the page keeps columns of activities it has stopped running and dates them
+  nowhere else. Prices are quoted per thousand tokens and restated per million. The
   same page also prices token packages, TPM reservations, OCR pages, images, video,
   compute units and fine-tuning, none of which are token tables. Qianfan serves
   ERNIE alongside third-party families (DeepSeek, GLM, Qwen, Kimi); it does **not**
@@ -162,11 +170,11 @@ only models present in an actual change.
   `deepseek-v4-1-flash`, so those go in `CURRENT_MODEL_ALIASES`, which is matched
   in both directions — a live-model label must never pull a superseded generation's
   price rows into the comparison, and `--exact` ignores it. The pricing page has no
-  update stamp, so a scan checks the latest seven date-shaped official news URLs.
-  Missing Docusaurus routes render the docs home page with HTTP 200; a page counts
-  only when its canonical URL or document id matches the candidate date. With no
-  recent news hit, the message uses the previous successful snapshot time and
-  labels it 上次更新时间.
+  update stamp, so it takes the newest date the official update log publishes
+  (`时间: 2026-09-10` today). Reading the log is what keeps this stamp, the
+  retirement audit, and the introductions on one source instead of three. For a
+  provider with no official stamp at all, the message uses the previous successful
+  snapshot time and labels it 上次更新时间.
 - Kimi: `https://platform.kimi.com/docs/llms.txt` indexes the chat pricing document as `pricing/chat.md`; dated variants such as `chat-k3.md` have also been served, so the whole `chat*` family is matched. The Markdown embeds JSX `DocTable` blocks whose columns are declarations and whose rows are JSON arrays. Prices are mapped by those column titles because K3 inserted two cache-write TTL columns ahead of cache-hit input; assigning by the old positions would turn `20 / 40 / 2` into a false cache/input/output move. Headerless legacy captures still use the former `[model, unit, cache hit, cache miss, output, context]` shape. The sibling documents (`batch`, `tools`, `limits`) are not per-model token tables and must stay out of the catalogue.
 - Zhipu BigModel: `https://docs.bigmodel.cn/cn/guide/start/pricing.md`. The anonymous
   config API that used to be read only publishes the five promoted flagship cards,
@@ -236,8 +244,8 @@ Two catalogue-level traps:
   `UpdateAt`, Ark publishes document-level `UpdatedTime`, Tencent publishes
   `recentReleaseTime`, and Baidu and Xiaomi label a page date; these are kept as
   `source_updated_at`, and a scan repeats the newest one as official evidence.
-  DeepSeek contributes a date only when an official news page exists in the latest
-  seven-day window. For Kimi, Zhipu, MiniMax, and any other source with no official
+  DeepSeek contributes the newest date its own update log publishes. For Kimi,
+  Zhipu, MiniMax, and any other source with no official
   stamp, the message uses the previous successful snapshot's `captured_at` and
   labels it 上次更新时间. An absent official stamp never means the prices are stale.
 

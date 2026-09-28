@@ -15,10 +15,11 @@ from typing import Any, Callable
 from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
 
+from .deepseek_updates import DEEPSEEK_UPDATES_URL, UpdateEntry, read_updates
 from .errors import SourceError
 from .models import normalize_model
 from .parsing import headed_document_tables, markdown_tables
-from .text import clean_text
+from .text import clean_text, clean_zero_width_text
 
 LifecycleEvent = dict[str, Any]
 
@@ -26,7 +27,7 @@ SOURCES = {
     "volcengine": "https://docs.volcengine.com/docs/ark/model-deprecation-notice",
     "tencent": "https://cloud.tencent.com/document/product/1823/130758",
     "baidu": "https://cloud.baidu.com/doc/qianfan/s/zmh4stou3",
-    "deepseek": "https://api-docs.deepseek.com/zh-cn/updates/",
+    "deepseek": DEEPSEEK_UPDATES_URL,
     "kimi": "https://platform.kimi.com/docs/models.md",
     "xiaomi": "https://mimo.mi.com/static/docs/updates/deprecate.md",
     "openai": "https://developers.openai.com/api/docs/deprecations.md",
@@ -62,7 +63,7 @@ MODEL_ID = re.compile(r"[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)+", re.I)
 
 def date_value(value: str, *, utc_offset: str = "") -> str | None:
     """Keep the published precision; only attach an offset when the page states it."""
-    value = clean_text(value).replace("\u200b", "")
+    value = clean_zero_width_text(value)
     match = NUMERIC_DATE.search(value)
     if match:
         try:
@@ -166,8 +167,8 @@ def volcengine_events(document: str) -> list[LifecycleEvent]:
         times: dict[str, str] = {}
         exception: dict[str, str] = {}
         for row in timeline[1:]:
-            label = clean_text(row[0]).replace("\u200b", "")
-            value = clean_text(row[1]).replace("\u200b", "") if len(row) > 1 else ""
+            label = clean_zero_width_text(row[0])
+            value = clean_zero_width_text(row[1]) if len(row) > 1 else ""
             if "启动" in label:
                 times["announced_at"] = date_value(value, utc_offset="+08:00") or ""
             elif "EOM" in label:
@@ -617,7 +618,7 @@ def tencent_events(client: Any, index: str) -> list[LifecycleEvent]:
     # request budget, while archived events retain older notices on later scans.
     for url in dict.fromkeys(notices[:18]):
         page = client.get_text(url)
-        body = clean_text(page).replace("\u200b", "")
+        body = clean_zero_width_text(page)
         match = re.search(r"model\s*参数值[：:]\s*([^）)]+)", body, re.I)
         end = re.search(
             r"(北京时间\s*20\d\d\s*年\s*\d+\s*月\s*\d+\s*日\s*\d{1,2}:\d{2})\s*起\s*正式下线",
@@ -710,39 +711,41 @@ def xai_events(client: Any, index: str) -> list[LifecycleEvent]:
     return found
 
 
-def deepseek_events(document: str) -> list[LifecycleEvent]:
-    """Record only explicit old-version withdrawals in the official changelog."""
-    match = re.search(
-        r"(时间[：:]\s*20\d\d[-/]\d+[-/]\d+).*?(旧版本模型[^。]+现已下线[^。]+。)",
-        clean_text(document),
-        re.S,
-    )
-    if not match:
-        return []
-    announced = date_value(match[1])
-    replacement_match = re.search(
-        r"模型名称更改为\s*(deepseek-[a-z0-9-.]+)", match[0], re.I
-    )
-    replacement = replacement_match[1] if replacement_match else None
-    return [
-        event(
-            name,
-            SOURCES["deepseek"],
-            announced_at=announced,
-            eos_at=announced,
-            end_behavior="redirect",
-            replacement=replacement,
-            scope="DeepSeek API",
+def deepseek_events(entries: list[UpdateEntry]) -> list[LifecycleEvent]:
+    """Record only explicit old-version withdrawals in the official changelog.
+
+    The entry publishes both the date and the sentence, and the sentence names the
+    ids it withdrew literally, so neither is inferred from the surrounding prose.
+    Only the newest such entry is read: the log is a history, and a later entry
+    restating an older withdrawal is the same event, not a second one.
+    """
+    for entry in entries:
+        match = re.search(r"旧版本模型(?P<retired>[^。]+现已下线[^。]+。)", entry.body)
+        if not match:
+            continue
+        replacement_match = re.search(
+            r"模型名称更改为\s*(deepseek-[a-z0-9-.]+)", entry.body, re.I
         )
-        for name in re.findall(r"deepseek-[a-z0-9-.]+", match[2], re.I)
-        if name.lower() != (replacement or "").lower()
-    ]
+        replacement = replacement_match[1] if replacement_match else None
+        return [
+            event(
+                name,
+                DEEPSEEK_UPDATES_URL,
+                announced_at=entry.published_at,
+                eos_at=entry.published_at,
+                end_behavior="redirect",
+                replacement=replacement,
+                scope="DeepSeek API",
+            )
+            for name in re.findall(r"deepseek-[a-z0-9-.]+", match["retired"], re.I)
+            if name.lower() != (replacement or "").lower()
+        ]
+    return []
 
 
 PARSERS: dict[str, Callable[[str], list[LifecycleEvent]]] = {
     "volcengine": volcengine_events,
     "baidu": baidu_events,
-    "deepseek": deepseek_events,
     "kimi": kimi_events,
     "xiaomi": xiaomi_events,
     "openai": openai_events,
@@ -769,6 +772,15 @@ def read_events(
         found = zhipu_events(pages)
         if not found:
             raise SourceError("Zhipu model pages published no readable withdrawal notices")
+        return url, found
+    if provider_id == "deepseek":
+        # Read the same dated entries the price stamp and the introductions use,
+        # rather than scraping the withdrawal sentence out of a whole HTML page.
+        found = deepseek_events(read_updates(client))
+        if not found:
+            raise SourceError(
+                "DeepSeek update log published no readable withdrawal notice"
+            )
         return url, found
     document = client.get_text(
         VOLCENGINE_NOTICE_API if provider_id == "volcengine" else url

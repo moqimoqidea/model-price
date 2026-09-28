@@ -32,6 +32,7 @@ from model_price.descriptions.tencent_mirror import (
     build_tencent_mirror,
     validate_tencent_mirror,
 )
+from model_price.deepseek_updates import DEEPSEEK_UPDATES_URL
 from model_price.errors import SourceError
 from model_price.pricing import make_record, price_item
 from model_price.providers.aliyun import (
@@ -55,6 +56,19 @@ class MappingClient:
         if isinstance(value, Exception):
             raise value
         return value
+
+
+# The vendor's own update log, trimmed to the two entries these tests turn on. The
+# Vision-Exp model was withdrawn eleven days after it was announced, so the entry
+# that announces it is also the entry that dates its withdrawal.
+DEEPSEEK_UPDATES_PAGE = """<link rel="canonical" href="https://api-docs.deepseek.com/zh-cn/updates">
+<h2>时间: 2026-08-21</h2>
+<h3>DeepSeek-V4-Flash-Vision-Exp 发布</h3>
+<p>我们发布 DeepSeek-V4-Flash-Vision-Exp 视觉实验模型。</p>
+<h2>时间: 2026-04-24</h2>
+<h3>DeepSeek-V4 发布</h3>
+<p>我们发布 DeepSeek-V4 模型。</p>
+"""
 
 
 class QianwenDescriptionClient:
@@ -112,10 +126,27 @@ class DescriptionSourceTests(unittest.TestCase):
         self.assertEqual(client.requests, [url])
 
     def test_deepseek_preview_does_not_borrow_another_models_release(self):
-        client = MappingClient({})
+        # A separately priced preview build is not the dated vision experiment the
+        # log announced under its own name, and reading one must not answer for the
+        # other.
+        client = MappingClient({DEEPSEEK_UPDATES_URL: DEEPSEEK_UPDATES_PAGE})
         source = DeepSeekDescriptionSource(client)
         self.assertIsNone(source.describe("deepseek-v4-flash预览版"))
-        self.assertEqual(client.requests, [])
+        self.assertEqual(client.requests, [DEEPSEEK_UPDATES_URL])
+
+    def test_deepseek_announced_model_keeps_its_own_release_entry(self):
+        client = MappingClient({DEEPSEEK_UPDATES_URL: DEEPSEEK_UPDATES_PAGE})
+        record = DeepSeekDescriptionSource(client).describe("deepseek-v4-flash-vision-exp")
+        self.assertEqual(record["display_name"], "DeepSeek-V4-Flash-Vision-Exp")
+        self.assertEqual(record["lifecycle"], "retired")
+        self.assertEqual(record["source"]["url"], DEEPSEEK_UPDATES_URL)
+
+    def test_deepseek_reads_the_log_once_however_many_models_it_describes(self):
+        client = MappingClient({DEEPSEEK_UPDATES_URL: DEEPSEEK_UPDATES_PAGE})
+        source = DeepSeekDescriptionSource(client)
+        source.describe("deepseek-v4-flash-vision-exp")
+        source.describe("deepseek-v4")
+        self.assertEqual(client.requests, [DEEPSEEK_UPDATES_URL])
 
     def test_markdown_detail_keeps_summary_features_and_limits(self):
         url = "https://developers.openai.com/api/docs/models/gpt-test.md"

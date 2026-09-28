@@ -15,6 +15,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from model_price.delta import scan_providers
+from model_price.deepseek_updates import update_entries
 from audit_model_retirements import PROVIDERS, audit_provider
 from model_price.lifecycle import retired_model_ids, scan_lifecycle
 from model_price.lifecycle_sources import (
@@ -68,13 +69,23 @@ class OfficialSourceTests(unittest.TestCase):
         self.assertEqual(found[0]["replacement"], "deepseek-new")
 
     def test_deepseek_requires_explicit_old_version_withdrawal(self):
-        page = "时间：2026/09/24。旧版本模型 deepseek-old 现已下线，模型名称更改为 deepseek-new。"
-        found = deepseek_events(page)
+        page = """<h2>时间: 2026-09-24</h2>
+<h3>DeepSeek-V5-Flash 发布</h3>
+<p>我们把 deepseek-old 换成了 deepseek-new，建议尽快迁移。</p>
+<h2>时间: 2026-09-10</h2>
+<h3>DeepSeek-V4.1-Flash 发布</h3>
+<p>旧版本模型 deepseek-old 现已下线，模型名称更改为 deepseek-new。</p>
+"""
+        found = deepseek_events(update_entries(page))
         self.assertEqual([item["model_id"] for item in found], ["deepseek-old"])
-        self.assertEqual(found[0]["eos_at"], "2026-09-24")
+        self.assertEqual(found[0]["eos_at"], "2026-09-10")
 
     def test_deepseek_reader_uses_the_working_trailing_slash_route(self):
-        page = "时间：2026/09/24。旧版本模型 deepseek-old 现已下线，模型名称更改为 deepseek-new。"
+        page = """<link rel="canonical" href="https://api-docs.deepseek.com/zh-cn/updates">
+<h2>时间: 2026-09-10</h2>
+<h3>DeepSeek-V4.1-Flash 发布</h3>
+<p>旧版本模型 deepseek-old 现已下线，模型名称更改为 deepseek-new。</p>
+"""
 
         def get_text(url):
             self.assertTrue(url.endswith("/updates/"))
@@ -673,12 +684,20 @@ class LifecycleScanTests(unittest.TestCase):
 
 
 class AuditScriptTests(unittest.TestCase):
+    # Providers whose evidence is not one document handed to one string parser:
+    # Aliyun reads its catalogue records, Zhipu reads several pages, DeepSeek reads
+    # the dated update log the price stamp and the introductions also read, and
+    # Tencent and xAI need a follow-up fetch before their document can be parsed.
+    ROUTED_BY_READ_EVENTS = frozenset(
+        {"aliyun", "deepseek", "tencent", "xai", "zhipu"}
+    )
+
     def test_every_price_provider_has_a_retirement_reader(self):
         self.assertEqual(len(PROVIDERS), 13)
         from model_price.lifecycle_sources import PARSERS, SOURCES
         self.assertEqual(set(PROVIDERS), set(SOURCES) | {"aliyun"})
         self.assertEqual(
-            set(PROVIDERS) - {"aliyun", "tencent", "xai", "zhipu"},
+            set(PROVIDERS) - self.ROUTED_BY_READ_EVENTS,
             set(PARSERS),
         )
 

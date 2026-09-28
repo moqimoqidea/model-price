@@ -26,10 +26,12 @@ Each result contains:
 - `delivery_mode`, `region`, `currency`
 - `offers[]`, each with an independent `name`, `conditions`, and `prices[]`
 - `source.url`, `source.kind`, and `source.retrieved_at`
-- optional `source_updated_at`, when the official price page or recent official
-  release page publishes a date for that catalogue
+- optional `source_updated_at`, when the official price page or the official update
+  log publishes a date for that catalogue
 
-Price fields are `type`, `label`, `amount`, `unit`, and optional `display`, `list_amount`, or `discount`. Common units are `CNY_per_million_tokens`, `USD_per_million_tokens`, their `_per_hour` storage variants, `CNY_per_10k_characters`, and `CNY_per_request`.
+Price fields are `type`, `label`, `amount`, `unit`, and optional `display`, `list_amount`, or `discount`. Common units are `CNY_per_million_tokens`, `USD_per_million_tokens`, their `_per_hour` storage variants, `CNY_per_10k_characters`, and `CNY_per_request`. `list_amount` is the rate the one beside it discounts; the reader prints it as `（原价 …）`, so a promotion publishes both numbers rather than replacing one with the other.
+
+A vendor that runs an activity prices it as an offer of its own: `name` is the activity's own wording, and its `conditions` add `channel` (the serving channel it prices, which the activity's name has taken over from the standing offer) and `promotion_window` (the window the vendor published, in the vendor's words). Those two stay out of the offer's `name` because they are terms, and both are part of the offer's identity: an activity that ends is an offer that ended, not a price that moved. A standing rate carries neither.
 
 A charge the vendor publishes as free is a price of `"0"` with `display` carrying the vendor's own wording (`免费`, `限时免费`, `Free of charge`), never a missing `amount`. `amount` is `null` only when the source priced nothing this tool can read — a per-second or per-request rate, or a tier the page does not quote. The two are different facts and are never made to look alike.
 

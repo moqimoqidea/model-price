@@ -181,6 +181,11 @@ class TextTableParser(HTMLParser):
             self.cell.append(data)
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "br" and self.cell is not None:
+            # A vendor writes the break as ``</br>`` often enough that the closing
+            # form has to carry the same meaning as the opening one: read as
+            # nothing, it glues the two values a cell stacks into one run.
+            self.cell.append("<br>")
         if tag == "li" and self.cell is not None:
             # Lists inside a table cell are separate published values, just as
             # explicit <br> tags are. Joining them erases capability boundaries.

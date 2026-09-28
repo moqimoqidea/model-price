@@ -8,6 +8,14 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote, urljoin, urlsplit
 
+from ..deepseek_updates import (
+    DEEPSEEK_UPDATES_URL,
+    UpdateEntry,
+    entry_for_model,
+    entry_lifecycle,
+    entry_model_label,
+    read_updates,
+)
 from ..errors import SourceError
 from ..models import normalize_model
 from ..parsing import headed_document_tables, markdown_tables
@@ -20,8 +28,6 @@ from ..text import CELL_BREAK_RE, clean_text
 from .core import (
     ACTIVE,
     LEGACY,
-    PREVIEW,
-    RETIRED,
     UNKNOWN,
     DescriptionSource,
     description_record,
@@ -50,29 +56,6 @@ ZHIPU_MODELS_URL = "https://docs.bigmodel.cn/cn/guide/start/model-overview.md"
 XIAOMI_MODELS_URL = "https://mimo.mi.com/docs/zh-CN/quick-start/summary/model"
 XIAOMI_MODEL_ID = re.compile(r"(?<![\w.-])[A-Za-z][A-Za-z0-9]*(?:[._-][A-Za-z0-9]+)+(?![\w.-])")
 VOLCENGINE_MODELS_URL = "https://console.volcengine.com/ark/region:cn-beijing/model"
-
-DEEPSEEK_NEWS = (
-    (
-        "https://api-docs.deepseek.com/zh-cn/news/news260910",
-        ("deepseek-flash", "deepseek-v4.1-flash", "deepseek-v4-1-flash"),
-        ACTIVE,
-    ),
-    (
-        "https://api-docs.deepseek.com/zh-cn/news/news260821",
-        ("deepseek-v4-flash-vision-exp",),
-        RETIRED,
-    ),
-    (
-        "https://api-docs.deepseek.com/zh-cn/news/news260813",
-        ("deepseek-v4-pro",),
-        ACTIVE,
-    ),
-    (
-        "https://api-docs.deepseek.com/zh-cn/news/news260424",
-        ("deepseek-v4",),
-        PREVIEW,
-    ),
-)
 
 
 def _not_found_error(exc: Exception) -> bool:
@@ -521,8 +504,18 @@ class XiaomiDescriptionSource(DescriptionSource):
 class DeepSeekDescriptionSource(DescriptionSource):
     source_id = "deepseek"
     source_name = "DeepSeek"
-    source_url = "https://api-docs.deepseek.com/zh-cn/"
+    source_url = DEEPSEEK_UPDATES_URL
     source_kind = "official_document"
+
+    def __init__(self, client: Any) -> None:
+        super().__init__(client)
+        self._entries: list[UpdateEntry] | None = None
+
+    def entries(self) -> list[UpdateEntry]:
+        """The update log, read once: every model this source describes is in it."""
+        if self._entries is None:
+            self._entries = read_updates(self.client)
+        return self._entries
 
     def describe(
         self,
@@ -531,34 +524,26 @@ class DeepSeekDescriptionSource(DescriptionSource):
         *,
         record: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        key = normalize_model(model_id).rsplit("/", 1)[-1]
-        # These release pages describe literal IDs. A broad family match would
-        # attach a Vision-Exp article to a separately priced preview build.
-        for url, aliases, lifecycle in DEEPSEEK_NEWS:
-            alias_keys = {normalize_model(alias) for alias in aliases}
-            exact = key in alias_keys
-            dated_version = any(
-                key.startswith(f"{alias}-")
-                and re.fullmatch(r"\d{4,8}", key[len(alias) + 1 :])
-                for alias in alias_keys
-            )
-            if not exact and not dated_version:
-                continue
-            tags = meta_tags(self.client.get_text(url))
-            summary = tags.get("description") or tags.get("og:description", "")
-            title = (tags.get("og:title") or aliases[0]).split(" | ", 1)[0]
-            if not summary:
-                continue
-            return description_record(
-                model_id,
-                title,
-                summary,
-                url,
-                self.source_kind,
-                source_name=self.source_name,
-                lifecycle=lifecycle,
-            )
-        return None
+        """Introduce a model from the dated release entry that announced it.
+
+        The vendor publishes one log rather than a page per model, so the entry is
+        found by the name its own title carries: no per-release URL has to be kept
+        in step with the docs, and a model announced after this code was written
+        still gets its introduction. A title names one generation, so the match
+        stays one-way — a live model never absorbs a superseded generation's entry.
+        """
+        entry = entry_for_model(self.entries(), model_id)
+        if entry is None or not entry.summary:
+            return None
+        return description_record(
+            model_id,
+            entry_model_label(entry),
+            entry.summary,
+            DEEPSEEK_UPDATES_URL,
+            self.source_kind,
+            source_name=self.source_name,
+            lifecycle=entry_lifecycle(entry),
+        )
 
 
 class AliyunDescriptionSource(DescriptionSource):

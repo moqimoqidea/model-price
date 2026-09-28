@@ -15,6 +15,13 @@ if str(SCRIPTS) not in sys.path:
 from model_price.caching import CacheStore, CachedPriceSource
 from model_price.core import PriceSource
 from model_price.delta import scan_provider, scan_providers
+from model_price.deepseek_updates import (
+    DEEPSEEK_UPDATES_URL,
+    is_updates_page,
+    latest_published_at,
+    read_updates,
+    update_entries,
+)
 from model_price.diffing import (
     BASELINE_CREATED,
     BASELINE_NOT_FOUND,
@@ -31,6 +38,7 @@ from model_price.models import (
     without_trailing_parenthetical,
 )
 from model_price.parsing import (
+    TextTableParser,
     document_update_stamp,
     headed_document_tables,
     markdown_tables,
@@ -58,15 +66,14 @@ from model_price.providers.aliyun import (
 from model_price.providers.baidu import (
     BAIDU_PAGE_URL,
     BaiduAdapter,
+    activity_card,
+    cell_lines,
+    labelled_amounts,
     price_data_url,
+    same_activity,
 )
 from model_price.providers.anthropic import ANTHROPIC_MARKDOWN_URL, AnthropicAdapter
-from model_price.providers.deepseek import (
-    DEEPSEEK_URL,
-    DeepSeekAdapter,
-    deepseek_news_url,
-    recent_news_update,
-)
+from model_price.providers.deepseek import DEEPSEEK_URL, DeepSeekAdapter
 from model_price.providers.google import (
     GEMINI_MARKDOWN_URL,
     GEMINI_URL,
@@ -119,6 +126,7 @@ from model_price.snapshots import (
     offer_identity,
     parse_baseline_selection,
 )
+from model_price.text import clean_zero_width_text
 from model_price.updating import GitSkillUpdater
 
 import query_model_prices
@@ -1173,6 +1181,48 @@ BAIDU_PAGE = (
 )
 
 
+# The page announces an activity in a banner above the tables and prices it in the
+# cells of the rows it covers — the standing rate and the promoted one, each under
+# its own label. The last two columns name activities the banner does not carry.
+BAIDU_PROMOTED_HTML = """<div>
+  <div>国庆限时活动</div>
+  <div>热门模型国庆限时优惠</div>
+  <div><div><span>活动时间：</span><span>2026年9月24日 00:00 – 2026年10月7日 23:59</span></div></div>
+</div>
+
+<h2>模型价格</h2>
+
+<h3>文本生成</h3>
+
+<table>
+<tr><th>模型名称</th><th>版本名称</th><th>服务内容</th><th>子项</th><th>在线推理</th><th>批量推理 （原价）</th><th>批量推理 （国庆活动价）</th><th>批量推理 （2月活动价）</th><th>单位</th></tr>
+<tr>
+<td rowspan="3">DeepSeek-V4.1-Flash</td>
+<td rowspan="3">DeepSeek-V4.1-Flash</td>
+<td rowspan="3">推理服务</td>
+<td>输入（高峰时段：8:00-22:00）</td>
+<td>原价：0.002</br>国庆限定价：0.0012</td>
+<td>原价：0.0015</td>
+<td>0.0009</td>
+<td>0.0006</td>
+<td>元/千tokens</td>
+</tr>
+<tr>
+<td>命中缓存（高峰时段：8:00-22:00）</td>
+<td>原价：0.00004</br>国庆限定价：0.000024</td>
+<td>-</td><td>-</td><td>-</td>
+<td>元/千tokens</td>
+</tr>
+<tr>
+<td>输出（高峰时段：8:00-22:00）</td>
+<td>原价：0.008</br>国庆限定价：0.0048</td>
+<td>-</td><td>-</td><td>-</td>
+<td>元/千tokens</td>
+</tr>
+</table>
+"""
+
+
 class BaiduAdapterTests(unittest.TestCase):
     def adapter(self, body=BAIDU_HTML, page=BAIDU_PAGE):
         payload = json.dumps({"result": {"data": {"markdownRemark": {"html": body}}}})
@@ -1205,7 +1255,9 @@ class BaiduAdapterTests(unittest.TestCase):
         )
         self.assertEqual(price_lookup(batch, "input")["amount"], "1.5")
 
-    def test_a_promotional_batch_column_is_not_quoted_as_the_price(self):
+    def test_a_promotional_column_the_banner_lacks_is_not_read(self):
+        # The page keeps the columns of an activity it has stopped running, and
+        # nothing dates them. Only the banner says which activity is current.
         batch = next(
             offer for offer in self.record()["offers"] if offer["name"] == "批量推理"
         )
@@ -1266,6 +1318,107 @@ class BaiduAdapterTests(unittest.TestCase):
     def test_an_article_without_a_pricing_table_is_reported_as_a_broken_source(self):
         with self.assertRaises(SourceError):
             self.adapter(body="<p>本页无价格表</p>").list_models()
+
+
+class BaiduPromotionTests(unittest.TestCase):
+    def adapter(self, body=BAIDU_PROMOTED_HTML):
+        payload = json.dumps({"result": {"data": {"markdownRemark": {"html": body}}}})
+        return BaiduAdapter(
+            MappingClient({BAIDU_PAGE_URL: BAIDU_PAGE, price_data_url(BAIDU_PAGE): payload})
+        )
+
+    def offers(self, body=BAIDU_PROMOTED_HTML):
+        return self.adapter(body).query("deepseek-v4.1-flash")[0]["offers"]
+
+    def offer(self, name, *, channel=None):
+        return next(
+            offer
+            for offer in self.offers()
+            if offer["name"] == name
+            and (channel is None or offer["conditions"].get("channel") == channel)
+        )
+
+    def test_the_banner_states_the_activity_and_the_window_it_runs_for(self):
+        self.assertEqual(
+            activity_card(BAIDU_PROMOTED_HTML),
+            ("国庆限时活动", "2026年9月24日 00:00 – 2026年10月7日 23:59"),
+        )
+
+    def test_a_cell_that_labels_its_rates_keeps_the_two_apart(self):
+        # The vendor writes the break in its closing form, and reading that form as
+        # nothing runs the standing rate into the promoted one.
+        parser = TextTableParser()
+        parser.feed(
+            "<table><tr><td>输入</td>"
+            "<td>原价：0.002</br>国庆限定价：0.0012</td></tr></table>"
+        )
+        lines = cell_lines(parser.tables[0][0][1])
+        self.assertEqual(lines, ["原价：0.002", "国庆限定价：0.0012"])
+        self.assertEqual(
+            labelled_amounts(lines),
+            {"原价": "0.002", "国庆限定价": "0.0012"},
+        )
+
+    def test_a_promoted_rate_is_its_own_offer_and_keeps_the_rate_it_discounts(self):
+        promoted = self.offer("国庆限时活动", channel="在线推理")
+        self.assertEqual(price_lookup(promoted, "input")["amount"], "1.2")
+        self.assertEqual(price_lookup(promoted, "input")["list_amount"], "2")
+        self.assertEqual(
+            promoted["conditions"]["promotion_window"],
+            "2026年9月24日 00:00 – 2026年10月7日 23:59",
+        )
+
+    def test_the_standing_rate_stays_an_offer_of_its_own(self):
+        standing = self.offer("在线推理")
+        self.assertEqual(price_lookup(standing, "input")["amount"], "2")
+        self.assertNotIn("list_amount", price_lookup(standing, "input"))
+
+    def test_an_activity_price_sorts_by_the_channel_it_prices(self):
+        # The activity takes the offer's name, so the channel it prices is the one
+        # term left telling a real-time rate from a batch one.
+        self.assertEqual(
+            price_lookup(self.offer("国庆限时活动", channel="批量推理"), "input")["amount"],
+            "0.9",
+        )
+        self.assertEqual(
+            price_lookup(self.offer("批量推理"), "input")["amount"], "1.5"
+        )
+
+    def test_a_column_naming_an_older_activity_is_left_out(self):
+        amounts = [
+            item["amount"] for offer in self.offers() for item in offer["prices"]
+        ]
+        # The 2月活动价 column is still on the page and has long run out.
+        self.assertNotIn("0.6", amounts)
+
+    def test_an_activity_that_has_run_out_is_not_read(self):
+        with mock.patch(
+            "model_price.providers.baidu.now_iso",
+            return_value="2026-10-08T00:00:00+08:00",
+        ):
+            offers = self.offers()
+        self.assertEqual({offer["name"] for offer in offers}, {"在线推理", "批量推理"})
+        self.assertEqual(price_lookup(offers[0], "input")["amount"], "2")
+
+    def test_two_names_for_one_activity_are_the_same_activity(self):
+        self.assertTrue(same_activity("国庆活动价", "国庆限时活动"))
+        self.assertFalse(same_activity("2月活动价", "国庆限时活动"))
+        self.assertFalse(same_activity("", "国庆限时活动"))
+
+    def test_a_promotions_standing_rate_survives_into_the_baseline(self):
+        # An added offer is reported out of the baseline rather than off the live
+        # record, so a field the baseline drops is one the scan message cannot print.
+        adapter = self.adapter()
+        snapshot = build_snapshot(
+            adapter, adapter.catalog_records(), "2026-09-29T00:00:00+08:00"
+        )
+        model = snapshot["models"]["deepseek-v4.1-flash"]
+        promoted = next(
+            offer for offer in model["offers"] if offer["name"] == "国庆限时活动"
+        )
+        self.assertEqual(
+            [price["list_amount"] for price in promoted["prices"]], ["2", "0.04", "8"]
+        )
 
 
 ZHIPU_MARKDOWN = """# API 定价
@@ -1476,6 +1629,25 @@ DEEPSEEK_HTML = """
 """
 
 
+# The update log, trimmed to two dated sections. Each heading carries the anchor's
+# zero-width space, which is how the vendor publishes it and what the reader strips.
+DEEPSEEK_UPDATES_HTML = """
+<html><head>
+<link rel="canonical" href="https://api-docs.deepseek.com/zh-cn/updates">
+<meta name="description" content="时间: 2026-09-10">
+</head><body>
+<h2 id="时间-2026-09-10">时间: 2026-09-10<a href="#时间-2026-09-10">\u200b</a></h2>
+<h3 id="deepseek-v41-flash-发布">DeepSeek-V4.1-Flash 发布<a href="#x">\u200b</a></h3>
+<p>今天，我们正式发布 DeepSeek-V4.1-Flash 模型。</p>
+<ul><li>GPQA Diamond: 90.9</li></ul>
+<p>旧版本模型 V4 Flash 现已下线。</p>
+<h2 id="时间-2026-08-13">时间: 2026-08-13<a href="#时间-2026-08-13">\u200b</a></h2>
+<h3 id="deepseek-v4-pro-发布">DeepSeek-V4-Pro 发布<a href="#y">\u200b</a></h3>
+<p>我们发布 DeepSeek-V4-Pro 模型。</p>
+</body></html>
+"""
+
+
 class DeepSeekAdapterTests(unittest.TestCase):
     def adapter(self):
         return DeepSeekAdapter(MappingClient({DEEPSEEK_URL: DEEPSEEK_HTML}))
@@ -1503,25 +1675,48 @@ class DeepSeekAdapterTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["model_id"], "deepseek-flash")
 
-    def test_recent_news_uses_page_identity_instead_of_http_success(self):
-        today = datetime(2026, 9, 19).date()
-        news_day = datetime(2026, 9, 18).date()
-        client = MappingClient(
-            {
-                deepseek_news_url(today): "<h1>Your First API Call</h1>",
-                deepseek_news_url(news_day): (
-                    '<html class="docs-doc-id-news/news260918">'
-                    '<link rel="canonical" '
-                    f'href="{deepseek_news_url(news_day)}"></html>'
-                ),
-            }
-        )
+    def test_update_log_is_read_as_dated_entries(self):
+        entries = update_entries(DEEPSEEK_UPDATES_HTML)
         self.assertEqual(
-            recent_news_update(client, today=today),
-            "2026-09-18",
+            [entry.published_at for entry in entries],
+            ["2026-09-10", "2026-08-13"],
+        )
+        self.assertEqual(entries[0].title, "DeepSeek-V4.1-Flash 发布")
+        self.assertEqual(
+            entries[0].summary, "今天，我们正式发布 DeepSeek-V4.1-Flash 模型。"
+        )
+        self.assertEqual(latest_published_at(entries), "2026-09-10")
+
+    def test_the_permalink_anchor_leaves_no_trailing_space_behind(self):
+        # The order matters: collapsing whitespace first leaves behind the space the
+        # zero-width mark was separating from, and an entry's own date is matched
+        # whole, so a trailing blank loses the entry.
+        self.assertEqual(
+            clean_zero_width_text("时间: 2026-09-10 \u200b"), "时间: 2026-09-10"
         )
 
-    def test_prices_survive_when_no_recent_news_page_exists(self):
+    def test_update_log_refuses_another_document(self):
+        # A route that does not exist answers 200 with the documentation home page,
+        # so the log is trusted only when the page says which document it is.
+        self.assertFalse(is_updates_page("<h1>Your First API Call</h1>"))
+        client = MappingClient({DEEPSEEK_UPDATES_URL: "<h1>Your First API Call</h1>"})
+        with self.assertRaises(SourceError):
+            read_updates(client)
+
+    def test_source_updated_at_comes_from_the_update_log(self):
+        adapter = DeepSeekAdapter(
+            MappingClient(
+                {
+                    DEEPSEEK_URL: DEEPSEEK_HTML,
+                    DEEPSEEK_UPDATES_URL: DEEPSEEK_UPDATES_HTML,
+                }
+            )
+        )
+        self.assertEqual(
+            adapter.query("deepseek-flash")[0]["source_updated_at"], "2026-09-10"
+        )
+
+    def test_prices_survive_when_the_update_log_cannot_be_read(self):
         record = self.adapter().query("deepseek-flash")[0]
         self.assertIsNone(record["source_updated_at"])
 
