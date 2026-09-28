@@ -28,6 +28,10 @@ source keeps its last successful notice archive.
 | Google Gemini | [Gemini API deprecations](https://ai.google.dev/gemini-api/docs/deprecations) | Shutdown dates are the *earliest possible* dates. The page separately marks already-shutdown models with `row-gray` table rows, including one with no published shutdown date. Only that explicit row state confirms retirement; reaching an unshaded row's date does not. |
 | xAI | [Official migration guides](https://docs.x.ai/developers/migration/may-15-retirement) | Old slugs can continue to resolve through automatic redirection, with billing at replacement-model prices. Read the effective PT clock where given; a date-only notice remains date-only. |
 | Zhipu BigModel | [GLM-4.5-Flash](https://docs.bigmodel.cn/cn/guide/models/free/glm-4.5-flash.md), [GLM-Z1](https://docs.bigmodel.cn/cn/guide/models/text/glm-z1.md), and [GLM-4.5](https://docs.bigmodel.cn/cn/guide/models/text/glm-4.5.md) model pages | No central retirement feed. Read explicit banner text on these known official pages: a dated shutdown with automatic routing, an undated “已下线” series notice, and undated “即将下线” plans. Only literal named IDs are recorded; a series notice is not expanded into guessed variants. These pages are a maintained source list, not a complete vendor-wide schedule. |
+| OpenRouter | The models API entry itself | Each catalogue entry publishes its own `expiration_date` while the model is still served, so the date is an announced withdrawal rather than the catalogue going quiet. Read from the price records, like Aliyun's offline times. |
+| Google Cloud Vertex | [Model versions and lifecycle](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions) | One table per modality: the literal model ID, its release date, its retirement date and what replaces it. A date the page qualifies ("July 21, 2027 or later", "No sooner than May 20, 2028") is a floor and is recorded as `eos_earliest`; "No retirement date announced" yields no event. |
+| Kling | none published | The console announces a withdrawal rather than a page. Reported as `no_public_schedule`, which is the honest status rather than a failed read. |
+| AWS Bedrock | none readable here | AWS files its dates on `docs.aws.amazon.com`, a host that does not resolve on every network this skill runs from; a reader would report a failed source on each scan instead of the truth that no schedule was read. Reported as `no_public_schedule`. |
 | MiniMax | [Official model overview](https://platform.minimax.io/docs/guides/models-intro.md) | `Legacy Models` accordions identify old versions but provide no shutdown date and do not prove service cessation. A separate music notice explicitly discontinues three free music API IDs on 2026-08-20; the paid API restriction applies only to new users and does not retire those models. |
 
 Run `python3 scripts/audit_model_retirements.py` to read all 13 vendor-specific
@@ -67,6 +71,19 @@ only models present in an actual change.
 - Kimi, MiniMax, and Zhipu use the official overview Markdown tables. Section
   headings contribute category/lifecycle information, including Kimi's explicit
   已下线 section.
+- OpenRouter describes every entry it lists from its own catalogue: the paragraph
+  the API publishes, plus the modalities, the parameters it accepts and the limits
+  it states. An entry the vendor charges nothing for says so among those
+  capabilities ("官方公布价格为 0（免费档位或测试期），未作为价格记录") — which is
+  where that fact belongs, because it is a property of the listing rather than a
+  rate, and because a model priced at zero and a model with no price are the same
+  number and two different things. The video document is consulted only for an
+  entry whose own rates are all zero, so a priced model never pays for it.
+- Kling publishes no per-model page. Both of its capability maps (video and image)
+  are read instead: the vendor's own words for each model, what it takes in, how
+  long a clip it makes and at what resolution. The same pages describe the
+  platform's own chargeable capabilities (扩图, 数字人, 对口型), which the price page
+  prices under exactly those names.
 - DeepSeek uses the official update log (`deepseek_updates.py`): the same dated
   entries serve the price stamp, the retirement audit, and the introductions, so
   none of them has to guess a date-shaped news URL per release. An entry is
@@ -315,6 +332,63 @@ Two catalogue-level traps:
   stamp, the message uses the previous successful snapshot's `captured_at` and
   labels it 上次更新时间. An absent official stamp never means the prices are stale.
 
+### Vendors whose prices are not in a table
+
+- **OpenRouter** — the models API (`/api/v1/models?output_modalities=all`) plus the
+  video API (`/api/v1/videos/models`), one request each. The ids beginning with `~`
+  are the vendor's own alias entries and repeat their target's prices under a second
+  id, so they are left out; `:batch` is a billing mode of the model whose
+  `canonical_slug` it shares and becomes an offer named `batch`; `:free` is a
+  catalogue entry of its own. Every rate is per token and is restated per million
+  tokens — the vendor's own model pages render them multiplied by a million and
+  labelled `/M tokens`, and `image`/`image_output` are per image *token* on the same
+  evidence. `image` is per picture only on a model that also publishes
+  `image_token`, where the two answer different questions (0.01 per picture beside
+  0.0000096 per image token). `web_search` is a charge per search and stays one.
+  `pricing.overrides` becomes offers of its own: an entry with `min_prompt_tokens`
+  is a long-prompt tier, and the entries tiling the day with `utc_start`/`utc_end`
+  are the day's windows — the top-level prices are whichever window is running, so
+  offering them beside the windows would move a price every time the clock crossed
+  one. A video rate is published only in the video document, in cents or dollars
+  per second depending on the SKU key, and the key names which: `cents_` figures are
+  converted to dollars, `video_tokens` keeps its own measure. Negative figures are
+  the vendor's marker for a charge that depends on the routed model and are never
+  amounts.
+- **AWS Bedrock** — the two public offer files
+  (`AmazonBedrock` and `AmazonBedrockFoundationModels`), read together because
+  neither is complete: the first prices the models under AWS's own offer code, the
+  second the ones billed through Marketplace, and only three names overlap. The
+  pricing page itself is not read — its tables are JavaScript placeholders. Each
+  record states the model, the region, the charge, the unit and the amount, so a
+  rate per thousand tokens is restated per million and a rate per image or per hour
+  keeps its own unit. Marketplace names carry an "(Amazon Bedrock Edition)" suffix
+  that comes off. A charge whose own name says `batch`, `priority`, `provisioned`,
+  `reserved`, `custom`, `tuning` or `storage` is a tier beside the standard rate,
+  not part of it. One charge published under several SKUs is stated once. AWS
+  publishes no model ids in these files, so the model name is the identity.
+- **Google Cloud Vertex** — one request to the Agent Platform pricing page, which is
+  where `vertex-ai/generative-ai/pricing` now redirects. Three things about the
+  markup: a delivery tier is a *tab*, so each `role="tabpanel"` is rewritten as a
+  heading carrying a marker this adapter takes back off, and a tab that names a
+  place (Global, `us-east5`, `europe-west 1`) becomes the region rather than a tier;
+  a cell that stacks two values writes each in its own `<p>`, so the paragraph
+  boundary is spelled as the line break the shared reader knows — without it
+  "Gemini 2.5 Pro" and "Computer Use-Preview" arrive glued into one id; and the
+  price columns name their own unit or none at all. A column that names tokens is
+  read per million; the context-cache storage column states its rate per token-hour
+  in the header ("Price Tok/hr<= 200K input tokens") and is restated per million
+  tokens per hour; a column naming no unit this tool reads keeps its amount as
+  published rather than being given a token rate the page never put there. `Input`
+  and `Output` head the modality of a media row, so they stay conditions — unless
+  their cells hold money, in which case the shared reader prices them.
+- **Kling** — the image and video price pages, one request each, both real Markdown.
+  A price is billed in the vendor's own credits, and the yuan beside each credit
+  rate is that rate restated rather than a second charge, so the credit is the unit
+  kept. Each page's model column also carries the platform's own categories
+  (通用, 数字人, 对口型, 音频生成, 图像识别), which the vendor prices exactly as it
+  prices a model; they stay, named as the vendor named them, with the function a row
+  charges for as the offer it is bought as.
+
 ### Billing units each vendor publishes
 
 The reader is unit-agnostic: what a table bills against is read from the vendor's
@@ -396,6 +470,17 @@ For `deepseek-flash` the platforms currently disagree:
 The first three therefore agree, and Aliyun is the outlier: its cheap window is overnight only, so midday (12:00–14:00), evening (18:00–22:00) and the whole weekend cost double there but are off-peak everywhere else. Baidu happens to draw the same window as Aliyun, on a different generation of the model — the two are independent statements that happen to coincide, never a rule to apply to one another.
 
 Three traps: a `；` joins clauses of one rule (Tencent states the weekday window and the weekend exemption in a single sentence), so sentences are split on `。` only; a rule quoted from a footnote without naming any model applies to everything the document lists; and a window stated in prose does not move a price — the band a row belongs to still comes from the cell, as described above.
+
+## Network reachability
+
+Every source above is credential-free, but not every host resolves everywhere this
+skill runs. On a mainland-China network `docs.aws.amazon.com` does not resolve at
+all (`curl` exit 6), while `pricing.us-east-1.amazonaws.com` and
+`aws.amazon.com` do — which is why Bedrock's prices are read from the offer files
+and why AWS publishes no retirement schedule here. Two vendors' documentation pages
+(`klingai.com`, `cloud.google.com`) serve fine. A source that cannot be reached is
+reported as `source_error` rather than being quietly dropped; `snapshots/` keeps the
+last successful baseline so the change is still visible on the run after it recovers.
 
 ## Parser maintenance
 

@@ -64,6 +64,7 @@ from .reporting import (
     offer_condition_text,
     offering_text,
     price_movement,
+    pricing_state_text,
     provider_name,
     scan_conclusion,
     sentence_text,
@@ -242,7 +243,7 @@ def provider_entry(position: int, record: dict[str, Any]) -> list[str]:
         ],
     )
     if not offers:
-        lines.append(field("价格", sentence_text(UNPRICED)))
+        lines.append(field("价格", sentence_text(pricing_state_text(record))))
     lines.extend(price_note_lines(record))
     shared = shared_conditions(record)
     # Tested after filtering, not before: a channel whose shared terms are all

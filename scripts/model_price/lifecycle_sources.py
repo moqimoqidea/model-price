@@ -18,6 +18,8 @@ from zoneinfo import ZoneInfo
 from .deepseek_updates import DEEPSEEK_UPDATES_URL, UpdateEntry, read_updates
 from .errors import SourceError
 from .models import normalize_model
+from .providers.google_cloud import GOOGLE_CLOUD_MODEL_VERSIONS_URL
+from .providers.openrouter import OPENROUTER_MODELS_URL
 from .parsing import date_value, headed_document_tables, markdown_tables
 from .text import clean_text, clean_zero_width_text
 
@@ -36,7 +38,16 @@ SOURCES = {
     "xai": "https://docs.x.ai/llms.txt",
     "zhipu": "https://docs.bigmodel.cn/cn/guide/models/free/glm-4.5-flash.md",
     "minimax": "https://platform.minimax.io/docs/guides/models-intro.md",
+    "google-cloud": GOOGLE_CLOUD_MODEL_VERSIONS_URL,
+    "openrouter": OPENROUTER_MODELS_URL,
 }
+# Providers that publish no per-model retirement schedule this tool can read. The
+# absence is a fact about the vendor rather than a gap here: Kling announces a
+# withdrawal in its console rather than on a page, and AWS files its dates on a
+# documentation host that does not resolve on every network this skill runs from —
+# reading it would report a failed source on each scan instead of the truth that
+# there is no schedule to report.
+NO_PUBLIC_SCHEDULE = frozenset({"kling", "aws-bedrock"})
 ZHIPU_NOTICE_URLS = (
     SOURCES["zhipu"],
     "https://docs.bigmodel.cn/cn/guide/models/text/glm-z1.md",
@@ -384,6 +395,72 @@ def gemini_events(document: str) -> list[LifecycleEvent]:
     return found
 
 
+# A retirement date a vendor qualifies is the earliest it could happen rather than
+# the day it will: "July 21, 2027 or later" and "no sooner than May 20, 2028" both
+# state a floor, and neither is a shutdown the vendor has announced.
+EARLIEST_DATE_RE = re.compile(r"or later|or earlier|no sooner than|at the earliest", re.I)
+NO_DATE_RE = re.compile(r"no (?:retirement )?date announced|not announced|^[-—]*$", re.I)
+
+
+def google_cloud_events(document: str) -> list[LifecycleEvent]:
+    """Read the model-versions schedule the page publishes for its own models."""
+    found = []
+    for _, rows in headed_document_tables(document):
+        header = [clean_text(cell) for cell in rows[0]] if rows else []
+        if "Model ID" not in header or "Retirement date" not in header:
+            continue
+        for row in rows[1:]:
+            cells = [clean_text(cell) for cell in row] + [""] * len(header)
+            model_id = cells[header.index("Model ID")]
+            stated = cells[header.index("Retirement date")]
+            if not model_id or NO_DATE_RE.match(stated):
+                continue
+            replacement = ""
+            for key in ("Replacement model ID", "Recommended upgrade"):
+                if key in header and cells[header.index(key)]:
+                    replacement = cells[header.index(key)]
+            earliest = bool(EARLIEST_DATE_RE.search(stated))
+            when = date_value(stated)
+            if when is None and not earliest:
+                continue
+            found.append(
+                event(
+                    model_id,
+                    SOURCES["google-cloud"],
+                    eos_at=when,
+                    replacement=replacement or None,
+                    end_behavior="unavailable",
+                    eos_earliest=earliest,
+                    scope="Vertex AI",
+                )
+            )
+    return found
+
+
+def openrouter_events(records: list[dict[str, Any]]) -> list[LifecycleEvent]:
+    """Read the deprecation date each catalogue entry publishes for itself.
+
+    OpenRouter dates an entry's withdrawal in the same record that prices it, and
+    the date is published while the model is still served — so this is an announced
+    end of service rather than the catalogue going quiet.
+    """
+    found = []
+    for record in records:
+        when = record.get("expiration_date")
+        if not when:
+            continue
+        found.append(
+            event(
+                record["model_id"],
+                record.get("source", {}).get("url") or OPENROUTER_MODELS_URL,
+                eos_at=str(when),
+                end_behavior="unavailable",
+                scope="OpenRouter",
+            )
+        )
+    return found
+
+
 def kimi_events(document: str) -> list[LifecycleEvent]:
     section = document.split("## 已下线模型", 1)[-1]
     if section == document:
@@ -721,6 +798,7 @@ PARSERS: dict[str, Callable[[str], list[LifecycleEvent]]] = {
     "anthropic": anthropic_events,
     "google": gemini_events,
     "minimax": minimax_events,
+    "google-cloud": google_cloud_events,
 }
 
 
@@ -728,11 +806,20 @@ def read_events(
     provider_id: str, client: Any, records: list[dict[str, Any]]
 ) -> tuple[str | None, list[LifecycleEvent]]:
     """Read one provider's official evidence fresh on each scan."""
+    if provider_id in NO_PUBLIC_SCHEDULE:
+        return None, []
     if provider_id == "aliyun":
         found = aliyun_events(records)
         if not found:
             raise SourceError("Aliyun model market published no readable offline times")
         return "https://www.qianwenai.com/models", found
+    if provider_id == "openrouter":
+        found = openrouter_events(records)
+        if not found:
+            raise SourceError(
+                "OpenRouter catalogue published no dated deprecation"
+            )
+        return OPENROUTER_MODELS_URL, found
     url = SOURCES.get(provider_id)
     if not url:
         return None, []

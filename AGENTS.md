@@ -18,7 +18,7 @@ This file deliberately does not restate the other documents.
 
 A single-skill repository whose root **is** the skill directory. It queries public,
 credential-free model catalogues, introductions, capabilities, specifications, and
-official price documents across 13 providers. Its two output modes are a model and
+official price documents across 17 providers. Its two output modes are a model and
 cross-provider comparison, and a whole-catalogue scan that reports launches,
 withdrawals, billing changes, and price moves since the previous scan or a
 retained historical baseline.
@@ -326,9 +326,11 @@ column bills in. Override only the policy that actually differs: `price_kind`,
 genuinely not a table (`aliyun` reads a JSON API, `tencent` reads embedded Slate
 JSON, `baidu` reads a Gatsby pre-fetch).
 
-Two declarations deserve care: `carry_forward_model` for vendors that leave a
-continuation row's model cell empty, and `publishes_time_bands` for vendors that
-explain a peak/off-peak window in prose beside the table.
+Three declarations deserve care: `carry_forward_model` for vendors that leave a
+continuation row's model cell empty, `publishes_time_bands` for vendors that
+explain a peak/off-peak window in prose beside the table, and `source_documents`
+for a vendor that splits one catalogue across two price pages (Kling prices images
+and video separately) — each row then keeps the page that published its rate.
 
 Override `catalog_records()` when the adapter can build every record from the
 document it already parsed. The inherited default walks the whole catalogue with

@@ -17,7 +17,12 @@
 
 | 默认查询（国内） | 仅在明确提到时查询（海外） |
 | --- | --- |
-| 阿里云百炼、火山引擎方舟、腾讯云 TokenHub、百度智能云千帆、DeepSeek 原厂、月之暗面 Kimi、智谱 BigModel、MiniMax 原厂、小米 MiMo | OpenAI、Anthropic、Google Gemini、xAI |
+| 阿里云百炼、火山引擎方舟、腾讯云 TokenHub、百度智能云千帆、DeepSeek 原厂、月之暗面 Kimi、智谱 BigModel、MiniMax 原厂、小米 MiMo、快手可灵 | OpenAI、Anthropic、Google Gemini、xAI、OpenRouter、Google Cloud Vertex AI、AWS Bedrock |
+
+海外渠道又分两类：**模型原厂**（OpenAI、Anthropic、Google Gemini、xAI）按模型名推断，
+**聚合与云渠道**（OpenRouter、Google Cloud Vertex AI、AWS Bedrock）转售别家的模型，
+模型名说明不了它由谁承载，所以只在 `--include-overseas` 或显式 `--provider` 时查询——
+AWS 一次扫描要读两份公开价目（约 25 MB），无人指名时不该发生。
 
 token 计费按「元 / 百万 tokens」（海外为「美元 / 百万 tokens」）对齐；图片按张、视频按秒、
 语音按万字符或小时、音乐按首、3D 按次、模型按请求次数等**按厂商自己写的计费单位原样记录**，

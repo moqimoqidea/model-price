@@ -116,6 +116,16 @@ UNIT_MEASURES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     ("thousand_tokens", ("千token", "1ktoken", "1ktokens", "thousandtokens")),
     ("10k_tokens", ("万token", "10ktoken", "10ktokens")),
+    # A vendor that bills video by the token bills something its language models
+    # never bill, so the measure stays apart from ``million_tokens``: compared as
+    # one unit, a video token rate would read as a language token rate.
+    (
+        "million_video_tokens",
+        (
+            "/million-video-tokens", "/millionvideotokens", "/1mvideo-token",
+            "/1mvideotoken", "/百万视频token", "/百万视频tokens",
+        ),
+    ),
     (
         "million_characters",
         ("百万字符", "1mcharacter", "1mcharacters", "1mchar", "1mchars"),
@@ -125,6 +135,15 @@ UNIT_MEASURES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("character", ("字符", "character", "characters", "char", "chars")),
     ("image", ("/张", "/幅", "/image", "/images", "/图")),
     ("frame", ("/帧", "/frame", "/frames")),
+    # A video upscaler bills by the area it processes over the time it runs, which
+    # is neither a picture nor a second.
+    (
+        "megapixel_second",
+        (
+            "/megapixel-second", "/megapixelsecond", "/mp-second",
+            "/megapixel秒", "/百万像素秒",
+        ),
+    ),
     ("second", ("/秒", "/second", "/seconds", "/sec", "/secs")),
     ("minute", ("/分钟", "/minute", "/minutes", "/min", "/mins")),
     ("hour", ("/小时", "/hour", "/hours", "/hr", "/hrs")),
@@ -256,16 +275,6 @@ def is_standard_offer(offer: dict[str, Any]) -> bool:
     return offer_priority(offer) == 0
 
 
-def primary_offer(offers: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Choose the offer a short model digest should show, independent of order."""
-    if not offers:
-        return None
-    return min(
-        enumerate(offers),
-        key=lambda item: (offer_priority(item[1]), item[0]),
-    )[1]
-
-
 def price_sort_key(price: dict[str, Any]) -> tuple[int, int, str, str]:
     """Return a stable input-to-cache-to-output ordering for a price list."""
     kind = _billing_key(price.get("type"))
@@ -394,6 +403,16 @@ def free_price(
     ends is readable in the report that records the change.
     """
     return price_item(kind, label, FREE_AMOUNT, unit, display=display)
+
+
+# An entry a vendor lists without a rate to bill: a model it is still testing, a
+# free catalogue variant, or a router whose charge depends on the model it picks.
+# The state is recorded on the model instead of a price, so the listing and the
+# later publication of a real rate stay two separate facts — and so a charge of
+# nothing is never read as a rate of zero, which is what a vendor that bills
+# nothing at all does publish.
+FREE_PRICING_STATE = "free"
+VARIABLE_PRICING_STATE = "varies"
 
 
 def make_record(

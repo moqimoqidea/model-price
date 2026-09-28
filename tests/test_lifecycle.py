@@ -25,9 +25,11 @@ from model_price.lifecycle_sources import (
     deepseek_events,
     event,
     gemini_events,
+    google_cloud_events,
     kimi_events,
     minimax_events,
     openai_events,
+    openrouter_events,
     read_events,
     tencent_events,
     volcengine_events,
@@ -124,6 +126,44 @@ class OfficialSourceTests(unittest.TestCase):
         found = gemini_events(page)
         self.assertTrue(found[0]["eos_earliest"])
         self.assertEqual(retired_model_ids(found, require_moment("2026-09-25T00:00:00+08:00")), [])
+
+    def test_vertex_schedule_keeps_a_floor_and_a_confirmed_date_apart(self):
+        page = """<h1>Model versions and lifecycle</h1>
+<table><tr><th>Model ID</th><th>Release date</th><th>Retirement date</th>
+<th>Replacement model ID</th></tr>
+<tr><td><code>gemini-3.5-flash</code></td><td>May 19, 2026</td>
+<td>May 19, 2027 or later</td><td></td></tr>
+<tr><td><code>veo-3.0-generate-001</code></td><td>July 29, 2025</td>
+<td>June 30, 2026</td><td>veo-3.1-generate-001</td></tr>
+<tr><td><code>gemini-embedding-2</code></td><td>April 22, 2026</td>
+<td>No retirement date announced</td><td></td></tr>
+</table>
+"""
+        found = google_cloud_events(page)
+        self.assertEqual(
+            [item["model_id"] for item in found],
+            ["gemini-3.5-flash", "veo-3.0-generate-001"],
+        )
+        self.assertTrue(found[0]["eos_earliest"])
+        self.assertEqual(found[0]["eos_at"], "2027-05-19")
+        self.assertFalse(found[1]["eos_earliest"])
+        self.assertEqual(found[1]["replacement"], "veo-3.1-generate-001")
+
+    def test_a_dated_deprecation_is_a_retirement_and_a_zero_price_is_not(self):
+        found = openrouter_events(
+            [
+                {
+                    "model_id": "bytedance-seed/seed-1.6",
+                    "expiration_date": "2026-11-11",
+                    "source": {"url": "https://openrouter.ai/models/bytedance-seed/seed-1.6"},
+                },
+                {"model_id": "stealth/space-bunny-alpha", "pricing_state": "free"},
+            ]
+        )
+        self.assertEqual(
+            [item["model_id"] for item in found], ["bytedance-seed/seed-1.6"]
+        )
+        self.assertEqual(found[0]["eos_at"], "2026-11-11")
 
     def test_google_gray_rows_confirm_shutdown_even_without_a_date(self):
         page = """<table><tr><td>Model</td><td>Release date</td><td>Shutdown date</td></tr>
@@ -685,19 +725,26 @@ class LifecycleScanTests(unittest.TestCase):
 
 class AuditScriptTests(unittest.TestCase):
     # Providers whose evidence is not one document handed to one string parser:
-    # Aliyun reads its catalogue records, Zhipu reads several pages, DeepSeek reads
-    # the dated update log the price stamp and the introductions also read, and
-    # Tencent and xAI need a follow-up fetch before their document can be parsed.
+    # Aliyun and OpenRouter each publish a model's retirement date inside the record
+    # that prices it, Zhipu reads several pages, DeepSeek reads the dated update log
+    # the price stamp and the introductions also read, and Tencent and xAI need a
+    # follow-up fetch before their document can be parsed.
     ROUTED_BY_READ_EVENTS = frozenset(
-        {"aliyun", "deepseek", "tencent", "xai", "zhipu"}
+        {"aliyun", "openrouter", "deepseek", "tencent", "xai", "zhipu"}
     )
 
     def test_every_price_provider_has_a_retirement_reader(self):
-        self.assertEqual(len(PROVIDERS), 13)
-        from model_price.lifecycle_sources import PARSERS, SOURCES
-        self.assertEqual(set(PROVIDERS), set(SOURCES) | {"aliyun"})
+        from model_price.lifecycle_sources import (
+            NO_PUBLIC_SCHEDULE,
+            PARSERS,
+            SOURCES,
+        )
+
         self.assertEqual(
-            set(PROVIDERS) - self.ROUTED_BY_READ_EVENTS,
+            set(PROVIDERS), set(SOURCES) | {"aliyun"} | NO_PUBLIC_SCHEDULE
+        )
+        self.assertEqual(
+            set(PROVIDERS) - self.ROUTED_BY_READ_EVENTS - NO_PUBLIC_SCHEDULE,
             set(PARSERS),
         )
 

@@ -11,7 +11,11 @@ from ..text import CELL_BREAK_RE, clean_text
 
 FRONTMATTER_RE = re.compile(r"\A---\s*\n(?P<body>.*?)\n---\s*\n", re.S)
 MARKDOWN_LINK_RE = re.compile(r"\[([^]]+)]\(([^)]+)\)")
-MARKDOWN_DECORATION_RE = re.compile(r"[*~`]+")
+# Emphasis is a pair of markers around a word ("**Preview**") and a range is one
+# marker between two figures ("3~15s"). Only the pair comes off: a rule that takes
+# every marker turns a published duration into a different one ("315s"), and a
+# reader cannot tell that the page never said it.
+MARKDOWN_DECORATION_RE = re.compile(r"\*{2,}|~{2,}|`+")
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.M)
 META_RE = re.compile(

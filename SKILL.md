@@ -29,7 +29,7 @@ python3 scripts/query_model_prices.py delta --since last-month
 python3 scripts/query_model_prices.py delta --since 2026-09-19T23:59:59+08:00
 ```
 
-Provider IDs: `aliyun`, `volcengine`, `tencent`, `baidu`, `deepseek`, `kimi`, `zhipu`, `minimax`, `xiaomi`, `openai`, `anthropic`, `google`, `xai`.
+Provider IDs: `aliyun`, `volcengine`, `tencent`, `baidu`, `deepseek`, `kimi`, `zhipu`, `minimax`, `xiaomi`, `kling`, `openai`, `anthropic`, `google`, `xai`, `openrouter`, `google-cloud`, `aws-bedrock`.
 
 Pick the format by where the answer is going, not by preference: `--format message` whenever the result will be sent to a person over an instant messenger — DingTalk, WeChat, Feishu, or any other — and `--format json` otherwise. A request to send, forward, push, notify, or 「发给我」 over IM is a request for a message, so pass `--format message` for it without being asked to. `compare` and `provider` default to `json` because their usual consumer is another program; `delta` defaults to `message` because its usual consumer is a channel.
 
@@ -39,7 +39,9 @@ A model introduction carries at most 300 characters. A vendor publishes an annou
 
 A message carries at most `--max-chars` characters, 3000 by default. `compare`, `provider`, and `delta` all stop there. An over-long message is the whole rendered report plus one closing line saying how far over it is. Summarize it before sending, keeping its title, model capabilities, every displayed standard price with its billing conditions, and every channel's status, including failures. For `compare` and `provider`, keep every displayed offer and source. Condense prose rather than cutting a line mid-amount. A channel-specific delivery contract may impose a larger transport ceiling, but that does not change this default budget.
 
-Do not query `openai`, `anthropic`, `google`, or `xai` by default. Add only the relevant provider when the user explicitly mentions GPT/OpenAI, Claude/Anthropic, Gemini/Google, or Grok/xAI; use `--include-overseas` when the user explicitly asks about overseas models generally.
+Do not query the overseas providers by default. Add only the relevant provider when the user explicitly mentions GPT/OpenAI, Claude/Anthropic, Gemini/Google, or Grok/xAI; use `--include-overseas` when the user explicitly asks about overseas models generally.
+
+Four of them are model vendors whose names a query can be inferred from. The other three carry models they did not build — `openrouter` is an aggregator, `google-cloud` and `aws-bedrock` are clouds that resell other vendors' models — so no model name implies them: reach them with `--include-overseas` or by naming the provider. Prefer naming it. `aws-bedrock` reads two public price lists of about 25 MB together, and a scan that read them for a question about one model would cost that for nothing.
 
 Each provider caches lists and price searches independently under `cache/`. Fresh caches are valid for 3 hours. Add `--refresh` only when the user asks for the latest/current refresh; with `provider` or repeated `--provider`, refresh only those providers. `delta` is the exception — it always reads the sources afresh, because a cache hit would hand the previous scan back as "no change". Fresh means once per source document in that run, never once per model: identical operations and URLs are also reused in memory. Safe reads retry transient connection failures and HTTP 408/425/429/5xx responses with bounded backoff; non-idempotent POSTs do not retry.
 

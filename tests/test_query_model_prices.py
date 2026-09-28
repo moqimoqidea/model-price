@@ -52,6 +52,7 @@ from model_price.parsing import (
 from model_price.pricing import (
     is_free_amount,
     is_free_statement,
+    is_standard_offer,
     make_record,
     per_million_tokens,
     price_item,
@@ -84,7 +85,28 @@ from model_price.providers.google import (
 )
 from model_price.providers.kimi import KIMI_INDEX_URL, KimiAdapter
 from model_price.providers.minimax import MINIMAX_URL, MiniMaxAdapter
+from model_price.providers.aws_bedrock import (
+    BEDROCK_MARKETPLACE_URL,
+    BEDROCK_MODELS_URL,
+    AWSBedrockAdapter,
+)
+from model_price.providers.google_cloud import (
+    GOOGLE_CLOUD_PRICING_URL,
+    GoogleCloudAdapter,
+    google_cloud_document,
+)
+from model_price.providers.kling import (
+    KLING_IMAGE_URL,
+    KLING_VIDEO_URL,
+    KlingAdapter,
+)
 from model_price.providers.openai import OPENAI_MARKDOWN_URL, OpenAIAdapter
+from model_price.providers.openrouter import (
+    OPENROUTER_MODELS_URL,
+    OPENROUTER_VIDEOS_URL,
+    OpenRouterAdapter,
+    openrouter_entries,
+)
 from model_price.providers.tencent import (
     TENCENT_PRICE_URL,
     TencentAdapter,
@@ -4713,3 +4735,855 @@ Finetuning
 
 if __name__ == "__main__":
     unittest.main()
+
+
+OPENROUTER_MODELS_JSON = json.dumps(
+    {
+        "data": [
+            {
+                "id": "anthropic/claude-sonnet-5.5",
+                "name": "Anthropic: Claude Sonnet 5.5",
+                "created": 1790618686,
+                "description": "A Sonnet-class model for everyday work.",
+                "context_length": 1000000,
+                "architecture": {
+                    "input_modalities": ["text", "image"],
+                    "output_modalities": ["text"],
+                    "tokenizer": "Claude",
+                },
+                "pricing": {
+                    "prompt": "0.000002",
+                    "completion": "0.00001",
+                    "input_cache_read": "0.0000002",
+                    "web_search": "0.01",
+                },
+                "top_provider": {"max_completion_tokens": 128000},
+                "supported_parameters": ["tools"],
+            },
+            {
+                "id": "anthropic/claude-sonnet-5.5:batch",
+                "name": "Anthropic: Claude Sonnet 5.5 (batch)",
+                "canonical_slug": "anthropic/claude-sonnet-5.5-20260928",
+                "pricing": {"prompt": "0.000001", "completion": "0.000005"},
+                "architecture": {"output_modalities": ["text"]},
+            },
+            {
+                "id": "qwen/qwen3.8-27b:free",
+                "name": "Qwen: Qwen3.8 27B (free)",
+                "description": "An open-weight model from Qwen.",
+                "architecture": {"output_modalities": ["text"]},
+                "pricing": {"prompt": "0", "completion": "0"},
+            },
+            {
+                "id": "openrouter/auto",
+                "name": "Auto Router",
+                "description": "Routes a request to the best model for it.",
+                "architecture": {"output_modalities": ["text"]},
+                "pricing": {"prompt": "-1", "completion": "-1"},
+            },
+            {
+                "id": "~openai/gpt-latest",
+                "name": "OpenAI: GPT (latest)",
+                "alias_target": {"slug": "openai/gpt-6-sol", "name": "GPT-6 Sol"},
+                "architecture": {"output_modalities": ["text"]},
+                "pricing": {"prompt": "0.000002", "completion": "0.00001"},
+            },
+            {
+                "id": "openai/gpt-6-sol",
+                "name": "OpenAI: GPT-6 Sol",
+                "description": "A frontier model from OpenAI.",
+                "expiration_date": "2026-11-11",
+                "context_length": 272000,
+                "architecture": {
+                    "input_modalities": ["text"],
+                    "output_modalities": ["text"],
+                },
+                "pricing": {
+                    "prompt": "0.000004",
+                    "completion": "0.000015",
+                    "overrides": [
+                        {
+                            "min_prompt_tokens": 272000,
+                            "prompt": "0.000008",
+                            "completion": "0.00003",
+                        }
+                    ],
+                },
+            },
+            {
+                "id": "tencent/hy3",
+                "name": "Tencent: Hunyuan 3",
+                "description": "A model billed by the hour of the day.",
+                "architecture": {"output_modalities": ["text"]},
+                "pricing": {
+                    "prompt": "0.0000000825",
+                    "completion": "0.00000033",
+                    "overrides": [
+                        {
+                            "utc_start": 0,
+                            "utc_end": 1600,
+                            "prompt": "0.000000132",
+                            "completion": "0.000000528",
+                        },
+                        {
+                            "utc_start": 1600,
+                            "utc_end": 0,
+                            "prompt": "0.0000000825",
+                            "completion": "0.00000033",
+                        },
+                    ],
+                },
+            },
+            {
+                "id": "x-ai/grok-imagine-image-2.0",
+                "name": "xAI: Grok Imagine Image 2.0",
+                "description": "An image model billed per picture and per image token.",
+                "architecture": {
+                    "input_modalities": ["text"],
+                    "output_modalities": ["image"],
+                },
+                "pricing": {
+                    "prompt": "0",
+                    "completion": "0",
+                    "image": "0.01",
+                    "image_token": "0.00000958083832335329",
+                    "image_output": "0.00000958083832335329",
+                },
+            },
+            {
+                "id": "alibaba/wan-3.0",
+                "name": "Alibaba: Wan 3.0",
+                "description": "A video generation model from Alibaba.",
+                "architecture": {
+                    "input_modalities": ["text", "image"],
+                    "output_modalities": ["video"],
+                },
+                "pricing": {"prompt": "0", "completion": "0"},
+            },
+        ]
+    }
+)
+
+OPENROUTER_VIDEOS_JSON = json.dumps(
+    {
+        "data": [
+            {
+                "id": "alibaba/wan-3.0",
+                "pricing_skus": {
+                    "duration_seconds_480p": "0.05",
+                    "duration_seconds_1080p": "0.2",
+                },
+            },
+            {
+                "id": "runway/aleph-2",
+                "pricing_skus": {
+                    "cents_per_second_output": "28",
+                    "minimum_cents_per_generation": "56",
+                },
+            },
+            {
+                "id": "bytedance/seedance-2.5",
+                "pricing_skus": {"video_tokens": "0.0000035"},
+            },
+            {
+                "id": "black-forest-labs/flux-video-upscale",
+                "pricing_skus": {"cents_per_megapixel_second_creative": "10.5"},
+            },
+        ]
+    }
+)
+
+
+def openrouter_adapter(models=OPENROUTER_MODELS_JSON, videos=OPENROUTER_VIDEOS_JSON):
+    return OpenRouterAdapter(
+        MappingClient(
+            {OPENROUTER_MODELS_URL: models, OPENROUTER_VIDEOS_URL: videos}
+        )
+    )
+
+
+class OpenRouterAdapterTests(unittest.TestCase):
+    def test_both_documents_are_read_once_and_aliases_are_left_out(self):
+        client = MappingClient(
+            {
+                OPENROUTER_MODELS_URL: OPENROUTER_MODELS_JSON,
+                OPENROUTER_VIDEOS_URL: OPENROUTER_VIDEOS_JSON,
+            }
+        )
+        models = OpenRouterAdapter(client).list_models()
+        self.assertEqual(client.requests, [OPENROUTER_MODELS_URL, OPENROUTER_VIDEOS_URL])
+        self.assertNotIn("~openai/gpt-latest", models)
+        self.assertIn("openai/gpt-6-sol", models)
+
+    def test_a_per_token_rate_is_restated_per_million_tokens(self):
+        offer = openrouter_adapter().query("anthropic/claude-sonnet-5.5")[0]["offers"][0]
+        self.assertEqual(price_lookup(offer, "input")["amount"], "2")
+        self.assertEqual(price_lookup(offer, "output")["amount"], "10")
+        self.assertEqual(price_lookup(offer, "cache_hit")["amount"], "0.2")
+        self.assertEqual(price_lookup(offer, "input")["unit"], "USD_per_million_tokens")
+
+    def test_a_search_charge_stays_a_charge_per_search(self):
+        offer = openrouter_adapter().query("anthropic/claude-sonnet-5.5")[0]["offers"][0]
+        search = price_lookup(offer, "web_search")
+        self.assertEqual(search["amount"], "0.01")
+        self.assertEqual(search["unit"], "USD_per_request")
+
+    def test_a_batch_id_prices_a_tier_of_the_model_it_belongs_to(self):
+        record = openrouter_adapter().query("anthropic/claude-sonnet-5.5")[0]
+        self.assertEqual(record["model_id"], "anthropic/claude-sonnet-5.5")
+        self.assertEqual([offer["name"] for offer in record["offers"]], ["pay_as_you_go", "batch"])
+        self.assertEqual(record["offers"][1]["conditions"]["service_tier"], "batch")
+        self.assertEqual(price_lookup(record["offers"][1], "input")["amount"], "1")
+
+    def test_a_query_naming_the_batch_id_reads_the_model_it_belongs_to(self):
+        record = openrouter_adapter().query("anthropic/claude-sonnet-5.5:batch")[0]
+        self.assertEqual(record["model_id"], "anthropic/claude-sonnet-5.5")
+        self.assertEqual(len(record["offers"]), 2)
+
+    def test_a_free_entry_is_listed_with_its_state_and_no_price(self):
+        record = openrouter_adapter().query("qwen/qwen3.8-27b:free")[0]
+        self.assertEqual(record["model_id"], "qwen/qwen3.8-27b:free")
+        self.assertEqual(record["offers"], [])
+        self.assertEqual(record["pricing_state"], "free")
+
+    def test_a_router_whose_charge_depends_on_what_it_picks_states_that(self):
+        record = openrouter_adapter().query("openrouter/auto")[0]
+        self.assertEqual(record["offers"], [])
+        self.assertEqual(record["pricing_state"], "varies")
+
+    def test_a_long_prompt_rate_is_an_offer_of_its_own(self):
+        record = openrouter_adapter().query("openai/gpt-6-sol")[0]
+        standard, long_context = record["offers"]
+        self.assertEqual(price_lookup(standard, "input")["amount"], "4")
+        self.assertEqual(
+            long_context["conditions"]["context_tier"], "min_prompt_tokens > 272000"
+        )
+        self.assertEqual(price_lookup(long_context, "input")["amount"], "8")
+
+    def test_a_daily_window_prices_the_model_without_offering_the_current_rate_twice(self):
+        record = openrouter_adapter().query("tencent/hy3")[0]
+        self.assertEqual(
+            [offer["name"] for offer in record["offers"]],
+            ["UTC 00:00–16:00", "UTC 16:00–00:00"],
+        )
+        self.assertEqual(price_lookup(record["offers"][0], "input")["amount"], "0.132")
+        self.assertEqual(price_lookup(record["offers"][1], "input")["amount"], "0.0825")
+        self.assertEqual(
+            record["time_bands"]["window"], "UTC 00:00–16:00；UTC 16:00–00:00"
+        )
+
+    def test_video_rates_come_from_the_video_document(self):
+        record = openrouter_adapter().query("alibaba/wan-3.0")[0]
+        offer = record["offers"][0]
+        self.assertEqual(offer["conditions"]["output_modality"], "video")
+        amounts = {
+            price["label"]: price["amount"] for price in offer["prices"]
+        }
+        self.assertEqual(amounts["duration_seconds（480p）"], "0.05")
+        self.assertEqual(price_lookup(offer, "output_video")["unit"], "USD_per_second")
+
+    def test_a_rate_published_in_cents_is_converted_to_dollars(self):
+        record = openrouter_adapter().query("runway/aleph-2")[0]
+        offer = record["offers"][0]
+        amounts = {price["label"]: price["amount"] for price in offer["prices"]}
+        self.assertEqual(amounts["cents_per_second_output"], "0.28")
+        self.assertEqual(amounts["minimum_cents_per_generation"], "0.56")
+
+    def test_a_video_token_rate_keeps_the_measure_the_vendor_bills(self):
+        record = openrouter_adapter().query("bytedance/seedance-2.5")[0]
+        self.assertEqual(record["model_id"], "bytedance/seedance-2.5")
+        price = price_lookup(record["offers"][0], "output_video_token")
+        self.assertEqual(price["amount"], "3.5")
+        self.assertEqual(price["unit"], "USD_per_million_video_tokens")
+
+    def test_a_megapixel_second_rate_keeps_its_own_measure(self):
+        record = openrouter_adapter().query("black-forest-labs/flux-video-upscale")[0]
+        price = record["offers"][0]["prices"][0]
+        self.assertEqual(price["amount"], "0.105")
+        self.assertEqual(price["unit"], "USD_per_megapixel_second")
+
+    def test_a_picture_rate_is_read_per_picture_only_when_the_token_rate_is_published(self):
+        offer = openrouter_adapter().query("x-ai/grok-imagine-image-2.0")[0]["offers"][0]
+        units = {
+            price["unit"]: price["amount"]
+            for price in offer["prices"]
+            if price["type"] == "input_image"
+        }
+        self.assertEqual(units["USD_per_image"], "0.01")
+        self.assertEqual(units["USD_per_million_tokens"], "9.58083832335329")
+
+    def test_an_entry_that_publishes_only_token_rates_keeps_image_input_per_token(self):
+        models = json.loads(OPENROUTER_MODELS_JSON)
+        entry = next(m for m in models["data"] if m["id"] == "openai/gpt-6-sol")
+        entry["pricing"]["image"] = "0.00000025"
+        record = openrouter_adapter(json.dumps(models)).query("openai/gpt-6-sol")[0]
+        image = next(
+            price
+            for price in record["offers"][0]["prices"]
+            if price["type"] == "input_image"
+        )
+        self.assertEqual(image["amount"], "0.25")
+        self.assertEqual(image["unit"], "USD_per_million_tokens")
+
+    def test_the_catalogue_covers_both_documents(self):
+        keys = {
+            record["model_id"] for record in openrouter_adapter().catalog_records()
+        }
+        self.assertEqual(
+            keys,
+            {
+                "anthropic/claude-sonnet-5.5",
+                "qwen/qwen3.8-27b:free",
+                "openrouter/auto",
+                "openai/gpt-6-sol",
+                "tencent/hy3",
+                "x-ai/grok-imagine-image-2.0",
+                "alibaba/wan-3.0",
+                "runway/aleph-2",
+                "bytedance/seedance-2.5",
+                "black-forest-labs/flux-video-upscale",
+            },
+        )
+
+    def test_a_payload_without_models_is_a_source_error(self):
+        with self.assertRaises(SourceError):
+            openrouter_entries(MappingClient({OPENROUTER_MODELS_URL: "{}"}))
+
+
+KLING_IMAGE_MARKDOWN = """# 图片
+
+## Pricing Table
+
+| 模型 | 功能 | 画质 | 价格 |
+| --- | --- | --- | --- |
+| Kling Image 3.0 | 文生图、图生图 | 1K、2K | 8积分（¥0.2）/张 |
+| Kling Image 3.0 Omni | 文生图、图生图 | 4K | 16积分（¥0.4）/张 |
+| 通用 | 智能补全主体图 | 1K | 20积分（¥0.5）/次 |
+"""
+
+KLING_VIDEO_MARKDOWN = """# 视频
+
+## Pricing Table
+
+| 模型 | 计费方式 | 功能 | 价格（720P） | 价格（1080P） | 价格（4K） |
+| --- | --- | --- | --- | --- | --- |
+| Kling 3.0 Turbo | 按秒收费 | 有声 | 0.8积分（¥0.8）/秒 | 1.0积分（¥1.0）/秒 | - |
+| Kling 3.0 | 按秒收费 | 无声 | 0.6积分（¥0.6）/秒 | 0.8积分（¥0.8）/秒 | 3.0积分（¥3.0）/秒 |
+| 对口型 | 按每5秒收费 | 对口型 | 0.5积分（¥0.5）/5秒 | - | - |
+"""
+
+
+class KlingAdapterTests(unittest.TestCase):
+    def adapter(self):
+        return KlingAdapter(
+            MappingClient(
+                {
+                    KLING_IMAGE_URL: KLING_IMAGE_MARKDOWN,
+                    KLING_VIDEO_URL: KLING_VIDEO_MARKDOWN,
+                }
+            )
+        )
+
+    def test_both_price_pages_are_read_once(self):
+        client = MappingClient(
+            {
+                KLING_IMAGE_URL: KLING_IMAGE_MARKDOWN,
+                KLING_VIDEO_URL: KLING_VIDEO_MARKDOWN,
+            }
+        )
+        models = KlingAdapter(client).list_models()
+        self.assertEqual(client.requests, [KLING_IMAGE_URL, KLING_VIDEO_URL])
+        self.assertEqual(
+            models,
+            ["kling-3.0", "kling-3.0-turbo", "kling-image-3.0", "kling-image-3.0-omni", "对口型", "通用"],
+        )
+
+    def test_a_credit_price_keeps_the_credit_the_vendor_deducts(self):
+        price = self.adapter().query("kling-image-3.0")[0]["offers"][0]["prices"][0]
+        self.assertEqual(price["amount"], "8")
+        self.assertEqual(price["unit"], "积分/张")
+        self.assertEqual(price["display"], "8积分/张")
+
+    def test_each_resolution_is_its_own_price(self):
+        offer = self.adapter().query("kling-3.0")[0]["offers"][0]
+        self.assertEqual(
+            [(price["label"], price["amount"]) for price in offer["prices"]],
+            [("价格（720P）", "0.6"), ("价格（1080P）", "0.8"), ("价格（4K）", "3.0")],
+        )
+
+    def test_a_resolution_the_page_does_not_quote_prices_nothing(self):
+        offer = self.adapter().query("kling-3.0-turbo")[0]["offers"][0]
+        self.assertEqual(
+            [price["label"] for price in offer["prices"]],
+            ["价格（720P）", "价格（1080P）"],
+        )
+
+    def test_the_function_a_row_charges_for_names_its_offer(self):
+        record = self.adapter().query("kling-image-3.0-omni")[0]
+        self.assertEqual(record["offers"][0]["name"], "文生图、图生图")
+        self.assertNotIn("功能", record["offers"][0]["conditions"])
+
+    def test_the_platform_capabilities_the_page_prices_are_kept(self):
+        record = self.adapter().query("通用")[0]
+        self.assertEqual(record["offers"][0]["name"], "智能补全主体图")
+        self.assertEqual(record["offers"][0]["prices"][0]["unit"], "积分/次")
+
+    def test_a_row_carries_the_page_that_published_it(self):
+        records = {record["model_id"]: record for record in self.adapter().catalog_records()}
+        self.assertEqual(records["kling-3.0"]["source"]["url"], KLING_VIDEO_URL)
+        self.assertEqual(records["kling-image-3.0"]["source"]["url"], KLING_IMAGE_URL)
+
+    def test_an_unreadable_price_page_is_a_source_error(self):
+        with self.assertRaises(SourceError):
+            KlingAdapter(
+                MappingClient({KLING_IMAGE_URL: "# 图片\n", KLING_VIDEO_URL: "# 视频\n"})
+            ).list_models()
+
+
+BEDROCK_FIRST_PARTY_JSON = json.dumps(
+    {
+        "formatVersion": "v1.0",
+        "offerCode": "AmazonBedrock",
+        "products": {
+            "SKU-A": {
+                "sku": "SKU-A",
+                "attributes": {
+                    "location": "US East (N. Virginia)",
+                    "regionCode": "us-east-1",
+                    "inferenceType": "Input tokens",
+                    "model": "Claude 3 Haiku",
+                },
+            },
+            "SKU-B": {
+                "sku": "SKU-B",
+                "attributes": {
+                    "location": "US East (N. Virginia)",
+                    "regionCode": "us-east-1",
+                    "inferenceType": "Input tokens",
+                    "model": "Claude 3 Haiku",
+                },
+            },
+            "SKU-C": {
+                "sku": "SKU-C",
+                "attributes": {
+                    "location": "US East (N. Virginia)",
+                    "regionCode": "us-east-1",
+                    "inferenceType": "Output tokens",
+                    "model": "Claude 3 Haiku",
+                },
+            },
+            "SKU-D": {
+                "sku": "SKU-D",
+                "attributes": {
+                    "location": "US West (Oregon)",
+                    "regionCode": "us-west-2",
+                    "inferenceType": "Input tokens",
+                    "model": "Claude 3 Haiku",
+                },
+            },
+            "SKU-E": {
+                "sku": "SKU-E",
+                "attributes": {
+                    "location": "US East (N. Virginia)",
+                    "regionCode": "us-east-1",
+                    "servicename": "Amazon Bedrock",
+                },
+            },
+            "SKU-F": {
+                "sku": "SKU-F",
+                "attributes": {
+                    "location": "US East (N. Virginia)",
+                    "regionCode": "us-east-1",
+                    "model": "Claude 3 Haiku",
+                },
+            },
+        },
+        "terms": {
+            "OnDemand": {
+                "SKU-A": {
+                    "SKU-A.T": {
+                        "effectiveDate": "2026-09-01T00:00:00Z",
+                        "priceDimensions": {
+                            "SKU-A.T.R": {
+                                "description": "$0.00025 per 1K tokens",
+                                "unit": "1K tokens",
+                                "pricePerUnit": {"USD": "0.0002500000"},
+                            }
+                        },
+                    }
+                },
+                "SKU-B": {
+                    "SKU-B.T": {
+                        "priceDimensions": {
+                            "SKU-B.T.R": {
+                                "description": "the same rate under a regional SKU",
+                                "unit": "1K tokens",
+                                "pricePerUnit": {"USD": "0.0002500000"},
+                            }
+                        }
+                    }
+                },
+                "SKU-C": {
+                    "SKU-C.T": {
+                        "priceDimensions": {
+                            "SKU-C.T.R": {
+                                "description": "output",
+                                "unit": "1M tokens",
+                                "pricePerUnit": {"USD": "1.25"},
+                            }
+                        }
+                    }
+                },
+                "SKU-D": {
+                    "SKU-D.T": {
+                        "priceDimensions": {
+                            "SKU-D.T.R": {
+                                "description": "input",
+                                "unit": "1M tokens",
+                                "pricePerUnit": {"USD": "0.3"},
+                            }
+                        }
+                    }
+                },
+                "SKU-E": {
+                    "SKU-E.T": {
+                        "priceDimensions": {
+                            "SKU-E.T.R": {
+                                "description": "service charge with no model",
+                                "unit": "1K tokens",
+                                "pricePerUnit": {"USD": "9.99"},
+                            }
+                        }
+                    }
+                },
+                "SKU-F": {
+                    "SKU-F.T": {
+                        "priceDimensions": {
+                            "SKU-F.T.R": {
+                                "description": "Batch Input Tokens Global",
+                                "unit": "1M tokens",
+                                "pricePerUnit": {"USD": "0.125"},
+                            }
+                        }
+                    }
+                },
+            }
+        },
+    }
+)
+
+BEDROCK_MARKETPLACE_JSON = json.dumps(
+    {
+        "formatVersion": "v1.0",
+        "offerCode": "AmazonBedrockFoundationModels",
+        "products": {
+            "SKU-M": {
+                "sku": "SKU-M",
+                "attributes": {
+                    "location": "Europe (Zurich)",
+                    "regionCode": "eu-central-2",
+                    "usagetype": "EUC2-MP:EUC2_InputTokenCount_Regional-Units",
+                    "servicename": "Claude Sonnet 4.5 (Amazon Bedrock Edition)",
+                },
+            }
+        },
+        "terms": {
+            "OnDemand": {
+                "SKU-M": {
+                    "SKU-M.T": {
+                        "effectiveDate": "2026-09-01T00:00:00Z",
+                        "priceDimensions": {
+                            "SKU-M.T.R": {
+                                "description": (
+                                    "AWS Marketplace software usage|eu-central-2|"
+                                    "Million Input Tokens Regional"
+                                ),
+                                "unit": "1M tokens",
+                                "pricePerUnit": {"USD": "3.3000000000"},
+                            }
+                        },
+                    }
+                }
+            }
+        },
+    }
+)
+
+
+def bedrock_adapter():
+    return AWSBedrockAdapter(
+        MappingClient(
+            {
+                BEDROCK_MODELS_URL: BEDROCK_FIRST_PARTY_JSON,
+                BEDROCK_MARKETPLACE_URL: BEDROCK_MARKETPLACE_JSON,
+            }
+        )
+    )
+
+
+class AWSBedrockAdapterTests(unittest.TestCase):
+    @staticmethod
+    def standard_offer(model="claude-3-haiku", region="us-east-1"):
+        record = bedrock_adapter().query(model)[0]
+        return next(
+            offer
+            for offer in record["offers"]
+            if is_standard_offer(offer)
+            and offer["conditions"]["region_code"] == region
+        )
+
+    def test_both_offer_files_are_read_once(self):
+        client = MappingClient(
+            {
+                BEDROCK_MODELS_URL: BEDROCK_FIRST_PARTY_JSON,
+                BEDROCK_MARKETPLACE_URL: BEDROCK_MARKETPLACE_JSON,
+            }
+        )
+        models = AWSBedrockAdapter(client).list_models()
+        self.assertEqual(client.requests, [BEDROCK_MODELS_URL, BEDROCK_MARKETPLACE_URL])
+        self.assertEqual(models, ["claude-3-haiku", "claude-sonnet-4.5"])
+        self.assertEqual(bedrock_adapter().list_models(), models)
+
+    def test_a_rate_per_thousand_tokens_is_restated_per_million(self):
+        inputs = [
+            price
+            for price in self.standard_offer()["prices"]
+            if price["label"].startswith("Input tokens")
+        ]
+        self.assertEqual([price["amount"] for price in inputs], ["0.25"])
+        self.assertEqual(inputs[0]["unit"], "USD_per_million_tokens")
+
+    def test_a_rate_already_per_million_tokens_is_left_as_published(self):
+        offer = self.standard_offer()
+        output = next(price for price in offer["prices"] if price["type"] == "output")
+        self.assertEqual(output["amount"], "1.25")
+        self.assertEqual(output["unit"], "USD_per_million_tokens")
+
+    def test_the_same_rate_under_two_skus_is_stated_once(self):
+        inputs = [
+            price
+            for price in self.standard_offer()["prices"]
+            if price["label"].startswith("Input tokens")
+        ]
+        self.assertEqual(len(inputs), 1)
+
+    def test_each_region_is_priced_as_its_own_offer(self):
+        record = bedrock_adapter().query("claude-3-haiku")[0]
+        standard = {
+            offer["conditions"]["region_code"]: offer["name"]
+            for offer in record["offers"]
+            if is_standard_offer(offer)
+        }
+        self.assertEqual(
+            standard,
+            {"us-east-1": "US East (N. Virginia)", "us-west-2": "US West (Oregon)"},
+        )
+        oregon = next(
+            offer
+            for offer in record["offers"]
+            if offer["conditions"]["region_code"] == "us-west-2"
+        )
+        self.assertEqual(oregon["prices"][0]["amount"], "0.3")
+
+    def test_a_batch_rate_is_a_tier_beside_the_standard_one(self):
+        record = bedrock_adapter().query("claude-3-haiku")[0]
+        batch = next(offer for offer in record["offers"] if offer["name"] == "batch")
+        self.assertEqual(batch["conditions"]["service_tier"], "batch")
+        self.assertFalse(is_standard_offer(batch))
+
+    def test_a_product_that_names_no_model_is_not_a_model(self):
+        self.assertEqual(bedrock_adapter().query("amazon-bedrock"), [])
+
+    def test_the_marketplace_suffix_is_not_part_of_the_model_name(self):
+        record = bedrock_adapter().query("claude-sonnet-4.5")[0]
+        self.assertEqual(record["display_name"], "Claude Sonnet 4.5")
+        self.assertEqual(record["offers"][0]["name"], "Europe (Zurich)")
+        self.assertEqual(record["offers"][0]["prices"][0]["amount"], "3.3")
+
+    def test_a_price_list_that_is_not_json_is_a_source_error(self):
+        with self.assertRaises(SourceError):
+            AWSBedrockAdapter(
+                MappingClient(
+                    {
+                        BEDROCK_MODELS_URL: "<html>",
+                        BEDROCK_MARKETPLACE_URL: BEDROCK_MARKETPLACE_JSON,
+                    }
+                )
+            ).list_models()
+
+
+GOOGLE_CLOUD_HTML = """
+<html><body>
+<h1>Google models</h1>
+<h2>Gemini 3</h2>
+<div role="tablist">
+  <button role="tab" id="tab-a-g0-t0" track-metadata-eventdetail="Standard Model">Standard Model</button>
+  <button role="tab" id="tab-a-g0-t1" track-metadata-eventdetail="Priority">Priority</button>
+</div>
+<div role="tabpanel" aria-labelledby="tab-a-g0-t0">
+  <table>
+    <thead><tr>
+      <th><div><p>Model</p></div></th>
+      <th><div><p>Type</p></div></th>
+      <th><div><p>Region</p></div></th>
+      <th><div><p>Price (/1M tokens)</p><p>&lt;= 200K input tokens</p></div></th>
+      <th><div><p>Price (/1M tokens)</p><p>&gt; 200K input tokens</p></div></th>
+    </tr></thead>
+    <tbody>
+      <tr><td><p>Gemini 2.5 Pro</p></td><td><p>Input (text, image, video, audio)</p></td>
+        <td><p>Global</p></td><td>$1.25</td><td>$2.50</td></tr>
+      <tr><td></td><td><p>Text output (response and reasoning)</p></td>
+        <td><p>Global</p></td><td>$10.00</td><td>$15.00</td></tr>
+      <tr><td><p>Gemini 2.5 Pro</p><p>Computer Use-Preview</p></td>
+        <td><p>Input (text, image, video, audio)</p></td>
+        <td><p>Global</p></td><td>$1.25</td><td>$2.50</td></tr>
+    </tbody>
+  </table>
+</div>
+<div role="tabpanel" aria-labelledby="tab-a-g0-t1">
+  <table>
+    <thead><tr>
+      <th><div><p>Model</p></div></th>
+      <th><div><p>Type</p></div></th>
+      <th><div><p>Region</p></div></th>
+      <th><div><p>Price (/1M tokens)</p><p>&lt;= 200K input tokens with Priority</p></div></th>
+    </tr></thead>
+    <tbody>
+      <tr><td><p>Gemini 2.5 Pro</p></td><td><p>Input (text, image, video, audio)</p></td>
+        <td><p>Global</p></td><td>$2.25</td></tr>
+    </tbody>
+  </table>
+</div>
+<h2>Other Google models</h2>
+<h3>Imagen</h3>
+<table>
+  <thead><tr><th><p>Model</p></th><th><p>Feature</p></th><th><p>Input</p></th>
+    <th><p>Output</p></th><th><p>Price / 1 count (USD)</p></th></tr></thead>
+  <tbody><tr><td><p>Imagen 4</p></td><td><p>Image generation</p></td>
+    <td><p>Text prompt</p></td><td><p>Image</p></td><td>$0.04</td></tr></tbody>
+</table>
+<h3>Context Cache Storage price for Explicit Caching</h3>
+<div role="tablist">
+  <button role="tab" id="tab-b-g0-t0" track-metadata-eventdetail="Token-based pricing">Token-based pricing</button>
+</div>
+<div role="tabpanel" aria-labelledby="tab-b-g0-t0">
+  <table>
+    <thead><tr><th><p>Model</p></th>
+      <th><p>Price Tok/hr&lt;= 200K input tokens</p></th></tr></thead>
+    <tbody><tr><td><p>Gemini 2.5 Pro</p></td><td>$0.0000045</td></tr></tbody>
+  </table>
+</div>
+<h3>MultiModal Embeddings</h3>
+<table>
+  <thead><tr><th><p>Open Source Model</p></th><th><p>Type</p></th>
+    <th><p>Request Type</p></th><th><p>Price /1M tokens (USD)</p></th></tr></thead>
+  <tbody><tr><td><p>multilingual-e5-small</p></td><td><p>Input</p></td>
+    <td><p>Online requests</p></td><td>$0.015</td></tr></tbody>
+</table>
+<h2>Anthropic's Claude models</h2>
+<div role="tablist">
+  <button role="tab" id="tab-c-g1-t0" track-metadata-eventdetail="Global">Global</button>
+  <button role="tab" id="tab-c-g1-t1" track-metadata-eventdetail="europe-west1">europe-west1</button>
+</div>
+<div role="tabpanel" aria-labelledby="tab-c-g1-t0">
+  <table>
+    <thead><tr><th><p>Model</p></th><th><p>Type</p></th>
+      <th><p>Price (/1M tokens) =&lt; 200K input tokens</p></th></tr></thead>
+    <tbody><tr><td><p>Claude Sonnet 5</p></td><td><p>Input</p></td><td>$2.00</td></tr></tbody>
+  </table>
+</div>
+<div role="tabpanel" aria-labelledby="tab-c-g1-t1">
+  <table>
+    <thead><tr><th><p>Model</p></th><th><p>Type</p></th>
+      <th><p>Price (/1M tokens) =&lt; 200K input tokens</p></th></tr></thead>
+    <tbody><tr><td><p>Claude Sonnet 5</p></td><td><p>Input</p></td><td>$2.20</td></tr></tbody>
+  </table>
+</div>
+</body></html>
+"""
+
+
+def google_cloud_adapter():
+    return GoogleCloudAdapter(MappingClient({GOOGLE_CLOUD_PRICING_URL: GOOGLE_CLOUD_HTML}))
+
+
+class GoogleCloudAdapterTests(unittest.TestCase):
+    def test_the_pricing_page_is_read_once(self):
+        client = MappingClient({GOOGLE_CLOUD_PRICING_URL: GOOGLE_CLOUD_HTML})
+        GoogleCloudAdapter(client).catalog_records()
+        self.assertEqual(client.requests, [GOOGLE_CLOUD_PRICING_URL])
+
+    def test_a_tab_panel_becomes_the_tier_and_is_not_left_in_the_section(self):
+        document = google_cloud_document(GOOGLE_CLOUD_HTML)
+        self.assertIn("pricing tab:", document)
+        record = google_cloud_adapter().query("gemini-2.5-pro")[0]
+        self.assertEqual(
+            record["offers"][0]["conditions"]["service_tier"], "standard"
+        )
+        self.assertNotIn("source_section", record["offers"][0]["conditions"])
+
+    def test_a_region_tab_is_a_region_rather_than_a_tier(self):
+        record = google_cloud_adapter().query("claude-sonnet-5")[0]
+        self.assertEqual(
+            [offer["conditions"].get("Region") for offer in record["offers"]],
+            ["Global", "europe-west1"],
+        )
+        self.assertEqual(
+            [offer["name"] for offer in record["offers"]],
+            ["pay_as_you_go", "pay_as_you_go"],
+        )
+        self.assertEqual(record["offers"][1]["prices"][0]["amount"], "2.20")
+
+    def test_priority_is_a_tier_beside_the_standard_rate(self):
+        record = google_cloud_adapter().query("gemini-2.5-pro")[0]
+        priority = next(
+            offer for offer in record["offers"] if offer["name"] == "priority"
+        )
+        self.assertEqual(priority["prices"][0]["amount"], "2.25")
+        self.assertFalse(is_standard_offer(priority))
+
+    def test_a_second_line_in_a_model_cell_stays_a_note(self):
+        record = google_cloud_adapter().query("gemini-2.5-pro")[0]
+        notes = {
+            offer["conditions"].get("model_note") for offer in record["offers"]
+        }
+        self.assertIn("Computer Use-Preview", notes)
+
+    def test_a_token_rate_column_is_read_per_million_tokens(self):
+        offer = google_cloud_adapter().query("gemini-2.5-pro")[0]["offers"][0]
+        self.assertEqual(offer["prices"][0]["amount"], "1.25")
+        self.assertEqual(offer["prices"][0]["unit"], "USD_per_million_tokens")
+        self.assertEqual(offer["prices"][1]["amount"], "2.50")
+
+    def test_a_storage_rate_per_token_hour_is_restated_per_million(self):
+        record = google_cloud_adapter().query("gemini-2.5-pro")
+        storage = next(
+            price
+            for offer in record[0]["offers"]
+            for price in offer["prices"]
+            if price["unit"] == "USD_per_million_tokens_per_hour"
+        )
+        self.assertEqual(storage["amount"], "4.5")
+        self.assertEqual(storage["type"], "cache_storage")
+
+    def test_a_modality_column_is_a_condition_rather_than_a_price(self):
+        offer = google_cloud_adapter().query("imagen-4")[0]["offers"][0]
+        self.assertEqual(offer["conditions"]["Input"], "Text prompt")
+        self.assertEqual(offer["conditions"]["Output"], "Image")
+        self.assertEqual([price["type"] for price in offer["prices"]], ["price"])
+        self.assertEqual(offer["prices"][0]["amount"], "0.04")
+
+    def test_a_column_stating_no_unit_keeps_the_amount_as_published(self):
+        offer = google_cloud_adapter().query("imagen-4")[0]["offers"][0]
+        self.assertEqual(offer["prices"][0]["unit"], "provider_defined")
+
+    def test_the_open_source_table_is_read_as_models(self):
+        record = google_cloud_adapter().query("multilingual-e5-small")[0]
+        self.assertEqual(record["offers"][0]["prices"][0]["amount"], "0.015")
+        self.assertEqual(record["offers"][0]["prices"][0]["unit"], "USD_per_million_tokens")
+
+    def test_a_page_with_no_pricing_table_is_a_source_error(self):
+        with self.assertRaises(SourceError):
+            GoogleCloudAdapter(
+                MappingClient({GOOGLE_CLOUD_PRICING_URL: "<html></html>"})
+            ).list_models()

@@ -24,6 +24,14 @@ from ..providers.aliyun import (
     qianwen_catalogue,
     qianwen_model_metadata,
 )
+from ..providers.openrouter import (
+    OPENROUTER_MODELS_URL,
+    OPENROUTER_SITE_URL,
+    openrouter_entries,
+    openrouter_model_id,
+    openrouter_pricing_state,
+    openrouter_video_entries,
+)
 from ..text import CELL_BREAK_RE, clean_text
 from .core import (
     ACTIVE,
@@ -54,6 +62,12 @@ KIMI_MODELS_URL = "https://platform.kimi.com/docs/models.md"
 MINIMAX_MODELS_URL = "https://platform.minimax.cn/docs/guides/models-intro.md"
 ZHIPU_MODELS_URL = "https://docs.bigmodel.cn/cn/guide/start/model-overview.md"
 XIAOMI_MODELS_URL = "https://mimo.mi.com/docs/zh-CN/quick-start/summary/model"
+KLING_VIDEO_CAPABILITY_URL = (
+    "https://klingai.com/document-api/guides/capability-map/video.md"
+)
+KLING_IMAGE_CAPABILITY_URL = (
+    "https://klingai.com/document-api/guides/capability-map/image.md"
+)
 XIAOMI_MODEL_ID = re.compile(r"(?<![\w.-])[A-Za-z][A-Za-z0-9]*(?:[._-][A-Za-z0-9]+)+(?![\w.-])")
 VOLCENGINE_MODELS_URL = "https://console.volcengine.com/ark/region:cn-beijing/model"
 
@@ -277,42 +291,64 @@ class XAIDescriptionSource(MarkdownDetailSource):
 
 
 class MarkdownTableDescriptionSource(DescriptionSource):
-    """Read model/summary tables from one official Markdown overview."""
+    """Read model/summary tables from one official Markdown overview.
+
+    A vendor can publish its capability map across several pages, one per modality,
+    and can price its own capabilities beside its models (Kling's 扩图, 数字人). Both
+    are declared here rather than parsed from a name: which pages hold the
+    catalogue, and which columns of a row state what a model can do.
+    """
+
+    # Further pages the same catalogue continues on, when a vendor splits it.
+    source_urls: tuple[str, ...] = ()
+    # The column a source names the model in, by header wording.
+    model_headers: tuple[str, ...] = ("模型", "model")
+    # The columns whose values are what the model can do, by header wording. A row
+    # carries figures the price and specification layers already report, so only the
+    # columns a source names become capabilities.
+    capability_headers: tuple[str, ...] = ()
 
     def __init__(self, client: Any) -> None:
         super().__init__(client)
         self._entries: list[dict[str, Any]] | None = None
 
+    @property
+    def documents(self) -> tuple[str, ...]:
+        return self.source_urls or (self.source_url,)
+
     def _catalogue(self) -> list[dict[str, Any]]:
         if self._entries is not None:
             return self._entries
-        text = self.client.get_text(self.source_url)
+        entries: list[dict[str, Any]] = []
+        for url in self.documents:
+            entries.extend(self._document_entries(self.client.get_text(url), url))
+        if not entries:
+            raise SourceError("official model-description table was not found")
+        self._entries = entries
+        return entries
+
+    def _document_entries(
+        self, text: str, source_url: str
+    ) -> list[dict[str, Any]]:
+        """Every model one document's tables describe."""
         entries: list[dict[str, Any]] = []
         for headings, table in markdown_tables(text):
             if len(table) < 2 or len(table[0]) < 2:
                 continue
             headers = [markdown_text(cell).lower() for cell in table[0]]
-            model_index = next(
-                (
-                    index
-                    for index, header in enumerate(headers)
-                    if any(word in header for word in ("模型", "model"))
-                ),
-                None,
-            )
-            summary_index = next(
-                (
-                    index
-                    for index, header in enumerate(headers)
-                    if any(
-                        word in header
-                        for word in ("描述", "介绍", "特点", "description")
-                    )
-                ),
-                None,
+            model_index = self._column(headers, self.model_headers)
+            summary_index = self._column(
+                headers, ("描述", "介绍", "特点", "description")
             )
             if model_index is None or summary_index is None:
                 continue
+            capabilities = [
+                index
+                for index, header in enumerate(headers)
+                if index not in (model_index, summary_index)
+                and self.capability_headers
+                and any(word in header for word in self.capability_headers)
+            ]
             for row in table[1:]:
                 row += [""] * (len(headers) - len(row))
                 name, link = model_link(row[model_index])
@@ -326,18 +362,28 @@ class MarkdownTableDescriptionSource(DescriptionSource):
                         "display_name": name,
                         "summary": summary,
                         "category": headings[-1] if headings else "",
+                        "capabilities": [
+                            f"{markdown_text(table[0][index])}："
+                            f"{markdown_text(row[index])}"
+                            for index in capabilities
+                            if markdown_text(row[index])
+                        ],
                         "lifecycle": ACTIVE if lifecycle == UNKNOWN else lifecycle,
-                        "url": (
-                            urljoin(self.source_url, link)
-                            if link
-                            else self.source_url
-                        ),
+                        "url": urljoin(source_url, link) if link else source_url,
                     }
                 )
-        if not entries:
-            raise SourceError("official model-description table was not found")
-        self._entries = entries
         return entries
+
+    @staticmethod
+    def _column(headers: list[str], words: tuple[str, ...]) -> int | None:
+        return next(
+            (
+                index
+                for index, header in enumerate(headers)
+                if any(word in header for word in words)
+            ),
+            None,
+        )
 
     def describe(
         self,
@@ -364,7 +410,7 @@ class MarkdownTableDescriptionSource(DescriptionSource):
             entry["url"],
             self.source_kind,
             source_name=self.source_name,
-            capabilities=[entry["category"]] if entry["category"] else [],
+            capabilities=entry["capabilities"] or ([entry["category"]] if entry["category"] else []),
             lifecycle=entry["lifecycle"],
         )
 
@@ -388,6 +434,25 @@ class ZhipuDescriptionSource(MarkdownTableDescriptionSource):
     source_name = "智谱 BigModel"
     source_url = ZHIPU_MODELS_URL
     source_kind = "official_markdown"
+
+
+class KlingDescriptionSource(MarkdownTableDescriptionSource):
+    """Kling's capability maps: what each model and each capability does.
+
+    Kling publishes no per-model page. What it publishes is one map per modality —
+    every model with the vendor's own words for it, what it takes in, how long a
+    clip it makes and at what resolution — and the same page's capability table
+    describes the platform's own chargeable capabilities (扩图, 数字人), which the
+    price page prices under exactly those names.
+    """
+
+    source_id = "kling"
+    source_name = "快手可灵"
+    source_url = KLING_VIDEO_CAPABILITY_URL
+    source_urls = (KLING_VIDEO_CAPABILITY_URL, KLING_IMAGE_CAPABILITY_URL)
+    source_kind = "official_markdown"
+    model_headers = ("模型", "model", "capability")
+    capability_headers = ("input", "generation range", "resolution", "输入", "时长", "分辨率")
 
 
 class XiaomiDescriptionSource(DescriptionSource):
@@ -623,6 +688,169 @@ class VolcengineDescriptionSource(DescriptionSource):
         )
 
 
+# What an OpenRouter entry states about a model, in the words the report is
+# written in. The API publishes modality and parameter names as identifiers, and
+# these are the labels a reader is given for them; a value with no label is
+# printed as the API spelled it rather than dropped.
+OPENROUTER_MODALITY_LABELS = {
+    "text": "文本",
+    "image": "图像",
+    "file": "文件",
+    "audio": "音频",
+    "video": "视频",
+    "speech": "语音合成",
+    "transcription": "语音转写",
+    "embeddings": "向量",
+    "rerank": "重排",
+    "decisions": "决策",
+}
+OPENROUTER_PARAMETER_LABELS = (
+    ("tools", "工具调用"),
+    ("structured_outputs", "结构化输出"),
+    ("reasoning", "推理"),
+    ("response_format", "响应格式"),
+)
+# Said of an entry that publishes no rate at all, in place of the capabilities a
+# priced model would list. What a reader must not take from the price block is a
+# charge of nothing that was never stated: a free variant states one, a model
+# still under test does not.
+OPENROUTER_NO_CHARGE_LABELS = {
+    "free": "官方公布价格为 0（免费档位或测试期），未作为价格记录",
+    "varies": "价格随路由到的模型而定，官方未公布固定价格",
+}
+
+
+def openrouter_modal_text(modalities: Any, direction: str) -> str:
+    """One direction's modalities as a person reads them, or ``""``."""
+    values = [str(value) for value in modalities or []]
+    if not values:
+        return ""
+    labels = "、".join(
+        OPENROUTER_MODALITY_LABELS.get(value, value) for value in values
+    )
+    return f"{direction}：{labels}"
+
+
+def openrouter_capabilities(
+    entry: dict[str, Any], *, billed_elsewhere: bool = False
+) -> list[str]:
+    """What an entry states about a model, including that it charges nothing."""
+    architecture = entry.get("architecture") or {}
+    supported = set(entry.get("supported_parameters") or [])
+    stated = [
+        openrouter_modal_text(architecture.get("input_modalities"), "输入"),
+        openrouter_modal_text(architecture.get("output_modalities"), "输出"),
+    ]
+    state = openrouter_pricing_state(entry, billed_elsewhere=billed_elsewhere)
+    return [
+        *(value for value in stated if value),
+        *(
+            label
+            for parameter, label in OPENROUTER_PARAMETER_LABELS
+            if parameter in supported
+        ),
+        *([OPENROUTER_NO_CHARGE_LABELS[state]] if state else []),
+    ]
+
+
+def openrouter_specifications(entry: dict[str, Any]) -> dict[str, str]:
+    """The limits and identifiers an entry publishes beside its description.
+
+    A limit the API leaves at zero states nothing — it is what a media model that
+    has no token window publishes — so it is left out rather than reported as a
+    window of no tokens.
+    """
+    top_provider = entry.get("top_provider") or {}
+    specifications = {
+        "context_window": entry.get("context_length"),
+        "max_output_tokens": top_provider.get("max_completion_tokens"),
+        "tokenizer": (entry.get("architecture") or {}).get("tokenizer"),
+        "knowledge_cutoff": entry.get("knowledge_cutoff"),
+    }
+    stated = {
+        key: value for key, value in specifications.items() if value not in (None, "", 0)
+    }
+    if entry.get("expiration_date"):
+        stated["sunset_note"] = f"{entry['expiration_date']} 停止提供"
+    return stated
+
+
+class OpenRouterDescriptionSource(DescriptionSource):
+    """OpenRouter's own introduction for the models it aggregates.
+
+    The catalogue carries a paragraph for every entry it lists, which is what a
+    reader needs to judge a price: what the model takes in and puts out, and — for
+    an entry OpenRouter charges nothing for — that there is no price to judge. That
+    last fact lives here rather than on the price record because it is a statement
+    about the model's listing: a rate of zero and a model with no rate at all are
+    the same number and two different things.
+    """
+
+    source_id = "openrouter"
+    source_name = "OpenRouter"
+    source_url = OPENROUTER_MODELS_URL
+    source_kind = "anonymous_api"
+
+    def __init__(self, client: Any) -> None:
+        super().__init__(client)
+        self._catalogue: dict[str, dict[str, Any]] | None = None
+        self._videos: dict[str, dict[str, Any]] | None = None
+
+    def _entries(self) -> dict[str, dict[str, Any]]:
+        if self._catalogue is None:
+            self._catalogue = {
+                normalize_model(str(entry["id"])): entry
+                for entry in openrouter_entries(self.client)
+            }
+        return self._catalogue
+
+    def _billed_elsewhere(self, entry: dict[str, Any]) -> bool:
+        """Whether the vendor prices this entry in its other document.
+
+        Read only for an entry whose own rates are all zero, so a model that states
+        a price never pays for a second document — and a model the video API prices
+        per second is not described as one OpenRouter charges nothing for.
+        """
+        if openrouter_pricing_state(entry) is None:
+            return False
+        if self._videos is None:
+            self._videos = openrouter_video_entries(self.client)
+        return bool(
+            (self._videos.get(openrouter_model_id(str(entry["id"]))) or {}).get(
+                "pricing_skus"
+            )
+        )
+
+    def describe(
+        self,
+        model_id: str,
+        display_name: str = "",
+        *,
+        record: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        entries = self._entries()
+        entry = entries.get(normalize_model(model_id)) or entries.get(
+            normalize_model(display_name)
+        )
+        if not entry or not clean_text(entry.get("description") or ""):
+            return None
+        return description_record(
+            model_id,
+            display_name or str(entry.get("name") or model_id),
+            str(entry["description"]),
+            f"{OPENROUTER_SITE_URL}/{entry['id']}",
+            self.source_kind,
+            source_name=self.source_name,
+            capabilities=openrouter_capabilities(
+                entry, billed_elsewhere=self._billed_elsewhere(entry)
+            ),
+            lifecycle=(
+                LEGACY if entry.get("expiration_date") else ACTIVE
+            ),
+            specifications=openrouter_specifications(entry),
+        )
+
+
 class TencentMirrorDescriptionSource(DescriptionSource):
     """Read the explicitly maintained mirror of TokenHub's authenticated list."""
 
@@ -690,4 +918,6 @@ DESCRIPTION_SOURCE_CLASSES = (
     XiaomiDescriptionSource,
     AliyunDescriptionSource,
     VolcengineDescriptionSource,
+    OpenRouterDescriptionSource,
+    KlingDescriptionSource,
 )

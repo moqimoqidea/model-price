@@ -28,10 +28,20 @@ Each result contains:
 - `source.url`, `source.kind`, and `source.retrieved_at`
 - optional `source_updated_at`, when the official price page or the official update
   log publishes a date for that catalogue
+- optional `pricing_state`, when the vendor lists the model without any rate to bill
+  (`free` — published as zero, whether as a free variant or while under test — or
+  `varies`, a router priced by whatever it routes to). The model then has no
+  `offers` at all, and the state is what the price line states instead of a price.
+  A vendor that actually charges nothing publishes a price of `"0"` instead; the
+  two are different facts and are never written the same way
 
 Price fields are `type`, `label`, `amount`, `unit`, and optional `display`, `list_amount`, `discount`, or `effective_until`.
 
-`unit` is a code built as `<currency>_per_<measure>`, so a new currency or a new measure costs one entry in the vocabulary rather than one entry per combination. The measures read today are `million_tokens`, `million_tokens_per_hour` (cache storage), `thousand_tokens`, `10k_tokens`, `million_characters`, `10k_characters`, `thousand_characters`, `character`, `image`, `frame`, `second`, `minute`, `hour`, `request`, `thousand_requests`, `10k_requests`, `video`, `item`, `song`, and `page` — `CNY_per_image` is 元/张, `USD_per_second` is 美元/秒, `CNY_per_million_tokens_per_hour` is cache storage. A vendor that bills in its own credit keeps that credit as the unit (`积分/次`): the amount is a price, and converting it would print a rate the page never published. A price whose vendor stated no unit at all carries `provider_defined`, which is rendered as the amount alone.
+`unit` is a code built as `<currency>_per_<measure>`, so a new currency or a new measure costs one entry in the vocabulary rather than one entry per combination. The measures read today are `million_tokens`, `million_tokens_per_hour` (cache storage), `thousand_tokens`, `10k_tokens`, `million_characters`, `10k_characters`, `thousand_characters`, `character`, `image`, `frame`, `second`, `minute`, `hour`, `request`, `thousand_requests`, `10k_requests`, `video`, `item`, `song`, `page`,
+`million_video_tokens` (a vendor that bills video by the token, which is not a
+language token rate), and `megapixel_second` (a video upscaler, billed by the area
+it processes over the time it runs) — `CNY_per_image` is 元/张, `USD_per_second` is
+美元/秒, `CNY_per_million_tokens_per_hour` is cache storage. A vendor that bills in its own credit keeps that credit as the unit (`积分/次`): the amount is a price, and converting it would print a rate the page never published. A price whose vendor stated no unit at all carries `provider_defined`, which is rendered as the amount alone.
 
 Two things a vendor publishes beside an amount decide which of several prices one cell holds. A cell that prices several tiers states each tier's scope in the cell itself, and that scope is `conditions.price_scope` on the offer the amount belongs to — one offer per scope, because merging them would quote one tier's rate for another. A cell that lists several model IDs prices each of them, and each becomes a model of its own rather than a note on the first.
 

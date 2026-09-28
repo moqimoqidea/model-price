@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable
 
 from ..core import HttpClient, PriceSource, now_iso
 from ..errors import SourceError
@@ -82,6 +82,16 @@ class TabularPricingAdapter(PriceSource):
         """Return the document to parse; override when it is fetched indirectly."""
         return self.document(self.source_url)
 
+    def source_documents(self) -> tuple[tuple[str, str], ...]:
+        """Return every document this vendor prices from, each with its own page.
+
+        Most vendors publish one price page. A vendor that splits its catalogue
+        across two (Kling prices images and video separately) declares both here,
+        and a row keeps the page it was read from so a record points at the page
+        that actually published its rate.
+        """
+        return ((self.source_url, self.document_text()),)
+
     def price_kind(self, header: str) -> str | None:
         """Classify a price column, or return ``None`` when it is a condition."""
         return header_price_kind(header)
@@ -98,15 +108,6 @@ class TabularPricingAdapter(PriceSource):
         return price_unit_code(
             cell_unit, header, currency=self.currency, default=self.default_unit
         )
-
-    def publishes_money(self, header: str, cells: Sequence[str]) -> bool:
-        """Whether a column's cells publish amounts this adapter can read.
-
-        A header that names the quantity billed rather than the charge ("输入音频
-        时长") still heads a price column when its cells are money, and a header
-        naming a unit whose cells only hold durations heads a condition.
-        """
-        return any(self.cell_amount(cell, header) is not None for cell in cells)
 
     def offer_name(self, headings: list[str]) -> str:
         heading = headings[-1] if headings else ""
@@ -236,7 +237,17 @@ class TabularPricingAdapter(PriceSource):
         if self._parsed_rows is not None:
             return self._parsed_rows
         rows: list[dict[str, Any]] = []
-        for headings, table in headed_document_tables(self.document_text()):
+        for source_url, text in self.source_documents():
+            rows.extend(self._document_rows(text, source_url))
+        if not rows:
+            raise SourceError("official pricing table was not found")
+        self._parsed_rows = rows
+        return rows
+
+    def _document_rows(self, text: str, source_url: str) -> list[dict[str, Any]]:
+        """Read every priced row one document publishes."""
+        rows: list[dict[str, Any]] = []
+        for headings, table in headed_document_tables(text):
             if len(table) < 2:
                 continue
             raw_headers = table[0]
@@ -315,11 +326,9 @@ class TabularPricingAdapter(PriceSource):
                                 "offer_name": offer_name,
                                 "conditions": scoped,
                                 "prices": offer["prices"],
+                                "source_url": source_url,
                             }
                         )
-        if not rows:
-            raise SourceError("official pricing table was not found")
-        self._parsed_rows = rows
         return rows
 
     def list_models(self, prefix: str = "") -> list[str]:
@@ -356,7 +365,7 @@ class TabularPricingAdapter(PriceSource):
                 for row in rows
                 if row["prices"]
             ],
-            self.source_url,
+            first.get("source_url") or self.source_url,
             self.source_kind,
             now_iso(),
             currency=self.currency,

@@ -18,6 +18,10 @@ from model_price.descriptions.core import (
 from model_price.descriptions.resolver import DescriptionResolver
 from model_price.descriptions.sources import (
     AliyunDescriptionSource,
+    KLING_IMAGE_CAPABILITY_URL,
+    KLING_VIDEO_CAPABILITY_URL,
+    KlingDescriptionSource,
+    OpenRouterDescriptionSource,
     ANTHROPIC_MODELS_MARKDOWN_URL,
     AnthropicDescriptionSource,
     DeepSeekDescriptionSource,
@@ -35,6 +39,10 @@ from model_price.descriptions.tencent_mirror import (
 from model_price.deepseek_updates import DEEPSEEK_UPDATES_URL
 from model_price.errors import SourceError
 from model_price.pricing import make_record, price_item
+from model_price.providers.openrouter import (
+    OPENROUTER_MODELS_URL,
+    OPENROUTER_VIDEOS_URL,
+)
 from model_price.providers.aliyun import (
     ALIYUN_API_URL,
     qianwen_model_metadata,
@@ -812,3 +820,158 @@ class DeltaDescriptionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+OPENROUTER_CATALOGUE = json.dumps(
+    {
+        "data": [
+            {
+                "id": "qwen/qwen3.8-27b:free",
+                "name": "Qwen: Qwen3.8 27B (free)",
+                "description": "An open-weight vision-language model from Qwen.",
+                "context_length": 262144,
+                "architecture": {
+                    "input_modalities": ["text", "image"],
+                    "output_modalities": ["text"],
+                    "tokenizer": "Qwen",
+                },
+                "pricing": {"prompt": "0", "completion": "0"},
+                "supported_parameters": ["tools"],
+                "top_provider": {"max_completion_tokens": 65536},
+            },
+            {
+                "id": "bytedance/seedance-2.5",
+                "name": "ByteDance: Seedance 2.5",
+                "description": "A video generation model from ByteDance.",
+                "architecture": {
+                    "input_modalities": ["text"],
+                    "output_modalities": ["video"],
+                },
+                "pricing": {"prompt": "0", "completion": "0"},
+            },
+            {
+                "id": "bytedance-seed/seed-1.6",
+                "name": "ByteDance Seed: Seed 1.6",
+                "description": "A general model.",
+                "expiration_date": "2026-11-11",
+                "architecture": {"output_modalities": ["text"]},
+                "pricing": {"prompt": "0.0000001", "completion": "0.0000005"},
+            },
+        ]
+    }
+)
+
+OPENROUTER_VIDEOS = json.dumps(
+    {
+        "data": [
+            {
+                "id": "bytedance/seedance-2.5",
+                "pricing_skus": {"duration_seconds_720p": "0.1"},
+            }
+        ]
+    }
+)
+
+KLING_CAPABILITY_VIDEO = """# 视频能力地图
+
+## Models
+
+| Model | Description | Input | Generation Range | Resolution |
+| --- | --- | --- | --- | --- |
+| Kling 3.0 | 音画同步升级，支持多镜头叙事 | 文本、图片、视频 | 3~15s | 720P、1080P、4K |
+
+## Global Capabilities
+
+| Capability | Value | Description |
+| --- | --- | --- |
+| 对口型 | 不区分模型版本 | 可结合文案或音频，驱动视频中角色的口型 |
+"""
+
+KLING_CAPABILITY_IMAGE = """# 图片能力地图
+
+## Models
+
+| Model | Description | Input | Generation Range | Resolution |
+| --- | --- | --- | --- | --- |
+| Kling Image 3.0 | 强化一致性，全面效果升级 | 文本、图片 | 16:9、1:1 | 1K, 2K |
+"""
+
+
+class OpenRouterDescriptionTests(unittest.TestCase):
+    def source(self):
+        return OpenRouterDescriptionSource(
+            MappingClient(
+                {
+                    OPENROUTER_MODELS_URL: OPENROUTER_CATALOGUE,
+                    OPENROUTER_VIDEOS_URL: OPENROUTER_VIDEOS,
+                }
+            )
+        )
+
+    def test_a_free_entry_is_described_as_charging_nothing(self):
+        description = self.source().describe("qwen/qwen3.8-27b:free")
+        self.assertEqual(
+            description["summary"], "An open-weight vision-language model from Qwen."
+        )
+        self.assertEqual(description["capabilities"][0], "输入：文本、图像")
+        self.assertIn(
+            "官方公布价格为 0（免费档位或测试期），未作为价格记录",
+            description["capabilities"],
+        )
+        self.assertEqual(description["specifications"]["context_window"], 262144)
+
+    def test_a_model_the_video_document_prices_is_not_described_as_free(self):
+        description = self.source().describe("bytedance/seedance-2.5")
+        self.assertNotIn(
+            "官方公布价格为 0（免费档位或测试期），未作为价格记录",
+            description["capabilities"],
+        )
+        self.assertEqual(description["capabilities"], ["输入：文本", "输出：视频"])
+
+    def test_a_dated_entry_is_described_as_scheduled_to_end(self):
+        description = self.source().describe("bytedance-seed/seed-1.6")
+        self.assertEqual(description["lifecycle"], "legacy")
+        self.assertEqual(
+            description["specifications"]["sunset_note"], "2026-11-11 停止提供"
+        )
+
+    def test_an_unknown_model_has_no_description(self):
+        self.assertIsNone(self.source().describe("vendor/absent"))
+
+
+class KlingDescriptionTests(unittest.TestCase):
+    def source(self):
+        return KlingDescriptionSource(
+            MappingClient(
+                {
+                    KLING_VIDEO_CAPABILITY_URL: KLING_CAPABILITY_VIDEO,
+                    KLING_IMAGE_CAPABILITY_URL: KLING_CAPABILITY_IMAGE,
+                }
+            )
+        )
+
+    def test_a_model_is_described_from_the_page_its_modality_is_on(self):
+        description = self.source().describe("kling-3.0")
+        self.assertEqual(description["summary"], "音画同步升级，支持多镜头叙事")
+        self.assertEqual(
+            description["capabilities"],
+            [
+                "Input：文本、图片、视频",
+                "Generation Range：3~15s",
+                "Resolution：720P、1080P、4K",
+            ],
+        )
+        self.assertEqual(description["source"]["url"], KLING_VIDEO_CAPABILITY_URL)
+        image = self.source().describe("Kling Image 3.0")
+        self.assertEqual(image["source"]["url"], KLING_IMAGE_CAPABILITY_URL)
+
+    def test_a_capability_the_price_page_also_prices_is_described(self):
+        description = self.source().describe("对口型")
+        self.assertEqual(description["summary"], "可结合文案或音频，驱动视频中角色的口型")
+
+    def test_the_range_separator_survives_the_markdown_reduction(self):
+        description = self.source().describe("kling-3.0")
+        self.assertIn("3~15s", " ".join(description["capabilities"]))
+
+    def test_an_unknown_model_has_no_description(self):
+        self.assertIsNone(self.source().describe("kling-9.9"))

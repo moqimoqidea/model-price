@@ -74,6 +74,7 @@ CURRENCY_LABELS = {"CNY": "元", "USD": "美元"}
 UNIT_MEASURE_LABELS = {
     "million_tokens": "百万 tokens",
     "million_tokens_per_hour": "百万 tokens/小时",
+    "million_video_tokens": "百万视频 tokens",
     "thousand_tokens": "千 tokens",
     "10k_tokens": "万 tokens",
     "million_characters": "百万字符",
@@ -82,6 +83,7 @@ UNIT_MEASURE_LABELS = {
     "character": "字符",
     "image": "张",
     "frame": "帧",
+    "megapixel_second": "百万像素秒",
     "second": "秒",
     "minute": "分钟",
     "hour": "小时",
@@ -193,6 +195,14 @@ NO_CHANGE = "—"
 UNKNOWN = "未知"
 UNSTATED = "未说明原因"
 UNPRICED = "价格未知（官方文档未给出本工具可解析的价格）"
+# What a listed model with no rate at all says in place of a price. A vendor that
+# publishes no charge — a model under test, a free catalogue variant, a router
+# priced by whatever it routes to — has not withheld a price, so it must not read
+# as one this tool could not parse.
+PRICING_STATE_LABELS = {
+    "free": "官方未公布可计费价格（价格为 0／免费）",
+    "varies": "官方未公布固定价格（价格随路由到的模型而定）",
+}
 # A charge of nothing, for a vendor that published the zero without a word for it.
 FREE_LABEL = "免费"
 NO_WINDOW = "官方文档未公布具体时段"
@@ -278,6 +288,11 @@ def price_lookup(offer: dict[str, Any], kind: str) -> dict[str, Any] | None:
     return next(
         (item for item in offer.get("prices", []) if item.get("type") == kind), None
     )
+
+
+def pricing_state_text(record: dict[str, Any]) -> str:
+    """Why a listed model shows no price: the vendor's own state, or unknown."""
+    return PRICING_STATE_LABELS.get(record.get("pricing_state"), UNPRICED)
 
 
 def format_price(item: dict[str, Any] | None) -> str:
@@ -441,6 +456,19 @@ def shared_conditions(record: dict[str, Any]) -> dict[str, Any]:
     return common
 
 
+def terms_beyond_name(name: str, conditions: dict[str, Any]) -> dict[str, Any]:
+    """The terms a name does not already state.
+
+    A vendor that files a tier in a condition column also names the offer after it
+    (``batch`` carries ``service_tier=batch``, ``priority`` carries
+    ``service_tier=priority``). The message prints that name as the offer's own
+    heading, so repeating it as a term reads as a stutter rather than as two facts.
+    """
+    return {
+        key: value for key, value in conditions.items() if str(value) != str(name)
+    }
+
+
 def offer_condition_text(offer: dict[str, Any], shared: dict[str, Any]) -> str:
     """Describe one offer by the terms that tell it apart from its siblings.
 
@@ -457,7 +485,7 @@ def offer_condition_text(offer: dict[str, Any], shared: dict[str, Any]) -> str:
     band = conditions.pop("time_band", None)
     head = str(band) if band else str(offer.get("name") or "标准")
     own = {key: value for key, value in conditions.items() if shared.get(key) != value}
-    return condition_text(head, own)
+    return condition_text(head, terms_beyond_name(head, own))
 
 
 def offering_text(name: str, conditions: dict[str, Any]) -> str:
@@ -476,8 +504,7 @@ def offering_text(name: str, conditions: dict[str, Any]) -> str:
     band = conditions.get("time_band")
     if band is not None and name.isascii():
         return str(band)
-    trimmed = {key: value for key, value in conditions.items() if str(value) != name}
-    return condition_text(name, trimmed)
+    return condition_text(name, terms_beyond_name(name, conditions))
 
 
 def description_source_text(description: dict[str, Any]) -> str:
