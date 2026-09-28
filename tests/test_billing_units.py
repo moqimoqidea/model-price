@@ -35,6 +35,7 @@ from model_price.pricing import (
     unit_parts,
     without_discount_terms,
 )
+from model_price.providers.tencent import TencentAdapter
 from model_price.reporting import amount_with_unit, unit_label
 
 
@@ -312,6 +313,22 @@ class CellRateTests(unittest.TestCase):
         )
         rates = cell_rates("¥0.5 /小时", header="输入音频时长", currency="CNY")
         self.assertEqual([(rate.amount, rate.unit_phrase) for rate in rates], [("0.5", "/小时")])
+
+
+class CreditNoteTests(unittest.TestCase):
+    """A credit's value is the vendor's sentence, kept only where it applies."""
+
+    def test_the_sentence_about_a_credit_rides_on_the_offers_that_bill_in_it(self):
+        sentence = "HY 系列 3D 生成模型按照积分计费，1积分对应0.12元。"
+        credit = {"prices": [{"unit": "积分/次"}]}
+        money = {"prices": [{"unit": "CNY_per_second"}]}
+        self.assertEqual(TencentAdapter._credit_note(sentence, credit), sentence)
+        self.assertEqual(TencentAdapter._credit_note(sentence, money), "")
+
+    def test_a_sentence_that_says_nothing_about_a_credit_is_not_kept(self):
+        offer = {"prices": [{"unit": "积分/次"}]}
+        self.assertEqual(TencentAdapter._credit_note("结算周期为日结。", offer), "")
+        self.assertEqual(TencentAdapter._credit_note("", offer), "")
 
 
 if __name__ == "__main__":
