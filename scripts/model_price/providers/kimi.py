@@ -12,7 +12,7 @@ from ..parsing import (
     markdown_doc_tables,
     markdown_json_rows,
     monetary_amount,
-    token_price_kind,
+    price_kind,
 )
 from ..pricing import make_record, price_item, unit_code
 from ..text import clean_text
@@ -97,7 +97,7 @@ class KimiAdapter(PriceSource):
                 price_columns = {
                     index: kind
                     for index, header in enumerate(headers)
-                    if (kind := token_price_kind(header)) is not None
+                    if (kind := price_kind(header)) is not None
                 }
                 if model_index is None or not price_columns:
                     continue

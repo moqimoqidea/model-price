@@ -7,13 +7,13 @@ tabular adapter keeps the parenthetical as a ``context_tier`` condition.
 
 from __future__ import annotations
 
-from .base import TabularTokenPricingAdapter
+from .base import TabularPricingAdapter
 
 XAI_URL = "https://docs.x.ai/developers/pricing"
 XAI_MARKDOWN_URL = f"{XAI_URL}.md"
 
 
-class XAIAdapter(TabularTokenPricingAdapter):
+class XAIAdapter(TabularPricingAdapter):
     provider_id = "xai"
     provider_name = "xAI"
     # The rendered HTML page splits the text-pricing header across two rows with

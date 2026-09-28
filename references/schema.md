@@ -29,7 +29,11 @@ Each result contains:
 - optional `source_updated_at`, when the official price page or the official update
   log publishes a date for that catalogue
 
-Price fields are `type`, `label`, `amount`, `unit`, and optional `display`, `list_amount`, `discount`, or `effective_until`. Common units are `CNY_per_million_tokens`, `USD_per_million_tokens`, their `_per_hour` storage variants, `CNY_per_10k_characters`, and `CNY_per_request`.
+Price fields are `type`, `label`, `amount`, `unit`, and optional `display`, `list_amount`, `discount`, or `effective_until`.
+
+`unit` is a code built as `<currency>_per_<measure>`, so a new currency or a new measure costs one entry in the vocabulary rather than one entry per combination. The measures read today are `million_tokens`, `million_tokens_per_hour` (cache storage), `thousand_tokens`, `10k_tokens`, `million_characters`, `10k_characters`, `thousand_characters`, `character`, `image`, `frame`, `second`, `minute`, `hour`, `request`, `thousand_requests`, `10k_requests`, `video`, `item`, `song`, and `page` — `CNY_per_image` is 元/张, `USD_per_second` is 美元/秒, `CNY_per_million_tokens_per_hour` is cache storage. A vendor that bills in its own credit keeps that credit as the unit (`积分/次`): the amount is a price, and converting it would print a rate the page never published. A price whose vendor stated no unit at all carries `provider_defined`, which is rendered as the amount alone.
+
+Two things a vendor publishes beside an amount decide which of several prices one cell holds. A cell that prices several tiers states each tier's scope in the cell itself, and that scope is `conditions.price_scope` on the offer the amount belongs to — one offer per scope, because merging them would quote one tier's rate for another. A cell that lists several model IDs prices each of them, and each becomes a model of its own rather than a note on the first.
 
 `amount` is always what a purchase is billed at today. The three optional fields beside it are the terms the vendor published with it, and each is shown with the amount rather than instead of it:
 
@@ -39,7 +43,7 @@ Price fields are `type`, `label`, `amount`, `unit`, and optional `display`, `lis
 
 A vendor that runs an activity prices it as an offer of its own: `name` is the activity's own wording, and its `conditions` add `channel` (the serving channel it prices, which the activity's name has taken over from the standing offer) and `promotion_window` (the window the vendor published, in the vendor's words). Those two stay out of the offer's `name` because they are terms, and both are part of the offer's identity: an activity that ends is an offer that ended, not a price that moved. A standing rate carries neither.
 
-A charge the vendor publishes as free is a price of `"0"` with `display` carrying the vendor's own wording (`免费`, `限时免费`, `Free of charge`), never a missing `amount`. `amount` is `null` only when the source priced nothing this tool can read — a per-second or per-request rate, or a tier the page does not quote. The two are different facts and are never made to look alike.
+A charge the vendor publishes as free is a price of `"0"` with `display` carrying the vendor's own wording (`免费`, `限时免费`, `Free of charge`), never a missing `amount`. `amount` is `null` only when the source priced nothing this tool can read — a tier the page does not quote, or a figure published without the currency it is in. The two are different facts and are never made to look alike.
 
 A vendor that explains a price in prose rather than in a column gives the record a `pricing_notes` list holding its own sentences, verbatim:
 

@@ -1,139 +1,101 @@
-"""MiniMax first-party pricing, read from its Markdown pricing document."""
+"""MiniMax first-party pay-as-you-go pricing, read from its Markdown document.
+
+One document prices every product line: language models per million tokens,
+speech per ten-thousand characters, video per second, images per picture, music
+per song, and the vision model per call. The shared table reader takes them all,
+so this adapter declares the two things that are MiniMax's own: which column names
+a model, and that a service tier is stated by the tab a table sits in rather than
+by a column.
+"""
 
 from __future__ import annotations
 
 import re
 from typing import Any
 
-from ..core import PriceSource, now_iso
-from ..models import model_family, normalize_model
-from ..parsing import split_markdown_row
-from ..pricing import make_record, price_item
-from ..text import CELL_BREAK_RE, clean_text, numeric_values
+from ..parsing import clean_text
+from .base import TabularPricingAdapter
 
 MINIMAX_URL = "https://platform.minimax.cn/docs/guides/pricing-paygo.md"
 
+# The video tables head their model column "模型/接口"; every other table names it
+# "模型". Both are the column a model id is published under.
+MODEL_HEADERS = {"模型", "模型/接口"}
+PRIORITY_TIER = "priority"
+# Model cells list the IDs a price covers, separated by a slash or stacked on
+# their own line ("image-01<br />image-01-live").
+MODEL_LIST_RE = re.compile(r"[/\n]")
+# A tab or an accordion is what states a service tier or a legacy section. Both
+# become headings so that the shared reader files their tables under them.
+CONTAINER_RE = re.compile(r'<Tab(?:s)?\s+title="([^"]+)"\s*>|<Accordion\s+title="([^"]+)"\s*>')
 
-class MiniMaxAdapter(PriceSource):
+
+class MiniMaxAdapter(TabularPricingAdapter):
     provider_id = "minimax"
     provider_name = "MiniMax 原厂"
     source_url = MINIMAX_URL
     source_kind = "official_markdown"
+    currency = "CNY"
+    region = "中国区"
+    delivery_mode = "first_party"
 
     def __init__(self, client: Any) -> None:
         super().__init__(client)
-        self._parsed_rows: list[dict[str, Any]] | None = None
+        self._document: str | None = None
 
-    def _rows(self) -> list[dict[str, Any]]:
-        if self._parsed_rows is not None:
-            return self._parsed_rows
-        text = self.document(MINIMAX_URL)
-        language = text.split("## 语言模型", 1)[1].split("## 语音", 1)[0]
-        rows: list[dict[str, Any]] = []
-        tier = "standard"
-        historical = False
-        for line in language.splitlines():
-            tab = re.search(r'<Tab title="([^"]+)"', line)
-            if tab:
-                tier = "priority" if tab.group(1) == "优先*" else "standard"
-            if "</Tabs>" in line:
-                tier = "standard"
-            if '<Accordion title="历史模型">' in line:
-                historical = True
-            if "</Accordion>" in line:
-                historical = False
-            if not line.lstrip().startswith("|") or re.match(r"^\s*\|\s*:?-", line):
-                continue
-            cells = split_markdown_row(line)
-            if not cells or "模型" in clean_text(cells[0]):
-                continue
-            model_parts = CELL_BREAK_RE.split(cells[0], maxsplit=1)
-            model_name = clean_text(model_parts[0])
-            if not model_name:
-                continue
-            condition = clean_text(model_parts[1]) if len(model_parts) > 1 else ""
-            amounts = []
-            list_amounts = []
-            for cell in cells[1:]:
-                values = numeric_values(cell)
-                amounts.append(values[-1] if values else None)
-                list_amounts.append(values[0] if len(values) > 1 else None)
-            prices = []
-            kinds = ["input", "output", "cache_hit", "cache_write"]
-            labels = ["输入", "输出", "缓存读取", "缓存写入"]
-            for index, amount in enumerate(amounts[:4]):
-                if amount is not None:
-                    prices.append(
-                        price_item(
-                            kinds[index],
-                            labels[index],
-                            amount,
-                            "CNY_per_million_tokens",
-                            list_amount=list_amounts[index],
-                        )
-                    )
-            rows.append(
-                {
-                    "model": model_name,
-                    "tier": tier,
-                    "historical": historical,
-                    "condition": condition,
-                    "prices": prices,
-                }
+    def document_text(self) -> str:
+        """Return the document with its containers spelled as headings."""
+        if self._document is None:
+            self._document = CONTAINER_RE.sub(
+                lambda match: f"\n### {match.group(1) or match.group(2)}\n",
+                self.document(MINIMAX_URL),
             )
-        self._parsed_rows = rows
-        return self._parsed_rows
+        return self._document
 
-    def _rows_by_model(self) -> dict[str, list[dict[str, Any]]]:
-        grouped: dict[str, list[dict[str, Any]]] = {}
-        for row in self._rows():
-            grouped.setdefault(normalize_model(row["model"]), []).append(row)
-        return grouped
-
-    def _record_for(self, matched: list[dict[str, Any]]) -> dict[str, Any]:
-        first = matched[0]
-        offers = []
-        for row in matched:
-            conditions: dict[str, Any] = {"service_tier": row["tier"]}
-            if row["condition"]:
-                conditions["context_tier"] = row["condition"]
-            if row["historical"]:
-                conditions["status"] = "historical"
-            if not row["prices"]:
-                continue
-            offers.append(
-                {
-                    "name": row["tier"],
-                    "conditions": conditions,
-                    "prices": row["prices"],
-                }
-            )
-        return make_record(
-            self.provider_id,
-            self.provider_name,
-            normalize_model(first["model"]),
-            first["model"],
-            "中国区",
-            offers,
-            self.source_url,
-            self.source_kind,
-            now_iso(),
-            delivery_mode="first_party",
-            model_family=model_family(first["model"]),
+    def model_column(self, headers: list[str]) -> int | None:
+        return next(
+            (
+                index
+                for index, header in enumerate(headers)
+                if clean_text(header) in MODEL_HEADERS
+            ),
+            None,
         )
 
-    def list_models(self, prefix: str = "") -> list[str]:
-        models = {row["model"] for row in self._rows()}
-        if prefix:
-            normalized = normalize_model(prefix)
-            models = {m for m in models if normalize_model(m).startswith(normalized)}
-        return sorted(models, key=str.lower)
+    def heading_conditions(self, headings: list[str]) -> dict[str, Any]:
+        conditions: dict[str, Any] = {
+            "service_tier": (
+                PRIORITY_TIER if self._priority(headings) else "standard"
+            )
+        }
+        if "历史模型" in headings:
+            conditions["status"] = "historical"
+        return conditions
 
-    def query(self, model: str) -> list[dict[str, Any]]:
-        matched = self._rows_by_model().get(normalize_model(model))
-        return [self._record_for(matched)] if matched else []
+    @staticmethod
+    def _priority(headings: list[str]) -> bool:
+        return any("优先" in heading for heading in headings)
 
-    def catalog_records(self) -> list[dict[str, Any]]:
-        """Build the whole catalogue from one parsed Markdown document."""
-        grouped = self._rows_by_model()
-        return [self._record_for(grouped[key]) for key in sorted(grouped)]
+    def offer_name(self, headings: list[str]) -> str:
+        """Name an offer after the tier, or after the section that prices it."""
+        if self._priority(headings):
+            return PRIORITY_TIER
+        if any("标准" in heading for heading in headings):
+            return "standard"
+        return super().offer_name(headings)
+
+    def model_variants(self, display_name: str, note: str = "") -> list[str]:
+        """Read every ID a cell lists, including the ones stacked under the first.
+
+        A cell states either one ID per line or several separated by a slash. The
+        words a cell adds after its first ID are prose unless they are a single
+        word, which is all a second ID ever is.
+        """
+        listed = MODEL_LIST_RE.split(display_name)
+        if note and " " not in note:
+            listed.extend(MODEL_LIST_RE.split(note))
+        return [part.strip() for part in listed if part.strip()]
+
+    def model_note_condition(self) -> str:
+        """MiniMax states the context window a rate applies to under the name."""
+        return "context_tier"

@@ -27,7 +27,12 @@ from .diffing import (
     UNCHANGED,
 )
 from .models import normalize_model
-from .pricing import is_free_amount, is_standard_offer, price_sort_key
+from .pricing import (
+    is_free_amount,
+    is_standard_offer,
+    price_sort_key,
+    unit_parts,
+)
 from .snapshots import AT_OR_BEFORE, LAST_MONTH, ON_DATE, YESTERDAY, YESTERDAY_FIRST
 
 DELIVERY_LABELS = {
@@ -59,16 +64,63 @@ UNPRINTED_CONDITIONS = frozenset({"billing_mode", "source_section"})
 CONDITION_LABELS = {
     "channel": "计费通道",
     "promotion_window": "活动窗口",
+    "price_scope": "计价范围",
 }
 
-UNIT_LABELS = {
-    "CNY_per_million_tokens": "元/百万 tokens",
-    "CNY_per_million_tokens_per_hour": "元/百万 tokens/小时",
-    "CNY_per_10k_characters": "元/万字符",
-    "CNY_per_request": "元/次",
-    "USD_per_million_tokens": "美元/百万 tokens",
-    "USD_per_million_tokens_per_hour": "美元/百万 tokens/小时",
+# What a price is billed against, written once per measure rather than once per
+# currency and measure: the code carries both, so a unit reads as "<currency>/
+# <measure>" and a new currency costs one entry here.
+CURRENCY_LABELS = {"CNY": "元", "USD": "美元"}
+UNIT_MEASURE_LABELS = {
+    "million_tokens": "百万 tokens",
+    "million_tokens_per_hour": "百万 tokens/小时",
+    "thousand_tokens": "千 tokens",
+    "10k_tokens": "万 tokens",
+    "million_characters": "百万字符",
+    "10k_characters": "万字符",
+    "thousand_characters": "千字符",
+    "character": "字符",
+    "image": "张",
+    "frame": "帧",
+    "second": "秒",
+    "minute": "分钟",
+    "hour": "小时",
+    "request": "次",
+    "thousand_requests": "千次",
+    "10k_requests": "万次",
+    "video": "视频",
+    "item": "个",
+    "song": "首",
+    "page": "页",
 }
+
+
+# A price whose vendor published no unit is archived under this code rather than
+# under an empty string, which would read as a unit that was lost.
+UNSTATED_UNIT = "provider_defined"
+
+
+def amount_with_unit(amount: Any, unit: Any) -> str:
+    """One amount with the unit it was billed in, which a vendor may not state."""
+    label = unit_label(unit)
+    return f"{amount} {label}" if label else str(amount)
+
+
+def unit_label(unit: Any) -> str:
+    """Read a unit code as the unit a vendor bills in.
+
+    A code this tool built reads as its currency and measure; anything else — a
+    credit the vendor named itself, or a unit not yet read — is printed as the
+    page wrote it rather than as a unit nobody published.
+    """
+    if str(unit or "") == UNSTATED_UNIT:
+        return ""
+    parts = unit_parts(unit)
+    if parts:
+        currency, measure = parts
+        if (label := UNIT_MEASURE_LABELS.get(measure)) is not None:
+            return f"{CURRENCY_LABELS.get(currency, currency)}/{label}"
+    return str(unit or "")
 
 SOURCE_STATUS_LABELS = {
     "available": "已找到",
@@ -255,7 +307,7 @@ def format_price(item: dict[str, Any] | None) -> str:
     # has said.
     until = item.get("effective_until") or ""
     if terms or until:
-        current = f"{amount} {UNIT_LABELS.get(unit, unit)}"
+        current = amount_with_unit(amount, unit)
         if until:
             current += f" 至 {until}"
         return f"{current}（{terms}）" if terms else current
@@ -267,7 +319,7 @@ def format_price(item: dict[str, Any] | None) -> str:
         return display
     if amount is None:
         return display or NO_CHANGE
-    return f"{amount} {UNIT_LABELS.get(unit, unit)}"
+    return amount_with_unit(amount, unit)
 
 
 def price_terms_text(item: dict[str, Any]) -> str:

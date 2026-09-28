@@ -37,18 +37,23 @@ from ..models import (
 )
 from ..parsing import (
     HTML_TEXT_BREAK_RE,
+    cell_rates,
     document_update_stamp,
     headed_document_tables,
+    header_unit_phrase,
     monetary_amount,
+    price_kind,
     time_band_label,
-    token_price_kind,
 )
 from ..pricing import (
+    is_commitment_unit,
     is_free_amount,
     make_record,
     per_million_tokens,
     price_item,
     tokens_per_price_unit,
+    unit_code,
+    unit_measure,
 )
 from ..text import CELL_BREAK_RE, clean_text, first_cell_line
 
@@ -66,6 +71,8 @@ BAIDU_VERSION_HEADER = "版本名称"
 BAIDU_SERVICE_HEADER = "服务内容"
 BAIDU_ITEM_HEADER = "子项"
 BAIDU_UNIT_HEADER = "单位"
+# A one-price-per-model table heads its amount column with one of these.
+BAIDU_PRICE_HEADERS = ("单价", "价格")
 BAIDU_PLAIN_SERVICE = "推理服务"
 # One billing item is priced per serving channel, and a channel can be repeated
 # once per activity ("批量推理 （2月活动价）"). A column that names an activity is
@@ -367,6 +374,110 @@ class BaiduAdapter(PriceSource):
             "channels": channels,
         }
 
+    def _unit_price_columns(
+        self, headers: list[str], table: list[list[str]]
+    ) -> tuple[int, int | None, dict[int, str]] | None:
+        """Locate the model column and the columns that price one charge each.
+
+        The image, OCR, vector, and rerank sections charge one amount per model
+        rather than one per settlement channel, and state what it is billed
+        against either in a column of its own or beside the amount. So the columns
+        are found by what their cells publish, read with the row's own unit as the
+        evidence of what the number is.
+        """
+        name = next(
+            (i for i, h in enumerate(headers) if h in (BAIDU_MODEL_HEADER, "模型")),
+            None,
+        )
+        if name is None:
+            return None
+        unit = next((i for i, h in enumerate(headers) if h == BAIDU_UNIT_HEADER), None)
+
+        def cell(row: list[str], index: int | None) -> str:
+            return row[index] if index is not None and index < len(row) else ""
+
+        priced: dict[int, tuple[str, str]] = {}
+        for index, header in enumerate(headers):
+            if index in (name, unit):
+                continue
+            if is_commitment_unit(header_unit_phrase(header)):
+                # 预付费价格（单位：元/个/月）sells reserved throughput by the
+                # month, which is a commitment rather than a model's use.
+                continue
+            for row in table[1:]:
+                for rate in cell_rates(
+                    cell(row, index), header=cell(row, unit) or header, currency="CNY"
+                ):
+                    priced[index] = (price_kind(header) or "price", header)
+                    break
+                if index in priced:
+                    break
+        return (name, unit, priced) if priced else None
+
+    def _unit_price_entries(
+        self,
+        cells: list[str],
+        columns: tuple[int, int | None, dict[int, tuple[str, str]]],
+        width: int,
+        headings: list[str],
+    ) -> list[dict[str, Any]]:
+        """Read one row of a one-price-per-model table."""
+        cells = [*cells, *([""] * (width - len(cells)))][:width]
+        name_index, unit_index, priced = columns
+
+        def cell(index: int | None) -> str:
+            return cells[index] if index is not None and index < len(cells) else ""
+
+        name, name_note = split_trailing_parenthetical(first_cell_line(cell(name_index)))
+        if not name:
+            return []
+        unit_label = clean_text(cell(unit_index))
+        conditions: dict[str, Any] = {
+            "billing_mode": "pay_as_you_go",
+            "source_section": " / ".join(headings),
+        }
+        if name_note:
+            conditions["model_note"] = name_note
+        entries = []
+        for index, (kind, header) in priced.items():
+            label = clean_text(header)
+            item = label if label in BAIDU_PRICE_HEADERS else ""
+            for rate in cell_rates(cell(index), header=unit_label or label, currency="CNY"):
+                # Baidu files most prices per thousand tokens; the report compares
+                # one unit, and a charge per page or per image has no scale to take.
+                tokens = tokens_per_price_unit(rate.unit_phrase or unit_label)
+                entries.append(
+                    {
+                        "model_id": normalize_model(name),
+                        "display_name": name,
+                        "item": item,
+                        "offer_name": item or "pay_as_you_go",
+                        "conditions": dict(conditions),
+                        "price": price_item(
+                            price_kind(item) or kind,
+                            item or label,
+                            (
+                                per_million_tokens(rate.amount, tokens)
+                                if tokens
+                                else rate.amount
+                            ),
+                            (
+                                "CNY_per_million_tokens"
+                                if tokens
+                                else unit_code(rate.unit_phrase or unit_label, "CNY")
+                            ),
+                            display=rate.display,
+                            list_amount=(
+                                per_million_tokens(rate.list_amount, tokens)
+                                if tokens and rate.list_amount
+                                else rate.list_amount
+                            ),
+                            discount=rate.discount,
+                        ),
+                    }
+                )
+        return entries
+
     def _rates(self, cell: str, unit_label: str, activity: str) -> list[BaiduRate]:
         """Read one price cell into every rate that is still current.
 
@@ -434,19 +545,23 @@ class BaiduAdapter(PriceSource):
             return clean_text(raw(key))
 
         item = value("item")
-        kind = token_price_kind(item)
-        tokens = tokens_per_price_unit(value("unit"))
+        kind = price_kind(item)
+        # Baidu files most prices per thousand tokens and a few per page; a unit
+        # this tool cannot read is the only one that prices nothing here.
+        unit_label = value("unit")
+        tokens = tokens_per_price_unit(unit_label)
+        if tokens is None and unit_measure(unit_label) is None:
+            return []
         # A version cell lists every variant at this price, one per line; the
         # first is the model the row is about.
         version, version_note = split_trailing_parenthetical(
             first_cell_line(raw("version"))
         )
-        if not version or kind is None or tokens is None:
+        if not version or kind is None:
             return []
         # Baidu files a price per thousand tokens; the report compares one unit.
         # The raw figure travels in the price's display text so the vendor's own
         # number stays checkable against its page.
-        unit_label = value("unit")
         # Baidu repeats a model once per settlement and says which one it is only
         # in the name's parenthetical ("…（8月24日生效）"). Dropping that would
         # merge two different sets of prices into one offer.
@@ -470,6 +585,12 @@ class BaiduAdapter(PriceSource):
         if version_note == BAIDU_RETIRING_MARKER:
             conditions["release_stage"] = "retiring"
         model_id = normalize_model(version)
+        billing_unit = "CNY_per_million_tokens" if tokens else unit_code(unit_label)
+
+        def rescale(amount: str) -> str:
+            """One amount on the unit this report compares."""
+            return per_million_tokens(amount, tokens) if tokens else amount
+
         entries = []
         for position, (channel, activity) in columns["channels"].items():
             # The cell is handed on as the page wrote it: its line breaks are what
@@ -488,13 +609,11 @@ class BaiduAdapter(PriceSource):
                         "price": price_item(
                             kind,
                             item,
-                            per_million_tokens(rate.amount, tokens),
-                            "CNY_per_million_tokens",
+                            rescale(rate.amount),
+                            billing_unit,
                             display=self._display(rate, unit_label),
                             list_amount=(
-                                per_million_tokens(rate.list_amount, tokens)
-                                if rate.list_amount
-                                else None
+                                rescale(rate.list_amount) if rate.list_amount else None
                             ),
                         ),
                     }
@@ -556,10 +675,14 @@ class BaiduAdapter(PriceSource):
                 continue
             headers = [clean_text(cell) for cell in table[0]]
             columns = self._columns(headers)
+            reader = self._entries if columns is not None else None
             if columns is None:
+                columns = self._unit_price_columns(headers, table)
+                reader = self._unit_price_entries if columns is not None else None
+            if reader is None:
                 continue
             for cells in table[1:]:
-                entries.extend(self._entries(cells, columns, len(headers), headings))
+                entries.extend(reader(cells, columns, len(headers), headings))
         if not entries:
             raise SourceError("Baidu pay-as-you-go pricing table was not found")
         self._catalogue = [

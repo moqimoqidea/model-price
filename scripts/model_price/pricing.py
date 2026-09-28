@@ -88,6 +88,138 @@ PRICE_TYPE_ORDER = {
 # ("元/千tokens"), tested most specific first so 百万 is not read as 万.
 TOKEN_UNIT_SCALES = (("百万", MILLION), ("万", 10_000), ("千", 1_000))
 
+# What a charge is billed against, read off the vendor's own wording. A unit is
+# what a price is compared and archived by, so two spellings of one unit have to
+# produce one code: a vendor rewording 每张 as 元/张 is not a price movement.
+#
+# A measure is recognised in the phrase the vendor published, most specific
+# first — "百万 token/小时" is storage rather than a token rate, "万字符" is not a
+# character rate, and "1k requests" is not a request rate. The phrase is reduced
+# to one shape before it is matched: 每 and "per" both become "/", and spaces and
+# separators come out. A measure a vendor names by quantity ("百万 token",
+# "1M tokens") is therefore matched without the separator, while one it counts in
+# ("元/秒", "每张") keeps it — "秒" alone would also match a duration column.
+UNIT_MEASURES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "million_tokens_per_hour",
+        (
+            "百万token/小时", "百万tokens/小时", "1mtoken/hour",
+            "1mtokens/hour", "mtokens/hour", "mtok/hour",
+        ),
+    ),
+    (
+        "million_tokens",
+        (
+            "百万token", "1mtoken", "1mtokens", "mtoken", "mtok",
+            "milliontokens",
+        ),
+    ),
+    ("thousand_tokens", ("千token", "1ktoken", "1ktokens", "thousandtokens")),
+    ("10k_tokens", ("万token", "10ktoken", "10ktokens")),
+    (
+        "million_characters",
+        ("百万字符", "1mcharacter", "1mcharacters", "1mchar", "1mchars"),
+    ),
+    ("10k_characters", ("万字符", "10kcharacter", "10kcharacters")),
+    ("thousand_characters", ("千字符", "1kcharacter", "1kcharacters")),
+    ("character", ("字符", "character", "characters", "char", "chars")),
+    ("image", ("/张", "/幅", "/image", "/images", "/图")),
+    ("frame", ("/帧", "/frame", "/frames")),
+    ("second", ("/秒", "/second", "/seconds", "/sec", "/secs")),
+    ("minute", ("/分钟", "/minute", "/minutes", "/min", "/mins")),
+    ("hour", ("/小时", "/hour", "/hours", "/hr", "/hrs")),
+    (
+        "thousand_requests",
+        (
+            "/千次", "/1000次", "/1krequest", "/1krequests", "/1kcall",
+            "/1kcalls", "/1kprompt", "/1kprompts", "/1kquery", "/1kqueries",
+            "/1000request", "/1000requests", "/1000call", "/1000calls",
+        ),
+    ),
+    ("10k_requests", ("/万次", "/10000次", "/10krequest", "/10krequests")),
+    (
+        "request",
+        (
+            "/次", "/request", "/requests", "/call", "/calls",
+            "/prompt", "/prompts", "/query", "/queries", "/search",
+        ),
+    ),
+    ("video", ("/视频", "/video", "/videos")),
+    ("item", ("/个", "/item", "/items")),
+    ("song", ("/首", "/song", "/songs")),
+    ("page", ("/页", "/page", "/pages")),
+)
+
+_UNIT_SEPARATOR = "_per_"
+
+# A vendor may bill in its own credit rather than in money ("480p：2 积分/次").
+# The amount is still that model's price, and the credit is the unit it is in, so
+# it keeps the vendor's own wording instead of being coded as a currency it is
+# not — converting it would print a rate the page never published.
+CREDIT_WORD_PATTERN = r"积分|credits?"
+CREDIT_WORDS = ("积分", "credit")
+
+
+def is_credit_unit(value: Any) -> bool:
+    """Say whether a unit phrase is the vendor's own credit rather than money."""
+    lowered = clean_text(str(value or "")).lower()
+    return any(word in lowered for word in CREDIT_WORDS)
+
+
+# A price per month or per year is a commitment rather than a rate for using a
+# model: reserved throughput and capacity are sold that way, and a unit naming a
+# period prices how long a subscription runs, not what one request costs.
+COMMITMENT_MARKERS = ("月", "年", "month", "year", "annum")
+
+
+def is_commitment_unit(value: Any) -> bool:
+    """Say whether a unit phrase prices a commitment rather than a use."""
+    lowered = clean_text(str(value or "")).lower()
+    return any(marker in lowered for marker in COMMITMENT_MARKERS)
+
+
+def unit_measure(label: Any) -> str | None:
+    """Return what a vendor's unit phrase bills against, or ``None``.
+
+    ``None`` says the label names no unit this tool can read — an internal credit
+    ("积分"), an amount of storage, or a wording not yet published. The label is
+    then kept as written rather than mapped onto a unit the vendor never used.
+    """
+    value = clean_text(str(label or "")).lower()
+    value = re.sub(r"\bper\b", "/", value)
+    value = value.replace("每", "/").replace("／", "/")
+    value = re.sub(r"[\s,，]", "", value)
+    if is_commitment_unit(value):
+        return None
+    for measure, markers in UNIT_MEASURES:
+        if any(marker in value for marker in markers):
+            return measure
+    return None
+
+
+def unit_code(label: Any, currency: str = "CNY") -> str:
+    """Map a vendor unit phrase onto the stable code a price is archived by."""
+    written = clean_text(str(label or ""))
+    if is_credit_unit(written):
+        return written or "provider_defined"
+    measure = unit_measure(written)
+    if measure:
+        return f"{currency}{_UNIT_SEPARATOR}{measure}"
+    return written or "provider_defined"
+
+
+def unit_parts(code: Any) -> tuple[str, str] | None:
+    """Split a unit code back into its currency and its measure.
+
+    The wording those two are written in belongs to whoever prints a price; this
+    only says how the code is built, so the parser knows a code when it sees one
+    — including a vendor label that happens to contain the separator.
+    """
+    currency, separator, measure = str(code or "").partition(_UNIT_SEPARATOR)
+    if not separator or not currency or not measure:
+        return None
+    return currency, measure
+
 
 def _billing_key(value: Any) -> str:
     """Normalize a billing label for policy lookup, not model identity."""
@@ -147,20 +279,6 @@ def price_sort_key(price: dict[str, Any]) -> tuple[int, int, str, str]:
     return (*order, kind, str(price.get("label", "")))
 
 
-def unit_code(label: str) -> str:
-    """Map a vendor unit label onto a stable unit code."""
-    normalized = label.lower().replace(" ", "")
-    if "百万" in normalized or "1m" in normalized or "/m" in normalized:
-        if "小时" in normalized:
-            return "CNY_per_million_tokens_per_hour"
-        return "CNY_per_million_tokens"
-    if "万字符" in normalized:
-        return "CNY_per_10k_characters"
-    if "每次" in normalized or "/次" in normalized:
-        return "CNY_per_request"
-    return label or "provider_defined"
-
-
 # What a vendor publishes beside an amount, saying what the amount is besides how
 # much it is: the rate it reduces, the multiplier it reduces it by, and the last day
 # it applies. All three are shown with the amount and archived with it, so a rate
@@ -168,6 +286,70 @@ def unit_code(label: str) -> str:
 # They sit apart from an offer's ``conditions``, which say how a charge is billed
 # rather than what one amount is against another.
 PRICE_TERM_FIELDS = ("list_amount", "discount", "effective_until")
+
+# What a vendor writes when it prints a reduction as a 折 rather than as a rate.
+# Chinese counts these in tenths and writes a decimal one either way: 7.5折 and
+# 75折 are both three quarters, 8折 is four fifths, and 10折 is no reduction at
+# all. Reading 75折 as 7.5 would overstate the charge tenfold.
+FOLDS_RE = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d+)?)\s*折")
+# The same reduction with the word the vendor introduced it by ("限时75折"),
+# which is wording rather than an amount and comes off with it.
+FOLDS_PHRASE_RE = re.compile(r"[^\s，,。;；、`]{0,4}(?<![\d.])(\d{1,3}(?:\.\d+)?)\s*折")
+
+
+def discount_multiplier(value: str) -> str | None:
+    """Read the multiplier a vendor's own 折 wording states, or ``None``."""
+    match = FOLDS_RE.search(clean_text(value))
+    if not match:
+        return None
+    written = match.group(1)
+    if "." in written or len(written) == 1:
+        # 7.5折 and 8折 both count tenths of the standing rate.
+        multiplier = Decimal(written) / 10
+    else:
+        # A whole number of two or more digits counts hundredths: 85折 is 0.85 and
+        # 75折 is 0.75. Ten of them is the standing rate itself, undiscounted.
+        whole = Decimal(written)
+        multiplier = Decimal(1) if whole == 10 else whole / 100
+    if multiplier <= 0 or multiplier > 1:
+        return None
+    return format(multiplier.normalize(), "f")
+
+
+def without_discount_terms(value: str) -> str:
+    """Remove a promotion's own wording, leaving the amounts beside it.
+
+    A cell that publishes a rate as "原价 37.00`限时75折`" states two things: the
+    rate and how far it is reduced. Reading the rate needs the second one out of
+    the way, and the multiplier is kept separately where it is read.
+    """
+    return clean_text(FOLDS_PHRASE_RE.sub(" ", value)).replace("`", " ")
+
+
+def discounted_amount(
+    amount: Any, discount: Any
+) -> tuple[str | None, str | None]:
+    """Return the amount a multiplier bills and the amount it reduces.
+
+    A vendor quotes ``Discount`` as the multiplier a promotion applies, so ``1``
+    is no promotion at all. A multiplier of ``0`` is not a price of nothing — no
+    vendor discounts a paid model to zero — and is read as the field being unset,
+    so an untouched rate is never silently deleted.
+    """
+    if amount is None:
+        return None, None
+    listed = str(amount)
+    if discount is None:
+        return listed, None
+    try:
+        ratio = Decimal(str(discount))
+        if ratio == 1 or ratio == 0:
+            return listed, None
+        current = Decimal(listed) * ratio
+    except InvalidOperation:
+        return listed, None
+    return format(current.normalize(), "f"), listed
+
 
 
 def price_item(

@@ -8,9 +8,27 @@ from typing import Any, Iterable
 
 from ..core import PriceSource, now_iso
 from ..errors import SourceError
-from ..models import model_family, model_matches, normalize_model
-from ..parsing import SpanGrid, normalize_update_stamp, time_bands_for
-from ..pricing import free_price, is_free_statement, make_record, price_item
+from ..models import (
+    model_family,
+    model_matches,
+    normalize_model,
+    without_trailing_parenthetical,
+)
+from ..parsing import (
+    SpanGrid,
+    cell_rates,
+    header_unit_phrase,
+    normalize_update_stamp,
+    price_column_kinds,
+    price_unit_code,
+    time_bands_for,
+)
+from ..pricing import (
+    is_credit_unit,
+    make_record,
+    price_item,
+    unit_measure,
+)
 from ..text import clean_text
 
 TENCENT_LIST_URL = "https://cloud.tencent.com/document/product/1823/130051"
@@ -118,6 +136,79 @@ def tencent_delivery_mode(display_name: str) -> str:
     return "upstream_direct" if "原厂直供" in display_name else "self_deployed"
 
 
+def slate_price_tables(
+    slate: list[dict[str, Any]],
+) -> Iterator[tuple[tuple[str, ...], str, list[list[str]]]]:
+    """Walk the document in order, giving each table the headings above it.
+
+    A table belongs to the section it sits in, and the region variants sit one
+    level deeper, inside the tab that names the region. Following the document
+    rather than hunting for one known table is what lets every product line be
+    read: the language models are priced in one section, images in another, and
+    the same header wording means different charges in each.
+    """
+
+    def walk(
+        nodes: Iterable[Any], path: tuple[str, ...], tab: str
+    ) -> Iterator[tuple[tuple[str, ...], str, list[list[str]]]]:
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            kind = node.get("type")
+            if kind in ("h2", "h3", "h4"):
+                title = clean_text(object_text(node))
+                if title:
+                    path = (*path[: int(kind[1]) - 1], title)
+                continue
+            if kind == "table":
+                rows = expand_slate_table(node)
+                if rows:
+                    yield path, tab, rows
+                continue
+            name = str(node.get("name") or "").strip()
+            if kind == "tab" and name:
+                yield from walk(node.get("children") or [], (*path, name), name)
+                continue
+            yield from walk(node.get("children") or [], path, tab)
+
+    yield from walk(slate, (), "")
+
+
+# The columns that say what a rate covers, in the wording the page keeps them in.
+# The peak/off-peak column is filed under one name whatever the page calls it,
+# because the report reads it as a band rather than as one more condition.
+TENCENT_CONDITION_KEYS = (("峰谷", "time_band"), ("条件", "condition"))
+
+
+def tencent_condition_key(header: str) -> str:
+    text = clean_text(header)
+    return next((key for marker, key in TENCENT_CONDITION_KEYS if marker in text), text)
+
+
+def tencent_price_label(header: str) -> str:
+    """Name a charge the way the page heads it, without repeating its unit."""
+    return clean_text(header).split("（", 1)[0].strip() or clean_text(header)
+
+
+def tencent_readable_unit(header: str, cells: Iterable[str]) -> bool:
+    """Whether a column is billed in a unit this tool can read.
+
+    The unit is in the header on some tables and beside each amount on others, so
+    both are consulted. Reserved throughput (元/kTPM/月) is billed in a unit that
+    prices no use of a model, and reading it would put a capacity product beside a
+    model's price.
+    """
+    phrase = header_unit_phrase(header)
+    if unit_measure(phrase) or is_credit_unit(phrase):
+        return True
+    return any(
+        rate.unit_phrase
+        and (unit_measure(rate.unit_phrase) or is_credit_unit(rate.unit_phrase))
+        for cell in cells
+        for rate in cell_rates(cell, header=header)
+    )
+
+
 class TencentAdapter(PriceSource):
     provider_id = "tencent"
     provider_name = "腾讯云 TokenHub"
@@ -168,7 +259,14 @@ class TencentAdapter(PriceSource):
             if not rows:
                 continue
             headers = [clean_text(header) for header in rows[0]]
-            name_index = next((i for i, h in enumerate(headers) if "模型" in h), None)
+            # The speech table heads its first column 模型类型 (a product category)
+            # and names the model in the next one, so an exact label wins over a
+            # column that merely mentions a model.
+            name_index = (
+                headers.index("模型名称")
+                if "模型名称" in headers
+                else next((i for i, h in enumerate(headers) if "模型" in h), None)
+            )
             # The call-parameter column is labelled "model（调用参数）"; match it by
             # wording rather than by exact punctuation.
             id_index = next(
@@ -205,87 +303,121 @@ class TencentAdapter(PriceSource):
             models = {m for m in models if normalize_model(m).startswith(normalized)}
         return sorted(models, key=str.lower)
 
+    @staticmethod
+    def _model_column(headers: list[str]) -> int | None:
+        for label in ("模型名称", "模型"):
+            if label in headers:
+                return headers.index(label)
+        return None
+
     def _price_offers(self) -> dict[str, list[dict[str, Any]]]:
-        slate = self._price_slate()
+        """Read every table on the price page that prices a model's use.
+
+        One table prices one product line — tokens, images, seconds of video,
+        songs, calls — and the cells inside it can publish several tiers at once.
+        All of it is read the same way, and a column whose unit this tool cannot
+        read is left to the page.
+        """
         offers_by_name: dict[str, list[dict[str, Any]]] = {}
-        # Prefer the 广州 region tab, but fall back to any tab that carries price
-        # tables so a renamed or added region tab does not blank the provider.
-        tabs = [node for node in walk_objects(slate) if node.get("type") == "tab"]
-        region_tabs = [tab for tab in tabs if "广州" in str(tab.get("name", ""))] or tabs
-        for node in region_tabs:
-            for child in walk_objects(node.get("children", [])):
-                if child.get("type") != "table":
+        for path, tab, rows in slate_price_tables(self._price_slate()):
+            headers = [clean_text(header) for header in rows[0]]
+            name_index = self._model_column(headers)
+            if name_index is None:
+                continue
+            if any("旧计费方式" in h for h in headers) and any(
+                "新计费方式" in h for h in headers
+            ):
+                # The page keeps a table per retired generation that sets the price
+                # it charged beside the one that replaced it. The replacement has
+                # its own billing table, so reading the comparison would report the
+                # same model twice under two price lists.
+                continue
+            priced = price_column_kinds(headers, rows, currency="CNY")
+            priced = {
+                index: kind
+                for index, kind in priced.items()
+                if tencent_readable_unit(
+                    headers[index],
+                    [row[index] for row in rows[1:] if index < len(row)],
+                )
+            }
+            if not priced:
+                continue
+            for row in rows[1:]:
+                if name_index >= len(row):
                     continue
-                rows = expand_slate_table(child)
-                if not rows:
+                display_name = clean_text(row[name_index])
+                if not display_name or display_name in ("-", "—"):
                     continue
-                headers = rows[0]
-                if not any("推理输入" in h for h in headers):
-                    continue
-
-                def index_containing(label: str) -> int | None:
-                    return next((i for i, h in enumerate(headers) if label in h), None)
-
-                indexes = {
-                    "name": index_containing("模型名称"),
-                    "condition": index_containing("条件"),
-                    "time_band": index_containing("峰谷计费"),
-                    "input": index_containing("推理输入"),
-                    "output": index_containing("推理输出"),
-                    "cache_hit": index_containing("缓存命中"),
-                }
-                unit = "CNY_per_million_tokens"
-                for row in rows[1:]:
-                    name_pos = indexes["name"]
-                    if name_pos is None or name_pos >= len(row):
+                # One model is sold in several regions at different rates, and the
+                # region is the tab the table sits in. Two regions are two offers:
+                # merging them would quote one region's price for the other.
+                conditions: dict[str, Any] = {"region": tab} if tab else {}
+                for index, header in enumerate(headers):
+                    if index in priced or index == name_index or index >= len(row):
                         continue
-                    display_name = clean_text(row[name_pos])
-                    if not display_name:
+                    value = clean_text(row[index])
+                    if value and value not in ("-", "—"):
+                        conditions[tencent_condition_key(header)] = value
+                for index, kind in priced.items():
+                    if index >= len(row):
                         continue
-                    prices = []
-                    for kind in ("input", "output", "cache_hit"):
-                        position = indexes[kind]
-                        if (
-                            position is None
-                            or position >= len(row)
-                            or row[position] in ("", "-")
-                        ):
-                            continue
-                        figure = row[position]
-                        label = clean_text(headers[position].split("（", 1)[0])
-                        prices.append(
-                            free_price(kind, label, unit)
-                            if is_free_statement(figure)
-                            else price_item(kind, label, figure, unit)
-                        )
-                    conditions = {}
-                    for key in ("condition", "time_band"):
-                        position = indexes[key]
-                        if (
-                            position is not None
-                            and position < len(row)
-                            and row[position] not in ("", "-")
-                        ):
-                            conditions[key] = row[position]
-                    if not prices:
-                        continue
-                    offers_by_name.setdefault(normalize_model(display_name), []).append(
-                        {
+                    for rate in cell_rates(row[index], header=headers[index]):
+                        offer_conditions = dict(conditions)
+                        if rate.conditions:
+                            offer_conditions["price_scope"] = "；".join(rate.conditions)
+                        priced_offer = {
                             "name": (
                                 "online_standard"
-                                if not conditions
+                                if not offer_conditions
                                 else "online_conditional"
                             ),
-                            "conditions": conditions,
-                            "prices": prices,
+                            "conditions": offer_conditions,
+                            "prices": [
+                                price_item(
+                                    kind,
+                                    tencent_price_label(headers[index]),
+                                    rate.amount,
+                                    price_unit_code(
+                                        rate.unit_phrase,
+                                        headers[index],
+                                        currency="CNY",
+                                        default="CNY_per_million_tokens",
+                                    ),
+                                    display=rate.display,
+                                    list_amount=rate.list_amount,
+                                    discount=rate.discount,
+                                )
+                            ],
                         }
-                    )
+                        found = offers_by_name.setdefault(
+                            normalize_model(display_name), []
+                        )
+                        merged = next(
+                            (
+                                offer
+                                for offer in found
+                                if offer["name"] == priced_offer["name"]
+                                and offer["conditions"] == priced_offer["conditions"]
+                            ),
+                            None,
+                        )
+                        if merged is None:
+                            found.append(priced_offer)
+                        else:
+                            merged["prices"].extend(priced_offer["prices"])
         return offers_by_name
 
     def _records(self) -> list[dict[str, Any]]:
         grouped: dict[str, list[dict[str, str]]] = {}
         for entry in self._catalog():
-            grouped.setdefault(normalize_model(entry["display_name"]), []).append(entry)
+            # The catalogue marks a retiring generation in the name itself
+            # ("Kling-Video-v3\n（2026-09-15下线）") while the price page prices it
+            # under the bare name, so the two are matched without that suffix.
+            grouped.setdefault(
+                normalize_model(without_trailing_parenthetical(entry["display_name"])),
+                [],
+            ).append(entry)
         offers_by_name = self._price_offers()
         retrieved_at = now_iso()
         records = []

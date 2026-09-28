@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
 from typing import Any, Iterator
 from urllib.parse import quote
 
@@ -20,6 +19,7 @@ from ..models import model_family, normalize_model
 from ..parsing import time_bands_for
 from ..pricing import (
     FREE_AMOUNT,
+    discounted_amount,
     is_free_amount,
     make_record,
     price_item,
@@ -191,31 +191,6 @@ def qianwen_model_metadata(item: dict[str, Any]) -> dict[str, Any]:
 def time_band_label(value: str) -> str:
     """Return the market page's own wording for an API band key."""
     return ALIYUN_TIME_BANDS.get(value.lower(), value)
-
-
-def discounted_amount(
-    amount: Any, discount: Any
-) -> tuple[str | None, str | None]:
-    """Return the effective amount and its list amount when a discount applies.
-
-    The market quotes ``Discount`` as the multiplier a promotion applies, so
-    ``1`` is no promotion at all. A multiplier of ``0`` is not a price of
-    nothing — no vendor discounts a paid model to zero — and is read as the
-    field being unset, so an untouched rate is never silently deleted.
-    """
-    if amount is None:
-        return None, None
-    listed = str(amount)
-    if discount is None:
-        return listed, None
-    try:
-        ratio = Decimal(str(discount))
-        if ratio == 1 or ratio == 0:
-            return listed, None
-        current = Decimal(listed) * ratio
-    except InvalidOperation:
-        return listed, None
-    return format(current.normalize(), "f"), listed
 
 
 def price_groups(item: dict[str, Any]) -> Iterator[tuple[str, list[dict[str, Any]]]]:

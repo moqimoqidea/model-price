@@ -47,7 +47,7 @@ from model_price.parsing import (
     promotion_notes,
     split_markdown_row,
     time_bands_for,
-    token_price_kind,
+    price_kind,
 )
 from model_price.pricing import (
     is_free_amount,
@@ -554,8 +554,12 @@ class StructuredDocumentTests(unittest.TestCase):
         self.assertNotIn("480p", self.adapter().list_models())
         self.assertEqual(self.adapter().query("480p"), [])
 
-    def test_image_prices_are_not_relabeled_as_token_prices(self):
-        self.assertEqual(self.adapter().query("doubao-seedream-5-0-flash"), [])
+    def test_image_prices_are_billed_per_image_rather_than_per_token(self):
+        offer = self.adapter().query("doubao-seedream-5-0-flash")[0]["offers"][0]
+        self.assertEqual(price_lookup(offer, "input")["amount"], "0")
+        output = price_lookup(offer, "output")
+        self.assertEqual(output["amount"], "0.12")
+        self.assertEqual(output["unit"], "CNY_per_image")
 
     def test_tencent_rowspan_placeholders_keep_columns_aligned(self):
         def cell(value, row_span=None, col_span=None):
@@ -956,7 +960,7 @@ class CatalogueRequestCountTests(unittest.TestCase):
 | Claude B | $2 / MTok | $2.50 / MTok | $4 / MTok | $0.20 / MTok | $10 / MTok |
 """
     MINIMAX = """## 语言模型
-| 模型 | 输入 | 输出 | 缓存读取 | 缓存写入 |
+| 模型 | 输入<br />元/百万 tokens | 输出<br />元/百万 tokens | 缓存读取<br />元/百万 tokens | 缓存写入<br />元/百万 tokens |
 | --- | --- | --- | --- | --- |
 | MiniMax-A | 1 | 2 | 0.1 | 0.2 |
 | MiniMax-B | 3 | 4 | 0.3 | 0.4 |
@@ -1022,7 +1026,15 @@ class XAIAdapterTests(unittest.TestCase):
 
     def test_token_table_is_read_without_a_model_allowlist(self):
         models = self.adapter().list_models()
-        self.assertEqual(models, ["future-family-1", "grok-test"])
+        self.assertEqual(
+            models,
+            [
+                "future-family-1",
+                "grok-imagine-image",
+                "grok-imagine-video",
+                "grok-test",
+            ],
+        )
 
     def test_long_context_tier_is_kept_as_a_condition(self):
         record = self.adapter().query("grok-test")[0]
@@ -1033,10 +1045,15 @@ class XAIAdapterTests(unittest.TestCase):
         self.assertEqual(price_lookup(long, "input")["amount"], "4.00")
         self.assertEqual(record["currency"], "USD")
 
-    def test_non_token_tables_are_not_read_as_model_prices(self):
-        models = self.adapter().list_models()
-        self.assertNotIn("grok-imagine-image", models)
-        self.assertEqual(self.adapter().query("grok-imagine-image"), [])
+    def test_non_token_tables_are_priced_in_the_unit_their_cells_name(self):
+        image = self.adapter().query("grok-imagine-image")[0]["offers"][0]
+        video = self.adapter().query("grok-imagine-video")[0]["offers"][0]
+        image_price = price_lookup(image, "price")
+        video_price = price_lookup(video, "price")
+        self.assertEqual((image_price["amount"], image_price["unit"]),
+                         ("0.02", "USD_per_image"))
+        self.assertEqual((video_price["amount"], video_price["unit"]),
+                         ("0.050", "USD_per_second"))
 
 
 GEMINI_MARKDOWN = """### Free
@@ -1231,6 +1248,10 @@ XIAOMI_CURRENT_HTML = """<div>更新时间 2026 年 09 月 22 日</div>
 <tr><td>批量推理</td><td>mimo-v2.6-pro</td><td>¥0.0125</td><td>¥1.50</td><td>¥3.00</td></tr>
 <tr><td>批量推理</td><td>mimo-v2.6-flash</td><td>¥0.01</td><td>¥0.50</td><td>¥1.00</td></tr>
 </table>
+<table>
+<tr><th>ASR 系列</th><th>输入音频时长</th></tr>
+<tr><td>mimo-v2.5-asr</td><td>¥0.5 /小时</td></tr>
+</table>
 <h2>模型海外定价</h2>
 <table>
 <tr><th>推理类型</th><th>模型名称</th><th>输入（命中缓存）</th><th>输入（未命中缓存）</th><th>输出</th></tr>
@@ -1244,7 +1265,10 @@ class XiaomiAdapterTests(unittest.TestCase):
         return XiaomiAdapter(MappingClient({XIAOMI_URL: XIAOMI_HTML}))
 
     def test_product_line_header_still_identifies_the_model_column(self):
-        self.assertEqual(self.adapter().list_models(), ["mimo-v2.5", "mimo-v2.5-pro"])
+        self.assertEqual(
+            self.adapter().list_models(),
+            ["mimo-v2.5", "mimo-v2.5-asr", "mimo-v2.5-pro"],
+        )
 
     def test_cache_miss_maps_to_input_and_cache_hit_stays_separate(self):
         offer = self.adapter().query("mimo-v2.5")[0]["offers"][0]
@@ -1262,8 +1286,11 @@ class XiaomiAdapterTests(unittest.TestCase):
         }
         self.assertNotIn("0.435", amounts)
 
-    def test_audio_duration_table_is_not_read_as_token_pricing(self):
-        self.assertEqual(self.adapter().query("mimo-v2.5-asr"), [])
+    def test_audio_duration_is_priced_per_hour_not_per_token(self):
+        offer = self.adapter().query("mimo-v2.5-asr")[0]["offers"][0]
+        price = price_lookup(offer, "input")
+        self.assertEqual(price["amount"], "0.5")
+        self.assertEqual(price["unit"], "CNY_per_hour")
 
     def test_plugin_pricing_section_is_ignored(self):
         self.assertEqual(self.adapter().query("国内联网服务"), [])
@@ -1279,8 +1306,8 @@ class XiaomiAdapterTests(unittest.TestCase):
         self.assertEqual(
             adapter.list_models(),
             [
-                "mimo-v2.5", "mimo-v2.5-pro", "mimo-v2.6-flash",
-                "mimo-v2.6-pro", "mimo-v2.6-pro-ultraspeed",
+                "mimo-v2.5", "mimo-v2.5-asr", "mimo-v2.5-pro",
+                "mimo-v2.6-flash", "mimo-v2.6-pro", "mimo-v2.6-pro-ultraspeed",
             ],
         )
         self.assertEqual(adapter.query("实时推理"), [])
@@ -1589,7 +1616,9 @@ class BaiduAdapterTests(unittest.TestCase):
 
     def test_the_article_body_is_read_from_the_pages_own_data_file(self):
         self.assertEqual(BaiduAdapter.source_kind, "official_json")
-        self.assertEqual(self.adapter().list_models(), ["flash-test-0731"])
+        self.assertEqual(
+            self.adapter().list_models(), ["flash-test-0731", "ocr-test-0.9b"]
+        )
 
     def test_the_page_update_date_is_kept_on_every_record(self):
         self.assertEqual(self.record()["source_updated_at"], "2026-09-16")
@@ -1655,8 +1684,11 @@ class BaiduAdapterTests(unittest.TestCase):
         }
         self.assertNotIn("100", amounts)
 
-    def test_a_table_billed_per_page_is_not_token_pricing(self):
-        self.assertEqual(self.adapter().query("ocr-test-0.9b"), [])
+    def test_a_table_billed_per_page_is_read_in_pages(self):
+        offer = self.adapter().query("ocr-test-0.9b")[0]["offers"][0]
+        price = price_lookup(offer, "input")
+        self.assertEqual(price["amount"], "0.09")
+        self.assertEqual(price["unit"], "CNY_per_page")
 
     def test_a_listed_token_model_with_blank_rates_has_no_offer(self):
         preview = """<h3>预览</h3><table>
@@ -1814,9 +1846,12 @@ class ZhipuAdapterTests(unittest.TestCase):
     def test_only_per_token_tables_are_read(self):
         self.assertEqual(
             self.adapter().list_models(),
-            ["glm-free", "glm-test", "glm-test-flash", "glm-tiered"],
+            ["glm-free", "glm-image-test", "glm-test", "glm-test-flash", "glm-tiered"],
         )
-        self.assertEqual(self.adapter().query("glm-image-test"), [])
+        offer = self.adapter().query("glm-image-test")[0]["offers"][0]
+        price = price_lookup(offer, "price")
+        self.assertEqual(price["amount"], "0.1")
+        self.assertEqual(price["unit"], "CNY_per_request")
 
     def test_each_column_maps_onto_its_schema_type(self):
         offer = self.adapter().query("glm-test")[0]["offers"][0]
@@ -1852,37 +1887,37 @@ class ZhipuAdapterTests(unittest.TestCase):
 
 class TokenPriceHeaderTests(unittest.TestCase):
     def test_chinese_cache_hit_and_miss_are_distinct(self):
-        self.assertEqual(token_price_kind("输入（命中缓存）"), "cache_hit")
-        self.assertEqual(token_price_kind("输入（未命中缓存）"), "input")
-        self.assertEqual(token_price_kind("输出"), "output")
+        self.assertEqual(price_kind("输入（命中缓存）"), "cache_hit")
+        self.assertEqual(price_kind("输入（未命中缓存）"), "input")
+        self.assertEqual(price_kind("输出"), "output")
 
     def test_non_token_units_are_rejected(self):
-        self.assertIsNone(token_price_kind("输入音频时长"))
-        self.assertIsNone(token_price_kind("价格"))
-        self.assertIsNone(token_price_kind("说明"))
+        self.assertIsNone(price_kind("输入音频时长"))
+        self.assertIsNone(price_kind("价格"))
+        self.assertIsNone(price_kind("说明"))
 
     def test_a_condition_column_naming_a_length_is_not_a_price(self):
         # Volcengine labels its condition column "条件 输入长度：千 token". Reading
         # it as an input price column used to drop the time band and the length
         # tier of every row in that table.
-        self.assertIsNone(token_price_kind("条件<br><br>输入长度：千 token"))
-        self.assertIsNone(token_price_kind("条件<br><br>Context length"))
-        self.assertEqual(token_price_kind("输入(非音频)<br><br>元/百万token"), "input")
+        self.assertIsNone(price_kind("条件<br><br>输入长度：千 token"))
+        self.assertIsNone(price_kind("条件<br><br>Context length"))
+        self.assertEqual(price_kind("输入(非音频)<br><br>元/百万token"), "input")
 
     def test_cache_storage_is_a_token_price_even_though_it_bills_an_hour(self):
-        self.assertEqual(token_price_kind("缓存存储"), "cache_storage")
+        self.assertEqual(price_kind("缓存存储"), "cache_storage")
         self.assertEqual(
-            token_price_kind("缓存存储（元/百万 Tokens/小时）"), "cache_storage"
+            price_kind("缓存存储（元/百万 Tokens/小时）"), "cache_storage"
         )
         self.assertEqual(
-            token_price_kind("Cache storage, per 1M tokens / hour"), "cache_storage"
+            price_kind("Cache storage, per 1M tokens / hour"), "cache_storage"
         )
 
     def test_english_headers_still_map(self):
-        self.assertEqual(token_price_kind("Input / 1M tokens"), "input")
-        self.assertEqual(token_price_kind("Cached input / 1M tokens"), "cache_hit")
-        self.assertEqual(token_price_kind("Output / 1M tokens"), "output")
-        self.assertIsNone(token_price_kind("Context"))
+        self.assertEqual(price_kind("Input / 1M tokens"), "input")
+        self.assertEqual(price_kind("Cached input / 1M tokens"), "cache_hit")
+        self.assertEqual(price_kind("Output / 1M tokens"), "output")
+        self.assertIsNone(price_kind("Context"))
 
 
 KIMI_INDEX = """# Kimi API 文档
@@ -2719,7 +2754,7 @@ class QianwenCatalogueTests(unittest.TestCase):
         ).query("free-entitlement")[0]
         price = record["offers"][0]["prices"][0]
         self.assertEqual(price["amount"], "0")
-        self.assertEqual(price["unit"], "每张")
+        self.assertEqual(price["unit"], "CNY_per_image")
         self.assertNotIn("list_amount", price)
         self.assertNotIn("discount", price)
 
@@ -3212,23 +3247,6 @@ class DiscountedScanTests(unittest.TestCase):
 
 
 class SnapshotTests(unittest.TestCase):
-    def test_legacy_image_rate_does_not_become_a_false_model_removal(self):
-        current = snapshot_of([scanned_record("m1", "M1", "2", "8")])
-        legacy = json.loads(json.dumps(current))
-        image = json.loads(json.dumps(legacy["models"]["m1"]))
-        image["model_id"] = "image-model"
-        image["offers"][0]["prices"] = [{
-            "type": "output", "label": "输出图单价（元/张）",
-            "amount": "0.12", "unit": "CNY_per_million_tokens",
-        }]
-        legacy["models"]["image-model"] = image
-        with tempfile.TemporaryDirectory() as directory:
-            Path(directory, "fake.json").write_text(json.dumps(legacy))
-            previous = SnapshotStore(Path(directory)).read("fake")
-        self.assertIsNotNone(previous)
-        self.assertEqual(list(previous["models"]), ["m1"])
-        self.assertEqual(compare_snapshots(previous, current)["status"], UNCHANGED)
-
     def test_a_model_without_a_price_stays_in_the_catalogue(self):
         unpriced = make_record(
             "fake",
@@ -3988,6 +4006,7 @@ class CatalogScanTests(unittest.TestCase):
             {record["model_id"] for record in adapter.catalog_records()},
             {
                 "doubao-seed-2.0-pro",
+                "doubao-seedream-5-0-flash",
                 "deepseek-v4-1-flash",
                 "deepseek-v4-flash正式版",
                 "deepseek-v4-pro预览版",

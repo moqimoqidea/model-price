@@ -14,12 +14,12 @@ from typing import Any
 from ..models import split_trailing_parenthetical
 from ..parsing import document_update_stamp
 from ..text import clean_text
-from .base import TabularTokenPricingAdapter
+from .base import TabularPricingAdapter
 
 XIAOMI_URL = "https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go"
 
 
-class XiaomiAdapter(TabularTokenPricingAdapter):
+class XiaomiAdapter(TabularPricingAdapter):
     provider_id = "xiaomi"
     provider_name = "小米 MiMo"
     source_url = XIAOMI_URL
@@ -64,7 +64,7 @@ class XiaomiAdapter(TabularTokenPricingAdapter):
         # condition would make an unchanged real-time price look newly listed.
         return {key: value for key, value in conditions.items() if key != "推理类型"}
 
-    def model_variants(self, display_name: str) -> list[str]:
+    def model_variants(self, display_name: str, note: str = "") -> list[str]:
         """Split shared prices; dated shutdown evidence comes from the notice log."""
         variants = []
         for label in re.split(r"[、，]", display_name):

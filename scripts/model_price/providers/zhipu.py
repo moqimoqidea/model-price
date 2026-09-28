@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .base import TabularTokenPricingAdapter
+from .base import TabularPricingAdapter
 
 ZHIPU_URL = "https://docs.bigmodel.cn/cn/guide/start/pricing"
 ZHIPU_MARKDOWN_URL = f"{ZHIPU_URL}.md"
@@ -19,7 +19,7 @@ ZHIPU_PRICE_KINDS = (
 )
 
 
-class ZhipuAdapter(TabularTokenPricingAdapter):
+class ZhipuAdapter(TabularPricingAdapter):
     provider_id = "zhipu"
     provider_name = "智谱 BigModel"
     source_url = ZHIPU_URL

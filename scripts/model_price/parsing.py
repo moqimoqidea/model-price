@@ -9,8 +9,25 @@ from html.parser import HTMLParser
 from typing import Any, Iterable, NamedTuple
 
 from .models import model_family, normalize_model
-from .pricing import FREE_AMOUNT, is_free_statement
-from .text import clean_text, clean_zero_width_text, numeric_values, unescape_markdown
+from .pricing import (
+    CREDIT_WORD_PATTERN,
+    CREDIT_WORDS,
+    FREE_AMOUNT,
+    is_credit_unit,
+    unit_code,
+    discount_multiplier,
+    discounted_amount,
+    is_free_statement,
+    unit_measure,
+    without_discount_terms,
+)
+from .text import (
+    CELL_BREAK_RE,
+    clean_text,
+    clean_zero_width_text,
+    numeric_values,
+    unescape_markdown,
+)
 
 HEADING_TAGS = ("h1", "h2", "h3", "h4")
 
@@ -286,7 +303,7 @@ def markdown_tables(text: str) -> list[tuple[list[str], list[list[str]]]]:
         if (
             line.startswith("|")
             and index + 1 < len(lines)
-            and re.match(r"^\s*\|(?:\s*:?-+\s*\|)+\s*$", lines[index + 1])
+            and re.match(r"^\s*\|(?:\s*:?-+:?\s*\|)+\s*$", lines[index + 1])
         ):
             rows = [split_markdown_row(line)]
             index += 2
@@ -365,50 +382,37 @@ def headed_document_tables(document: str) -> list[tuple[list[str], list[list[str
     return markdown_tables(document)
 
 
-# Headers that bill a non-token unit (audio duration, characters, calls) are not
-# token prices, so a per-million-token adapter must never read them. Without this
-# guard "输入音频时长" (input audio duration, billed per hour) looks like "input".
-NON_TOKEN_BILLING_MARKERS = (
-    "时长", "小时", "秒", "字符", "千次", "万次", "/次", "/张", "/幅", "/页",
+# --- what a price column is --------------------------------------------------
+#
+# A price column says what a charge is *for* (an input, an output, cache activity)
+# or what it is billed *against* (a token, an image, a second of video). A header
+# that names neither describes the request instead — how long it is, how large the
+# picture is — and a condition read as a price silently drops the tier that
+# separates one row from the next. "条件 输入长度：千 token" is the case both
+# readings have to survive: it names a unit without pricing one.
+REQUEST_MARKERS = (
+    "长度", "时长", "分辨率", "宽高比", "清晰度", "像素", "模态",
+    "length", "duration", "resolution", "aspect", "modality",
 )
 
-
-def non_token_billing_header(header: str) -> bool:
-    """Reject a price header whose named unit is not a token count."""
-    value = clean_text(header).lower().replace("-", "").replace(" ", "")
-    return any(marker in value for marker in NON_TOKEN_BILLING_MARKERS)
-
 # Cache *storage* is billed per million tokens per hour, so it stays a token price
-# even though its header names an hour. Detecting it first keeps the guard above
-# from rejecting it along with genuine duration billing.
+# even though its header names an hour.
 CACHE_STORAGE_MARKERS = ("缓存存储", "缓存空间")
 
-# Headers that describe the *request* (how long it is, which context window it
-# falls in) rather than a price. Volcengine words its condition column
-# "条件 输入长度：千 token"; that still contains "输入", so without this guard the
-# whole column is read as an input price column instead of a condition, and the
-# time band and length tier of every row in the table are silently dropped.
-# Adapters that classify headers themselves must consult this too.
-NON_PRICE_HEADER_MARKERS = ("长度", "length")
 
-
-def describes_request_length(header: str) -> bool:
-    """Say whether a header names how long a request is, not what it costs."""
+def describes_request(header: str) -> bool:
+    """Say whether a header names how big a request is, not what it costs."""
     value = clean_text(header).lower().replace("-", "").replace(" ", "")
-    return any(marker in value for marker in NON_PRICE_HEADER_MARKERS)
+    return any(marker in value for marker in REQUEST_MARKERS)
 
 
-def token_price_kind(header: str) -> str | None:
-    """Map English and Chinese token-price headers without model allowlists."""
+def price_role(header: str) -> str | None:
+    """The charge a header names — input, output, cache activity — or ``None``."""
     value = clean_text(header).lower().replace("-", "").replace(" ", "")
     if any(marker in value for marker in CACHE_STORAGE_MARKERS) or (
         "cache" in value and "storage" in value
     ):
         return "cache_storage"
-    if non_token_billing_header(header):
-        return None
-    if describes_request_length(header):
-        return None
     cached = "cache" in value or "缓存" in value
     if cached and ("write" in value or "写入" in value or "创建" in value):
         return "cache_write"
@@ -427,6 +431,402 @@ def token_price_kind(header: str) -> str | None:
     return None
 
 
+def header_unit_phrase(header: str) -> str:
+    """The unit a price column names, preferring the one it put in brackets.
+
+    A vendor heads a column with the charge and its unit together ("推理输入（元/
+    百万 tokens）", "积分单价（元/积分）"); the bracketed part is the unit, and the
+    header without it is what the charge is called.
+    """
+    text = clean_text(header)
+    match = re.search(r"[（(]([^（()）]*)[)）]\s*$", text)
+    return match.group(1).strip() if match else text
+
+
+def price_unit_code(
+    cell_unit: str, header: str, *, currency: str, default: str
+) -> str:
+    """The unit one price is billed in, from the cell's wording or the header's.
+
+    The cell wins: a vendor that prices two charges in one column states the unit
+    beside each amount. An amount whose unit this tool cannot read keeps the
+    vendor's own wording rather than being labelled with a unit never published.
+    """
+    for candidate in (cell_unit, header_unit_phrase(header), header):
+        if candidate and (unit_measure(candidate) or is_credit_unit(candidate)):
+            return unit_code(candidate, currency)
+    return unit_code(cell_unit, currency) if cell_unit else default
+
+
+def price_column_kinds(
+    headers: list[str],
+    table: list[list[str]],
+    *,
+    currency: str,
+    kind_of: Any = None,
+) -> dict[int, str]:
+    """Which columns price a charge, and what each charge is.
+
+    A column is read when its header names a charge and when its cells publish
+    amounts. Both readings are needed: a header naming the quantity billed
+    ("输入音频时长") heads a price column once its cells are money, and a header
+    naming a unit whose cells hold durations prices nothing at all.
+    """
+    classify = kind_of or price_kind
+    columns: dict[int, str] = {}
+    for index, header in enumerate(headers):
+        cells = [row[index] if index < len(row) else "" for row in table[1:]]
+        kind = classify(header)
+        money = any(monetary_amount(cell, header, currency) is not None for cell in cells)
+        if kind is not None and (not describes_request(header) or money):
+            columns[index] = kind
+        elif money:
+            # A header that names the billed quantity rather than the charge
+            # ("输入音频时长") still says which direction the charge runs.
+            columns[index] = price_role(header) or unit_measure(header) or "price"
+    return columns
+
+
+def price_kind(header: str) -> str | None:
+    """Classify a price column, or return ``None`` when it is a condition.
+
+    A header naming what it bills against is a price column even when it names no
+    direction — an image model's "输出图单价（元/张）" and a video model's
+    "在线推理 元/百万token" both price a charge this way. The charge keeps the unit
+    as its kind, because a label is what the vendor called it and the unit is what
+    it is billed in.
+    """
+    if describes_request(header):
+        return None
+    return price_role(header) or unit_measure(header)
+
+
+# --- what one cell publishes -------------------------------------------------
+#
+# A vendor that prices a charge in several tiers prints them into one cell: a list
+# under the scope line it grouped them by, or clauses on one line ("音频：0.18
+# 元/分钟；视频：1.2 元/分钟"). Reading one amount and dropping the rest quotes a
+# tier the reader cannot tell apart from the model's whole price, and taking the
+# last number in a cell that also states a resolution quotes a resolution. So every
+# amount is read, and the vendor's own words for what each one covers travel with
+# it.
+class CellRate(NamedTuple):
+    """One charge a cell publishes, under the words the vendor scoped it by."""
+
+    amount: str
+    conditions: tuple[str, ...] = ()
+    unit_phrase: str = ""
+    display: str = ""
+    list_amount: str | None = None
+    discount: str | None = None
+
+
+MONEY_PATTERNS: dict[str, tuple[str, ...]] = {
+    "CNY": (r"[¥￥]\s*(\d+(?:\.\d+)?)", r"(?<![\d.])(\d+(?:\.\d+)?)\s*元"),
+    "USD": (r"\$\s*(\d+(?:\.\d+)?)", r"(?<![\d.])(\d+(?:\.\d+)?)\s*(?:usd|美元)"),
+}
+# A charge published as a span rather than as one figure ("15～60积分/次") is kept
+# whole: both ends are the vendor's, and printing either one alone would quote a
+# price the page does not have.
+RANGE_RE = r"\d+(?:\.\d+)?(?:\s*[-~～—至]\s*\d+(?:\.\d+)?)?"
+# A vendor that bills in an internal credit publishes the charge in that credit
+# rather than in money ("480p：2 积分/次"). It is still the model's price, so it is
+# read and kept in the unit the vendor wrote it in.
+CREDIT_AMOUNT_RE = re.compile(
+    rf"(?<![\d.])({RANGE_RE})\s*(?:{CREDIT_WORD_PATTERN})", re.I
+)
+CURRENCY_MARKERS: dict[str, tuple[str, ...]] = {
+    "CNY": ("元", "￥", "¥", "cny", "rmb", "人民币"),
+    "USD": ("$", "usd", "美元", "dollar"),
+}
+# A charge of nothing, however the vendor words it inside a longer cell.
+FREE_WORD_RE = re.compile(r"免费|不收费|不计费|free\s+of\s+charge|\bfree\b", re.I)
+# A rate the vendor published beside the rate it reduces.
+LIST_PRICE_RE = re.compile(r"原价\s*[:：]?\s*[¥￥$]?\s*(\d+(?:\.\d+)?)")
+# Only a parenthetical that names an amount is dropped: it restates the rate in
+# another unit ("16 元/百万 Tokens（约 0.0002 元/秒）") or divides it, and no vendor
+# bills a second charge inside the brackets of the first.
+PARENTHETICAL_RE = re.compile(r"[（(][^（()）]*[)）]")
+# A clause is one statement: the vendor ends it with a line break or a semicolon.
+# A comma is not a separator — "480p，720p" is one scope, not two.
+# A vendor ends a clause with a line break or a semicolon. A comma is not a
+# separator — "480p，720p" is one scope, not two.
+# A word joining two rates is not a condition either of them is billed under.
+CONNECTOR_WORDS = re.compile(r"^(?:or|and|及|和|与|或)\s*", re.I)
+CLAUSE_SPLIT_RE = re.compile(r"；|;|\n")
+
+
+def money_spans(value: str, currency: str) -> list[tuple[int, int, str]]:
+    """Every amount in ``value`` that names ``currency``, with where it sits."""
+    spans = [
+        (match.start(), match.end(), match.group(1))
+        for pattern in MONEY_PATTERNS.get(currency, ())
+        for match in re.finditer(pattern, value)
+    ]
+    spans.sort()
+    return spans
+
+
+def credit_spans(value: str) -> list[tuple[int, int, str]]:
+    """Every amount in ``value`` that names the vendor's own credit."""
+    return [
+        (match.start(), match.end(), match.group(1))
+        for match in CREDIT_AMOUNT_RE.finditer(value)
+    ]
+
+
+def names_currency(value: str, currency: str) -> bool:
+    """Say whether a cell or header states the currency an amount is in."""
+    lowered = clean_text(value).lower()
+    return any(marker in lowered for marker in CURRENCY_MARKERS.get(currency, ()))
+
+
+def _drop_money_parentheticals(value: str, currency: str) -> str:
+    return PARENTHETICAL_RE.sub(
+        lambda match: "" if money_spans(match.group(), currency) else match.group(),
+        value,
+    )
+
+
+def _rate_text(value: str) -> str:
+    """Reduce a clause to the words that scope a rate rather than lay it out."""
+    return clean_text(_strip_list_marker(value)).strip("：:，,。；; *")
+
+
+def _scope_words(value: str) -> str:
+    """The most specific words a rate was published under.
+
+    A clause carries a lead-in and a label ("按分辨率计费：2K"), and only the part
+    after the last colon distinguishes this rate from its neighbours. A clause that
+    is all label keeps it whole ("输入：").
+    """
+    parts = [part.strip() for part in _rate_text(value).split("：")]
+    parts = [part for part in parts if part]
+    return parts[-1] if parts else ""
+
+
+def _cell_clauses(cell: str) -> list[str]:
+    """The statements one cell publishes, in the order the vendor wrote them."""
+    return [
+        clause
+        for line in CELL_BREAK_RE.split(cell)
+        for clause in CLAUSE_SPLIT_RE.split(line)
+        if clause.strip()
+    ]
+
+
+def _free_spans(clause: str) -> list[tuple[int, int, str, bool]]:
+    return [
+        (match.start(), match.end(), FREE_AMOUNT, False)
+        for match in FREE_WORD_RE.finditer(clause)
+    ]
+
+
+def amount_spans(value: str, currency: str) -> list[tuple[int, int, str, bool]]:
+    """Every charge a cell states, in the order it states them.
+
+    The flag on each span says whether the amount is denominated in the vendor's
+    own credit rather than in money, which decides how its unit reads.
+    """
+    return sorted(
+        [(*span, False) for span in money_spans(value, currency)]
+        + [(*span, True) for span in credit_spans(value)]
+        + _free_spans(value)
+    )
+
+
+# A vendor that publishes a reduction without a multiplier strikes the rate it
+# reduces through and prints the one it bills beside it ("~~4.20~~ 2.10"). Both
+# numbers are the vendor's and both are kept: the struck one is what the charge
+# goes back to when the promotion ends.
+STRUCK_RATE_RE = re.compile(
+    r"~~\s*[^\d~]*(\d+(?:\.\d+)?)\s*~~\s*[^\d]*(\d+(?:\.\d+)?)"
+)
+
+
+def _struck_rate(value: str) -> tuple[str, str] | None:
+    """Read a struck-through list price and the rate billed beside it."""
+    match = STRUCK_RATE_RE.search(value)
+    return (match.group(2), match.group(1)) if match else None
+
+
+def _bare_figure(value: str) -> str | None:
+    """The amount a clause that is nothing but a number publishes.
+
+    A number embedded in words is not a price: a scope line reading "输出视频分辨率
+    为 1080p" states a resolution, and taking its digits for an amount would price
+    the model at 1080.
+    """
+    stripped = without_discount_terms(value).strip("：:，,。;；* ")
+    stripped = LIST_PRICE_RE.sub(r"\1", stripped).strip()
+    numbers = numeric_values(stripped)
+    if len(numbers) == 1 and re.sub(r"[\s,]", "", stripped) == numbers[0]:
+        return numbers[0]
+    return None
+
+
+def _narrow(figure: str | None) -> tuple[str, str] | None:
+    """A plain figure is a rate with no list price beside it."""
+    return (figure, "") if figure is not None else None
+
+
+def _unit_phrase(tail: str, *, credit: bool) -> str:
+    """The unit a rate is billed in, as the cell wrote it beside the amount."""
+    head = clean_text(tail).strip().strip("*")
+    if credit:
+        return f"{CREDIT_WORDS[0]}/{head.lstrip('/ ')}" if head else CREDIT_WORDS[0]
+    return " ".join(head.split()[:3])
+
+
+def _leading_parenthetical(value: str) -> str:
+    """A bracket written straight after an amount, which describes that amount."""
+    match = re.match(r"\s*[（(][^（()）]*[)）]", value)
+    return match.group(0) if match else ""
+
+
+def _tail_parts(value: str) -> tuple[str, str, str]:
+    """Split what follows an amount into its unit, its brackets, and its label.
+
+    A vendor writes "0.80 元/秒，768P 0.50 元/秒": the unit is the part before the
+    comma and the label belongs to the rate after it. A bracket names what the rate
+    covers and can sit after the unit ("$0.005/min (audio)") rather than straight
+    after the amount. Where the amount ends the clause the whole remainder is its
+    unit — and a remainder that names no unit at all is the next rate's label.
+    """
+    parts = re.split(r"[，,；;、]", clean_text(value), maxsplit=1)
+    unit = parts[0].strip()
+    carry = CONNECTOR_WORDS.sub("", parts[1]).strip() if len(parts) > 1 else ""
+    brackets = " ".join(match.group(0) for match in PARENTHETICAL_RE.finditer(unit))
+    unit = PARENTHETICAL_RE.sub(" ", unit).strip()
+    if not carry and unit_measure(unit) is None:
+        return "", brackets, CONNECTOR_WORDS.sub("", unit).strip()
+    return unit, brackets, carry
+
+
+def _promoted(amount: str, clause: str) -> tuple[str, dict[str, str]]:
+    """The amount a clause bills and the terms it states for it.
+
+    A vendor running a promotion prints the rate it reduces and how far, so the
+    amount billed is the two together. The list price is not a second charge: it is
+    what this one is reduced from, and it travels with it.
+    """
+    listed = LIST_PRICE_RE.search(clause)
+    multiplier = discount_multiplier(clause)
+    if not listed or not multiplier or listed.group(1) != amount:
+        return amount, {}
+    billed, _ = discounted_amount(amount, multiplier)
+    return billed or amount, {"list_amount": amount, "discount": multiplier}
+
+
+def cell_rates(cell: str, *, header: str = "", currency: str = "CNY") -> list[CellRate]:
+    """Every rate one cell publishes, each with the scope the vendor gave it.
+
+    An amount is read where the vendor named its currency or its credit; a bare
+    number is read only where the clause published nothing else, and only when the
+    header named the currency it is in. Everything else in a cell — a resolution, a
+    duration, the vendor's working — is what scopes a rate or explains it, and
+    reading one of those as a price quotes a number the page never priced.
+    """
+    if is_free_statement(cell):
+        return [CellRate(FREE_AMOUNT, (), "", clean_text(cell))]
+    text = _drop_money_parentheticals(cell, currency)
+    rates: list[CellRate] = []
+    scope: tuple[str, ...] = ()
+    for clause in _cell_clauses(text):
+        stripped = clause.strip()
+        # A quoted line is the vendor explaining a rate, not pricing one.
+        if stripped.startswith((">", "|")):
+            continue
+        body = _strip_list_marker(stripped)
+        spans = amount_spans(body, currency)
+        value_at = max(body.rfind("："), body.rfind(":"))
+        label, value = (
+            (body[:value_at], body[value_at + 1 :]) if value_at >= 0 else ("", body)
+        )
+        if not spans:
+            priced = (
+                _struck_rate(value) or _narrow(_bare_figure(value))
+                if names_currency(header, currency)
+                else None
+            )
+            if priced is not None:
+                figure, listed = priced
+                own = _scope_words(label) if label.strip() else ""
+                conditions = tuple(
+                    dict.fromkeys(part for part in (*scope, own) if part)
+                )
+                billed, terms = _promoted(figure, body)
+                if listed and not terms:
+                    terms = {"list_amount": listed}
+                rates.append(
+                    CellRate(billed, conditions, "", _rate_text(body), **terms)
+                )
+            elif words := _rate_text(body):
+                # A statement that prices nothing is the scope of the rates under
+                # it ("输出视频分辨率为 480p，720p").
+                scope = (words,)
+            continue
+        head = _scope_words(label) if label.strip() else ""
+        scoped = (*scope, head) if head else scope
+        for index, (start, end, amount, credit) in enumerate(spans):
+            next_start = spans[index + 1][0] if index + 1 < len(spans) else len(body)
+            following = body[end:next_start]
+            bracket = _leading_parenthetical(following)
+            unit_tail, in_unit, carry = _tail_parts(following[len(bracket) :])
+            # Only the first rate of a clause carries its lead-in label; the rates
+            # after it are labelled by the words the vendor put between them.
+            own = _scope_words(body[:start]) if index == 0 else ""
+            conditions = tuple(
+                dict.fromkeys(
+                    part
+                    for part in (
+                        *scoped,
+                        own,
+                        _scope_words(bracket),
+                        _scope_words(in_unit),
+                    )
+                    if part
+                )
+            )
+            billed, terms = _promoted(amount, body)
+            rates.append(
+                CellRate(
+                    billed,
+                    conditions,
+                    _unit_phrase(unit_tail, credit=credit),
+                    _rate_text(body),
+                    **terms,
+                )
+            )
+            if carry:
+                scoped = (*scoped, carry)
+    return rates
+
+
+def monetary_amount(value: str, header: str, currency: str) -> str | None:
+    """Extract a monetary amount only when the cell or header names currency.
+
+    A cell that states a charge of nothing is that model's price, recorded as a
+    zero. A cell that merely mentions a free allowance beside other content is
+    not this row's price and is left to whatever else the cell says — the reader
+    that expands such a cell is :func:`cell_rates`.
+    """
+    cell = clean_text(value).replace(",", "")
+    heading = clean_text(header).lower()
+    if is_free_statement(cell):
+        return FREE_AMOUNT
+    if re.search(r"\bfree\b", cell, re.I) or any(
+        label in cell for label in ("免费", "不收费")
+    ):
+        return None
+    if spans := money_spans(cell, currency):
+        return spans[0][2]
+    if names_currency(heading, currency):
+        values = numeric_values(cell)
+        return values[0] if values else None
+    return None
+
+
 # --- peak / off-peak windows ------------------------------------------------
 #
 # A time band is only ever explained in the vendor's own words: the window differs
@@ -439,8 +839,10 @@ CLOCK_RANGE_RE = re.compile(
     rf"{CLOCK_VALUE}(?:\s*(?:[-–—~～]|至|到)\s*(?:次日\s*)?{CLOCK_VALUE})"
 )
 # A bullet or numbered item survives the Markdown reader as text; it is layout,
-# not part of the rule, so it comes off before the window is quoted.
-LIST_MARKER_RE = re.compile(r"^\s*(?:[*\-+•]|\d+[.、)])\s*")
+# not part of the rule, so it comes off before the window is quoted. A numbered
+# item is "1. 条件" or "1、条件" — never "2.40", which is an amount and would be
+# stripped into a different number by a marker read without its space.
+LIST_MARKER_RE = re.compile(r"^\s*(?:[*\-+•]\s+|\d+[、)]\s*|\d+\.\s+)")
 TIME_BAND_WORDS = ("高峰", "空闲", "闲时", "忙时", "峰时", "谷时", "峰谷", "peak")
 TIME_BAND_SCHEDULE_WORDS = (
     "工作日",

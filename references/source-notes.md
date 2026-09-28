@@ -315,6 +315,46 @@ Two catalogue-level traps:
   stamp, the message uses the previous successful snapshot's `captured_at` and
   labels it 上次更新时间. An absent official stamp never means the prices are stale.
 
+### Billing units each vendor publishes
+
+The reader is unit-agnostic: what a table bills against is read from the vendor's
+own wording, so a model priced per image or per second is read the same way as one
+priced per token. The tables that carry those units:
+
+- **Volcengine** — 视频生成（按 token 单价，在线推理／离线推理两种交付）、图片生成（元/张，
+  输入图与输出图分开）、3D 生成（元/次）。The video token table publishes four tiers inside
+  one cell and the image table six; each tier keeps its scope. The 价格示例 tables are
+  **not** read: they restate the token rate as an example at one resolution and
+  duration, and reading them would put a derived per-video figure beside the rate
+  the model is billed at. Fine-tuning and capacity tables (精调、模型单元、套餐、插件)
+  price training or hardware rather than a model's use, and are left alone.
+- **Zhipu** — 多模态生成（元/次）、语音模型（元/万字符、元/次、元/分钟）、向量模型与其他模型
+  （`单价（元/百万 Tokens）`, which the old header rule missed because it does not say
+  输入/输出). Search tools, the knowledge base, private-deployment packages, and the
+  fine-tuning/private-instance sections are not model prices.
+- **MiniMax** — 语音合成（元/万字符）、视频（元/秒、元/张、按 token 的再生成）、历史视频
+  （元/视频）、音乐（元/首）、图像（元/张）、MCP 的 `API-vlm`（元/次）. A service tier is
+  stated by the tab a table sits in and a legacy section by its accordion, so both
+  are turned into headings the shared reader files the table under. The ASR table
+  names an interface rather than a model, and 音色管理 prices a capability, so
+  neither is a model.
+- **Xiaomi** — ASR 系列（`输入音频时长`, 元/小时 in the cell). The TTS models are priced
+  in a sentence rather than a table (`…限时免费`) and are not read.
+- **Tencent** — the whole page is walked in order, so every product line is read:
+  图片生成（元/张）、视频生成（元/秒、元/张）、3D（元/个）、语音（元/万字符、元/秒、元/首、
+  元/音色）、积分计价的视频与 3D（积分/次、积分/秒）. A column whose unit this tool cannot
+  read is left to the page, which is what keeps reserved throughput (`元/kTPM/月`)
+  and capacity out. The tabs that name a region are kept apart as a `region`
+  condition: one model sold in 广州 and 新加坡 at different rates is two offers. The
+  legacy comparison tables (`旧计费方式` beside `新计费方式`) are skipped, because the
+  generation that replaced them has its own billing table.
+- **Baidu** — 图像生成与图像编辑（元/张）、OCR（元/页）、文本向量与重排序（元/千 tokens,
+  restated per million）. Those tables carry no version or channel column, so they
+  are read by a second shape that finds its price columns by what their cells
+  publish, with the row's own 单位 column as the evidence of currency.
+- **xAI** — `### Imagine Pricing`: 每张图与每秒视频, both stated inside the cell.
+- **Google**, **OpenAI**, **Kimi** — see their entries above.
+
 ## Time bands
 
 A vendor that bills by time of day states the window somewhere other than a price column, and every platform words it differently — so the hours are read per vendor and never carried across. Most state it in prose beside the table: `time_band_rules()` collects those sentences, `select_time_band_rules()` keeps the ones governing a model (matched by model name first, then by a delivery label such as `原厂直供`), and `compact_time_band_window()` reduces a sentence to the window repeated on each peak/off-peak row. Baidu instead writes the window into the billed item's own text, so `baidu.py` reads it off the rows. Either way the vendor's own wording stays on the record as `time_bands.statements`, because the wording is what settles the bill.
@@ -351,8 +391,9 @@ caches a scan as a single `catalog` entry, not one per model.
 Two conventions apply to every table-driven adapter:
 
 - Keep cache-hit and cache-miss prices apart. A cache miss is billed at the regular input rate, so `输入（未命中缓存）` must not be classified as cached input. Cache *storage* is the exception that still counts as a token price even though it bills an hour.
-- Read only amounts that name the adapter's own currency (`CNY` tables emit CNY, `USD` tables emit USD) and ignore headers that bill a non-token unit such as audio duration (`输入音频时长`, per hour) or per-request pricing. Never relabel one currency as another.
-- A header that describes the *request* instead of a price is a condition, not a price column. Length bands are the trap: `条件 输入长度：千 token` contains 输入, so an input-price rule would swallow the column and silently drop the tier that separates otherwise identical rows (see `NON_PRICE_HEADER_MARKERS`, and any adapter that classifies headers itself must consult it). The cell value, not the heading, decides a time-band key, because vendors file the peak/off-peak split in the same generic 条件 column.
+- Read only amounts that name the adapter's own currency (`CNY` tables emit CNY, `USD` tables emit USD). Never relabel one currency as another.
+- A price column is one whose header names a charge **or** whose cells publish amounts in the adapter's own currency. The second reading is what admits a column headed `输入音频时长` whose cells are `¥0.5 /小时`: the header names the billed quantity and the cells name the money. A column that names a unit whose cells hold durations is a condition, because nothing in it is a price.
+- A header that describes the *request* instead of a price is a condition, and it is what keeps a duration column from being read as a money column. Length bands are the trap: `条件 输入长度：千 token` contains 输入 and names a unit without pricing one, so an input-price rule would swallow the column and silently drop the tier that separates otherwise identical rows (see `REQUEST_MARKERS` / `describes_request`). The cell value, not the heading, decides a time-band key, because vendors file the peak/off-peak split in the same generic 条件 column.
 
 Conventions that come with the document readers:
 
@@ -360,4 +401,7 @@ Conventions that come with the document readers:
 - A table is read with the whole heading path that precedes it, so a `h2` model (`Gemini 3.8 Flash`) and the `h3` tier under it (`Standard`) stay distinguishable.
 - A cell break (`<br>`) survives both readers as written, so the values a vendor stacks in one cell stay separable: the first is the model, the rest are variants the same price covers (`ERNIE-5.0<br>ERNIE-5.0-Thinking-Preview`). A note stacked under a model name (`调整前价格，2026-08-21 起不适用`) is preserved as a `model_note` condition instead of being dropped, because the price on that row no longer applies.
 - Cells are laid onto a real grid, repeating a value across every row a *row span* covers — a vendor writes such a cell once, and without the repeat the columns below it shift left and a price lands under the wrong heading. A *column span* is deliberately not repeated: it is how a vendor lays a row heading across the columns beside it, and expanding it would fill the header row — the row that says which columns are prices — with copies of the heading. A cell arriving with no open row starts one, because Baidu's own table drops one `<tr>` and those cells belong to that row, not to the one above.
-- A vendor that quotes a rate per thousand or per ten thousand tokens is restated per million (`tokens_per_price_unit` / `per_million_tokens`), so one report compares one unit. The figure the vendor published stays in the price's `display` text. A label that does not price tokens at all (`元/页`, `元/次`) is rejected rather than rescaled.
+- A vendor that quotes a rate per thousand or per ten thousand tokens is restated per million (`tokens_per_price_unit` / `per_million_tokens`), so one report compares one unit. The figure the vendor published stays in the price's `display` text. A label that does not price tokens at all (`元/页`, `元/次`) keeps its own unit and is never rescaled: a page rate restated per million tokens would quote a number nobody charges.
+- A price is read with the unit the vendor billed in, and every reading of unit wording lives in `pricing.UNIT_MEASURES` (see `references/schema.md` for the codes). A unit this tool cannot read is not a reason to drop the model: the model stays in the catalogue and the vendor's own wording is kept, either as the price's unit or, where the vendor stated no unit, as `provider_defined` rendered as the amount alone.
+- A bare number is read as money only where the clause published nothing else and the header (or the row's own unit column) named the currency. A number embedded in words is never a price: a scope line reading `输出视频分辨率为 1080p` states a resolution, and taking its digits would price the model at 1080.
+- A cell that publishes several tiers states each tier's scope in the cell, and each tier becomes its own offer under `conditions.price_scope`. A cell that lists several model IDs (`image-01<br />image-01-live`, `speech-2.6-hd / speech-02-hd`) prices each of them, one model each.

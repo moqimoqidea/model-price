@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Iterable, Sequence
 
 from ..core import HttpClient, PriceSource, now_iso
 from ..errors import SourceError
 from ..models import model_family, normalize_model, split_trailing_parenthetical
 from ..parsing import (
+    CellRate,
+    cell_rates as read_cell_rates,
     headed_document_tables,
     monetary_amount,
+    price_column_kinds,
+    price_kind as header_price_kind,
+    price_unit_code,
     time_band_label,
     time_bands_for,
-    token_price_kind,
 )
 from ..pricing import make_record, price_item
 from ..text import CELL_BREAK_RE, clean_text
@@ -23,6 +27,12 @@ CONDITION_ALIASES = {
     "条件": "context_tier",
     "上下文": "context_tier",
 }
+
+# Where the words a cell groups its rates under are filed. A vendor that prices one
+# charge in several tiers says in the cell what each tier is for ("单图生成场景：≤ 261
+# 万像素"), and that scope is what tells two rates of one model apart — merged, they
+# read as one price the page never published.
+PRICE_SCOPE_CONDITION = "price_scope"
 
 # A model cell may carry a note in a second segment ("正式版<br>> 调整前价格");
 # only the first segment names the model. The break itself is split by
@@ -34,14 +44,15 @@ PLACEHOLDER_VALUES = {"", "-", "—", "–", "不适用"}
 MODEL_HEADERS = {"model", "model name", "模型", "模型名称"}
 
 
-class TabularTokenPricingAdapter(PriceSource):
-    """Parse a documented table of per-model token prices.
+class TabularPricingAdapter(PriceSource):
+    """Parse a documented table of per-model prices, billed in any unit.
 
     The document may arrive as HTML or as Markdown. Subclasses declare where it
     lives, its currency and region, and override only the policy that differs:
     which headers are prices, how an amount is read, and how an offer is named.
-    Rows are identified by their header wording and parsed prices, never by a
-    hard-coded list of model names.
+    Columns are identified by what they say and what they hold — a price column is
+    one whose header names a charge, or whose cells publish amounts in this
+    adapter's currency — never by a hard-coded list of model names.
     """
 
     currency: str
@@ -62,16 +73,40 @@ class TabularTokenPricingAdapter(PriceSource):
 
     # --- policy -----------------------------------------------------------
 
+    @property
+    def default_unit(self) -> str:
+        """What a column prices in when neither its header nor its cells say."""
+        return f"{self.currency}_per_million_tokens"
+
     def document_text(self) -> str:
         """Return the document to parse; override when it is fetched indirectly."""
         return self.document(self.source_url)
 
     def price_kind(self, header: str) -> str | None:
         """Classify a price column, or return ``None`` when it is a condition."""
-        return token_price_kind(header)
+        return header_price_kind(header)
 
     def cell_amount(self, cell: str, header: str) -> str | None:
         return monetary_amount(cell, header, self.currency)
+
+    def cell_rates(self, cell: str, header: str) -> list[CellRate]:
+        """Every rate one cell publishes, with the vendor's own scope for it."""
+        return read_cell_rates(cell, header=header, currency=self.currency)
+
+    def price_unit(self, header: str, cell_unit: str = "") -> str:
+        """The unit a column's amount is billed in."""
+        return price_unit_code(
+            cell_unit, header, currency=self.currency, default=self.default_unit
+        )
+
+    def publishes_money(self, header: str, cells: Sequence[str]) -> bool:
+        """Whether a column's cells publish amounts this adapter can read.
+
+        A header that names the quantity billed rather than the charge ("输入音频
+        时长") still heads a price column when its cells are money, and a header
+        naming a unit whose cells only hold durations heads a condition.
+        """
+        return any(self.cell_amount(cell, header) is not None for cell in cells)
 
     def offer_name(self, headings: list[str]) -> str:
         heading = headings[-1] if headings else ""
@@ -85,9 +120,26 @@ class TabularTokenPricingAdapter(PriceSource):
         """Keep only the conditions that distinguish the named offer."""
         return conditions
 
-    def model_variants(self, display_name: str) -> list[str]:
-        """Expand a model cell when one priced row names several model IDs."""
+    def model_variants(self, display_name: str, note: str = "") -> list[str]:
+        """Expand a model cell when one priced row names several model IDs.
+
+        ``note`` is the rest of the cell after its first segment. It is a note by
+        default — a vendor explaining a rate there is not naming another model —
+        and an adapter whose cells list several IDs opts into reading it.
+        """
         return [display_name]
+
+    def model_note_condition(self) -> str:
+        """Where the words a model cell puts after its name are filed."""
+        return "model_note"
+
+    def heading_conditions(self, headings: list[str]) -> dict[str, Any]:
+        """Conditions a vendor states in the section a table is filed under.
+
+        A service tier or a legacy section is stated by the container the table
+        sits in rather than by any column, so it reaches the row from here.
+        """
+        return {}
 
     def model_conditions(self, display_name: str) -> dict[str, Any]:
         return {}
@@ -109,11 +161,6 @@ class TabularTokenPricingAdapter(PriceSource):
         }
 
     # --- parsing ----------------------------------------------------------
-
-    def price_unit(self, header: str) -> str:
-        if "小时" in header or "hour" in header.lower():
-            return f"{self.currency}_per_million_tokens_per_hour"
-        return f"{self.currency}_per_million_tokens"
 
     @staticmethod
     def condition_name(header: str) -> str:
@@ -149,6 +196,42 @@ class TabularTokenPricingAdapter(PriceSource):
         note = clean_text(" ".join(segments[1:]))
         return display_name, MODEL_CELL_NOTE_RE.sub("", note)
 
+    def _row_offers(
+        self,
+        cell_rates: Iterable[tuple[str, str, CellRate]],
+        conditions: dict[str, Any],
+    ) -> dict[tuple[str, ...], dict[str, Any]]:
+        """Group one row's rates into the offers its cells scoped them into.
+
+        Rates the vendor published under one scope are one offer with several
+        amounts; a scope that differs makes another offer, so a table that prices
+        four tiers in one cell is reported as four prices rather than one.
+        """
+        grouped: dict[tuple[str, ...], dict[str, Any]] = {}
+        for kind, header, rate in cell_rates:
+            scope = tuple(rate.conditions)
+            offer = grouped.setdefault(
+                scope,
+                {
+                    "conditions": dict(conditions),
+                    "prices": [],
+                },
+            )
+            if scope:
+                offer["conditions"][PRICE_SCOPE_CONDITION] = "；".join(scope)
+            offer["prices"].append(
+                price_item(
+                    kind,
+                    header,
+                    rate.amount,
+                    self.price_unit(header, rate.unit_phrase),
+                    display=rate.display,
+                    list_amount=rate.list_amount,
+                    discount=rate.discount,
+                )
+            )
+        return grouped
+
     def _rows(self) -> list[dict[str, Any]]:
         if self._parsed_rows is not None:
             return self._parsed_rows
@@ -159,11 +242,9 @@ class TabularTokenPricingAdapter(PriceSource):
             raw_headers = table[0]
             headers = [clean_text(cell) for cell in raw_headers]
             model_index = self.model_column(headers)
-            price_columns = {
-                index: kind
-                for index, header in enumerate(headers)
-                if (kind := self.price_kind(header)) is not None
-            }
+            price_columns = price_column_kinds(
+                headers, table, currency=self.currency, kind_of=self.price_kind
+            )
             if model_index is None or not price_columns:
                 continue
             carried = ("", "")
@@ -176,20 +257,10 @@ class TabularTokenPricingAdapter(PriceSource):
                     display_name, note = carried
                 if not display_name:
                     continue
-                prices = []
-                for index, kind in price_columns.items():
-                    amount = self.cell_amount(cells[index], headers[index])
-                    if amount is not None:
-                        prices.append(
-                            price_item(
-                                kind,
-                                headers[index],
-                                amount,
-                                self.price_unit(headers[index]),
-                                display=clean_text(cells[index]),
-                            )
-                        )
-                shared_conditions = self.model_conditions(display_name)
+                conditions = {
+                    **self.heading_conditions(headings),
+                    **self.model_conditions(display_name),
+                }
                 for index in range(len(headers)):
                     if index == model_index or index in price_columns:
                         continue
@@ -202,33 +273,52 @@ class TabularTokenPricingAdapter(PriceSource):
                             if time_band_label(value)
                             else self.condition_name(raw_headers[index])
                         )
-                        shared_conditions[key] = value
-                shared_conditions["billing_mode"] = "pay_as_you_go"
+                        conditions[key] = value
+                conditions["billing_mode"] = "pay_as_you_go"
                 if headings:
-                    shared_conditions["source_section"] = headings[-1]
-                offer_name = self.row_offer_name(headings, shared_conditions)
-                shared_conditions = self.row_conditions(shared_conditions)
-                for model_name in self.model_variants(display_name):
-                    conditions = dict(shared_conditions)
-                    # A trailing parenthetical often carries a real billing tier
-                    # ("grok-4.6 (≥ 200k prompt tokens)"). It is dropped from the
-                    # model id, so keep it as a condition instead of losing it.
-                    name_without_tier, tier = split_trailing_parenthetical(model_name)
-                    if tier:
-                        conditions["context_tier"] = tier
-                    if note:
-                        conditions["model_note"] = note
-                    rows.append(
-                        {
-                            "model_id": normalize_model(name_without_tier),
-                            "display_name": model_name,
-                            "offer_name": offer_name,
-                            "conditions": conditions,
-                            "prices": prices,
-                        }
-                    )
+                    conditions["source_section"] = headings[-1]
+                offer_name = self.row_offer_name(headings, conditions)
+                conditions = self.row_conditions(conditions)
+                rates = [
+                    (kind, headers[index], rate)
+                    for index, kind in price_columns.items()
+                    for rate in self.cell_rates(cells[index], headers[index])
+                ]
+                offers = self._row_offers(rates, conditions) or {
+                    # A model the vendor lists without a price this tool can read
+                    # stays in the catalogue with no offer: its listing and the
+                    # later publication of its price are two separate facts, and
+                    # dropping the row would report neither.
+                    (): {"conditions": dict(conditions), "prices": []}
+                }
+                for scope, offer in offers.items():
+                    variants = self.model_variants(display_name, note)
+                    for model_name in variants:
+                        scoped = dict(offer["conditions"])
+                        # A trailing parenthetical often carries a real billing tier
+                        # ("grok-4.6 (≥ 200k prompt tokens)"). It is dropped from the
+                        # model id, so keep it as a condition instead of losing it.
+                        name_without_tier, tier = split_trailing_parenthetical(
+                            model_name
+                        )
+                        if tier:
+                            scoped["context_tier"] = tier
+                        # Words the adapter read as another model ID are not a
+                        # condition on this one, and printing them as both would
+                        # report one fact twice.
+                        if note and note not in variants:
+                            scoped[self.model_note_condition()] = note
+                        rows.append(
+                            {
+                                "model_id": normalize_model(name_without_tier),
+                                "display_name": model_name,
+                                "offer_name": offer_name,
+                                "conditions": scoped,
+                                "prices": offer["prices"],
+                            }
+                        )
         if not rows:
-            raise SourceError("official token pricing table was not found")
+            raise SourceError("official pricing table was not found")
         self._parsed_rows = rows
         return rows
 

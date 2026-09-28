@@ -49,8 +49,8 @@ Standard library only, Python 3, no install step, no build step.
 │       ├── core.py              HttpClient, the PriceSource contract, atomic JSON writes
 │       ├── text.py              normalisation of text scraped out of vendor documents
 │       ├── models.py            model identity: normalisation, aliases, family matching
-│       ├── pricing.py           price and record shapes, unit rescaling
-│       ├── parsing.py           document readers: HTML/Markdown tables, price headers, time bands
+│       ├── pricing.py           price and record shapes, the unit vocabulary, rescaling
+│       ├── parsing.py           document readers: HTML/Markdown tables, price columns, the rates one cell publishes, time bands
 │       ├── caching.py           CacheStore and the CachedPriceSource decorator
 │       ├── updating.py          Git fast-forward before an explicit refresh
 │       ├── snapshots.py         archived baselines, retention, and point-in-time selection
@@ -157,12 +157,16 @@ These are the rules the code exists to hold. A change that breaks one is a bug,
 even when the tests still pass.
 
 1. **Never merge two variants into one price row.** Delivery mode, region, time
-   band, context tier, promotion, generation, and currency each keep their own
-   row. A tidy comparison that averages them is wrong.
+   band, context tier, promotion, generation, currency, and the scope a cell
+   published a rate under each keep their own row. A tidy comparison that averages
+   them is wrong.
 2. **Identify by content, never by a name list.** Tables are located by the
-   wording of a model column, prices by the wording of a price header. Adding a
-   model name to code so a parser recognizes it is the anti-pattern the whole
-   `parsing` layer was written to remove.
+   wording of a model column. A price column is one whose header names a charge
+   *or* whose cells publish amounts in the adapter's own currency — the second
+   reading is what admits a column headed 输入音频时长 whose cells are 元/小时, and
+   a header naming only how big the request is stays a condition. Adding a model
+   name to code so a parser recognizes it is the anti-pattern the whole `parsing`
+   layer was written to remove.
 3. **A header that describes the request is a condition, not a price.** A length
    band (`条件 输入长度：千 token`) or a peak/off-peak label still has to survive
    into `conditions`; reading it as a price column silently drops the tier that
@@ -173,8 +177,8 @@ even when the tests still pass.
    charges nothing states it in words or as a zero, and both are that model's
    price: recorded as an amount of `0` with the vendor's own wording in
    `display`. What stays unpriced is a charge this tool could not read at all —
-   billed per second, per request, or on a tier the page does not quote. Both
-   facts reach the reader, and they never read alike. Free-price recognition
+   a tier the page does not quote, or a figure published without the currency it
+   is in. Both facts reach the reader, and they never read alike. Free-price recognition
    lives in `pricing` (`is_free_statement`, `is_free_amount`); an adapter that
    reads its cells itself delegates to it rather than growing its own rule.
 6. **An amount is shown with the terms the vendor published beside it.** When a
@@ -282,6 +286,8 @@ even when the tests still pass.
 | --- | --- |
 | Add a price provider | a new module in `providers/`, then register it in `providers/__init__.py` |
 | A vendor's page moved or its table changed | that vendor's `providers/*.py` constants, plus `references/source-notes.md` |
+| A unit a vendor bills in reads wrongly, or a new one appears | `pricing.UNIT_MEASURES`, then the wording in `reporting.UNIT_MEASURE_LABELS` |
+| A cell that publishes several rates reads wrongly | `parsing.cell_rates` and the rules it is built from |
 | Add a model-introduction source | `descriptions/sources.py` and `DESCRIPTION_SOURCE_CLASSES`; routing in `descriptions/resolver.py` |
 | Change how one value reads | `reporting.py` |
 | Change how a message is laid out | `messages.py` |
@@ -302,7 +308,7 @@ Most vendors publish a documented table of per-model prices, so the work is
 declaration rather than parsing:
 
 ```python
-class XiaomiAdapter(TabularTokenPricingAdapter):
+class XiaomiAdapter(TabularPricingAdapter):
     provider_id = "xiaomi"
     provider_name = "小米 MiMo"
     source_url = XIAOMI_URL
@@ -311,12 +317,14 @@ class XiaomiAdapter(TabularTokenPricingAdapter):
     region = "中国区"
 ```
 
-`TabularTokenPricingAdapter` walks the document once and holds the rows, so a
-scan costs one read rather than one query per model. Override only the policy that
-actually differs: `price_kind`, `cell_amount`, `offer_name`, `model_column`,
-`model_conditions`, `record_extras`, or `model_extras`. Subclass `PriceSource`
-directly only when the vendor's shape is genuinely not a table (`aliyun` reads a
-JSON API, `tencent` reads embedded Slate JSON, `baidu` reads a Gatsby pre-fetch).
+`TabularPricingAdapter` walks the document once and holds the rows, so a scan
+costs one read rather than one query per model, and it reads whatever unit each
+column bills in. Override only the policy that actually differs: `price_kind`,
+`cell_amount`, `cell_rates`, `price_unit`, `offer_name`, `model_column`,
+`heading_conditions`, `model_conditions`, `model_variants`, `record_extras`, or
+`model_extras`. Subclass `PriceSource` directly only when the vendor's shape is
+genuinely not a table (`aliyun` reads a JSON API, `tencent` reads embedded Slate
+JSON, `baidu` reads a Gatsby pre-fetch).
 
 Two declarations deserve care: `carry_forward_model` for vendors that leave a
 continuation row's model cell empty, and `publishes_time_bands` for vendors that
@@ -346,10 +354,10 @@ Parse rendered HTML only when the vendor publishes neither.
 - Type hints throughout. `Any` is for the loosely-shaped JSON payloads, where the
   shape is documented in `references/schema.md` instead.
 - Names carry the documentation: `publishes_time_bands`, `carry_forward_model`,
-  `NON_IDENTITY_CONDITIONS`, `describes_request_length`.
+  `NON_IDENTITY_CONDITIONS`, `describes_request`, `price_column_kinds`.
 - Reach for a function; use a class for a contract (`PriceSource`,
   `DescriptionSource`) or for state that has to be carried across calls
-  (`TabularTokenPricingAdapter._parsed_rows`, `CacheStore`).
+  (`TabularPricingAdapter._parsed_rows`, `CacheStore`).
 - Change behaviour by overriding policy, not by copying a method into a subclass.
 - Chinese text belongs only in strings a person reads: report wording, `region`
   values, and vendor-facing labels. Identifiers, comments, and docstrings are
@@ -429,11 +437,11 @@ git push gitee <branch>
 - Copying an IM channel's version or command into multiple documents. Route to
   its file under `im/` instead.
 - Teaching a parser a model name. Fix the rule it uses.
-- Merging currencies, time bands, regions, or generations to make a comparison
-  tidier.
+- Merging currencies, time bands, regions, generations, or the tiers one cell
+  published, to make a comparison tidier.
 - Reporting a price of zero for a model whose price was simply unreadable — one
-  billed per request, per second, or on a tier the source does not quote. Say it
-  is unpriced. A zero the vendor actually published is a different fact: it is a
+  billed on a tier the source does not quote, or printed without the currency it
+  is in. Say it is unpriced. A zero the vendor actually published is a different fact: it is a
   price, and it is recorded as one.
 - Letting a missing source become an empty row or a silent omission.
 - Truncating anything to fit a limit — a message, an introduction, a list, or a

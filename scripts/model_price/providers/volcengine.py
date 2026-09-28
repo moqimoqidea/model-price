@@ -4,6 +4,11 @@ The documentation API returns the page both as structured Slate JSON and as the
 Markdown its "复制markdown" button produces. The Markdown is parsed because it is
 the vendor's own table rendering: it keeps one header row per table, so the
 shared table reader aligns columns without extra work.
+
+Ark prices video, image, and 3D generation beside its language models, and states
+several tiers inside one cell. Neither is special-cased here: a column is read
+when its cells publish amounts, and the scope a cell grouped a rate under is kept
+as that rate's condition.
 """
 
 from __future__ import annotations
@@ -11,11 +16,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .base import TabularTokenPricingAdapter
+from .base import TabularPricingAdapter
 from ..errors import SourceError
-from ..parsing import describes_request_length, non_token_billing_header
-from ..pricing import FREE_AMOUNT, is_free_statement
-from ..text import clean_text, numeric_values
+from ..text import clean_text
 
 VOLCENGINE_PAGE_URL = "https://docs.volcengine.com/docs/82379/1544106"
 VOLCENGINE_DOC_API = (
@@ -35,40 +38,7 @@ def volc_offer_name(headings: list[str]) -> str:
     return "online_standard"
 
 
-def price_type_from_header(header: str) -> str:
-    compact = clean_text(header).replace(" ", "")
-    # The condition column is headed "条件 输入长度：千 token", so it mentions 输入
-    # without being an input price. Length bands are conditions, never prices.
-    if describes_request_length(header):
-        return "other"
-    if "缓存存储" in compact:
-        return "cache_storage"
-    if non_token_billing_header(header):
-        return "other"
-    if "缓存命中" in compact and "音频" in compact and "非音频" not in compact:
-        return "audio_cache_hit"
-    if "缓存命中" in compact:
-        return "cache_hit"
-    if "输入" in compact and "音频" in compact and "非音频" not in compact:
-        return "audio_input"
-    if "输入" in compact:
-        return "input"
-    if "输出" in compact:
-        return "output"
-    return "other"
-
-
-def amount_from_cell(value: str) -> str | None:
-    """Read one price cell, whether it quotes a rate or a charge of nothing."""
-    if is_free_statement(value):
-        return FREE_AMOUNT
-    if clean_text(value) in ("", "-"):
-        return None
-    values = numeric_values(value)
-    return values[-1] if values else None
-
-
-class VolcengineAdapter(TabularTokenPricingAdapter):
+class VolcengineAdapter(TabularPricingAdapter):
     provider_id = "volcengine"
     provider_name = "火山引擎方舟"
     source_url = VOLCENGINE_PAGE_URL
@@ -104,11 +74,12 @@ class VolcengineAdapter(TabularTokenPricingAdapter):
         return self._document
 
     def price_kind(self, header: str) -> str | None:
-        kind = price_type_from_header(header)
-        return None if kind == "other" else kind
-
-    def cell_amount(self, cell: str, header: str) -> str | None:
-        return amount_from_cell(cell)
+        """Keep speech apart from text: Ark bills the two at different rates."""
+        kind = super().price_kind(header)
+        compact = clean_text(header).replace(" ", "")
+        if kind in ("input", "cache_hit") and "音频" in compact and "非音频" not in compact:
+            return f"audio_{kind}"
+        return kind
 
     def offer_name(self, headings: list[str]) -> str:
         return volc_offer_name(headings)
