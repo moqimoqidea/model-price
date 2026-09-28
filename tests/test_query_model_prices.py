@@ -600,7 +600,7 @@ class StructuredDocumentTests(unittest.TestCase):
             "delivery_mode": "platform_hosted",
         }]
         with mock.patch.object(adapter, "_catalog", return_value=listed), \
-             mock.patch.object(adapter, "_price_offers", return_value={}), \
+             mock.patch.object(adapter, "_price_offers", return_value=({}, {})), \
              mock.patch.object(adapter, "source_updated_at", return_value=None), \
              mock.patch.object(adapter, "_band_document", return_value=""):
             self.assertEqual(adapter.catalog_records()[0]["offers"], [])

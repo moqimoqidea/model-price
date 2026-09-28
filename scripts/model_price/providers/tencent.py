@@ -24,6 +24,7 @@ from ..parsing import (
     time_bands_for,
 )
 from ..pricing import (
+    CREDIT_WORDS,
     is_credit_unit,
     make_record,
     price_item,
@@ -149,8 +150,8 @@ def slate_price_tables(
     """
 
     def walk(
-        nodes: Iterable[Any], path: tuple[str, ...], tab: str
-    ) -> Iterator[tuple[tuple[str, ...], str, list[list[str]]]]:
+        nodes: Iterable[Any], path: tuple[str, ...], tab: str, prose: str
+    ) -> Iterator[tuple[tuple[str, ...], str, str, list[list[str]]]]:
         for node in nodes:
             if not isinstance(node, dict):
                 continue
@@ -163,15 +164,24 @@ def slate_price_tables(
             if kind == "table":
                 rows = expand_slate_table(node)
                 if rows:
-                    yield path, tab, rows
+                    yield path, tab, prose, rows
                 continue
             name = str(node.get("name") or "").strip()
             if kind == "tab" and name:
-                yield from walk(node.get("children") or [], (*path, name), name)
+                yield from walk(node.get("children") or [], (*path, name), name, prose)
                 continue
-            yield from walk(node.get("children") or [], path, tab)
+            if kind == "p":
+                # The page states a credit's value in the sentence above the table
+                # that prices in it ("1积分对应0.12元"): the rate is kept in the
+                # credit it was published in, and this is the vendor's own note on
+                # what that credit is worth.
+                text = clean_text(object_text(node))
+                if text:
+                    prose = text
+                continue
+            yield from walk(node.get("children") or [], path, tab, prose)
 
-    yield from walk(slate, (), "")
+    yield from walk(slate, (), "", "")
 
 
 # The columns that say what a rate covers, in the wording the page keeps them in.
@@ -310,7 +320,16 @@ class TencentAdapter(PriceSource):
                 return headers.index(label)
         return None
 
-    def _price_offers(self) -> dict[str, list[dict[str, Any]]]:
+    @staticmethod
+    def _credit_note(prose: str, offer: dict[str, Any]) -> str:
+        """The vendor's sentence about a credit, when the offer bills in one."""
+        if not prose or not is_credit_unit(offer["prices"][0]["unit"]):
+            return ""
+        return prose if CREDIT_WORDS[0] in prose else ""
+
+    def _price_offers(
+        self,
+    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[str]]]:
         """Read every table on the price page that prices a model's use.
 
         One table prices one product line — tokens, images, seconds of video,
@@ -319,7 +338,8 @@ class TencentAdapter(PriceSource):
         read is left to the page.
         """
         offers_by_name: dict[str, list[dict[str, Any]]] = {}
-        for path, tab, rows in slate_price_tables(self._price_slate()):
+        notes_by_name: dict[str, list[str]] = {}
+        for path, tab, prose, rows in slate_price_tables(self._price_slate()):
             headers = [clean_text(header) for header in rows[0]]
             name_index = self._model_column(headers)
             if name_index is None:
@@ -390,6 +410,13 @@ class TencentAdapter(PriceSource):
                                 )
                             ],
                         }
+                        note = self._credit_note(prose, priced_offer)
+                        if note:
+                            notes = notes_by_name.setdefault(
+                                normalize_model(display_name), []
+                            )
+                            if note not in notes:
+                                notes.append(note)
                         found = offers_by_name.setdefault(
                             normalize_model(display_name), []
                         )
@@ -406,7 +433,7 @@ class TencentAdapter(PriceSource):
                             found.append(priced_offer)
                         else:
                             merged["prices"].extend(priced_offer["prices"])
-        return offers_by_name
+        return offers_by_name, notes_by_name
 
     def _records(self) -> list[dict[str, Any]]:
         grouped: dict[str, list[dict[str, str]]] = {}
@@ -418,7 +445,7 @@ class TencentAdapter(PriceSource):
                 normalize_model(without_trailing_parenthetical(entry["display_name"])),
                 [],
             ).append(entry)
-        offers_by_name = self._price_offers()
+        offers_by_name, notes_by_name = self._price_offers()
         retrieved_at = now_iso()
         records = []
         for name_key, entries in grouped.items():
@@ -445,6 +472,14 @@ class TencentAdapter(PriceSource):
                     delivery_mode=delivery_mode,
                     model_family=model_family(display_name),
                     source_updated_at=self.source_updated_at(),
+                    # A credit's value is the vendor's own sentence about the table
+                    # that bills in it, kept as written and never compared: a
+                    # reworded note is not a price that moved.
+                    **(
+                        {"pricing_notes": notes_by_name[name_key]}
+                        if notes_by_name.get(name_key)
+                        else {}
+                    ),
                     time_bands=(
                         time_bands_for(
                             self._band_document(),

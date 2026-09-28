@@ -342,9 +342,11 @@ priced per token. The tables that carry those units:
   in a sentence rather than a table (`…限时免费`) and are not read.
 - **Tencent** — the whole page is walked in order, so every product line is read:
   图片生成（元/张）、视频生成（元/秒、元/张）、3D（元/个）、语音（元/万字符、元/秒、元/首、
-  元/音色）、积分计价的视频与 3D（积分/次、积分/秒）. A column whose unit this tool cannot
-  read is left to the page, which is what keeps reserved throughput (`元/kTPM/月`)
-  and capacity out. The tabs that name a region are kept apart as a `region`
+  元/音色）、积分计价的视频与 3D（积分/次、积分/秒）. A credit price keeps the credit
+  as its unit, and the sentence the page writes above that table saying what a
+  credit is worth ("1积分对应0.12元") travels as the record's `pricing_notes`
+  rather than being converted. A column whose unit this tool cannot read is left to
+  the page, which is what keeps reserved throughput (`元/kTPM/月`) and capacity out. The tabs that name a region are kept apart as a `region`
   condition: one model sold in 广州 and 新加坡 at different rates is two offers. The
   legacy comparison tables (`旧计费方式` beside `新计费方式`) are skipped, because the
   generation that replaced them has its own billing table.
