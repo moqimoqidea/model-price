@@ -39,6 +39,7 @@ from model_price.models import (
 )
 from model_price.parsing import (
     TextTableParser,
+    dated_rate_terms,
     document_update_stamp,
     headed_document_tables,
     markdown_tables,
@@ -110,13 +111,16 @@ from model_price.descriptions.core import (
     SUMMARY_MAX_CHARS,
     description_record,
 )
-from model_price.messages import band_lines, comparison_message, scan_message
+from model_price.messages import band_lines, comparison_message, price_text, scan_message
 from model_price.reporting import (
+    conditions_text,
+    discount_folds,
     format_moment,
     format_price,
     model_digest,
     offer_condition_text,
     offering_text,
+    price_terms_text,
     price_lookup,
     shared_conditions,
 )
@@ -919,6 +923,44 @@ class GeminiAdapterTests(unittest.TestCase):
         self.assertEqual(price_lookup(offer, "input")["display"], "Free of charge")
         self.assertEqual(offer["conditions"]["service_tier"], "standard")
 
+    def test_a_rate_the_page_dates_keeps_the_day_and_the_rate_that_follows(self):
+        markdown = """## Gemini Dated
+
+*[`gemini-dated`](https://ai.google.dev/gemini-api/docs/models/gemini-dated)*
+
+### Standard
+
+|   | Free Tier | Paid Tier, per 1M tokens in USD |
+|---|---|---|
+| Input price | Free of charge | $0.75 through December 31, 2026. $1.50 starting January 1, 2027. |
+| Context caching price | Free of charge | $0.075 through December 31, 2026. $0.15 starting January 1, 2027. $0.50 / 1,000,000 tokens per hour (storage price) through December 31, 2026. |
+"""
+        offer = self.adapter(markdown).query("gemini-dated")[0]["offers"][0]
+        priced = price_lookup(offer, "input")
+        self.assertEqual(priced["amount"], "0.75")
+        self.assertEqual(priced["list_amount"], "1.50")
+        self.assertEqual(priced["effective_until"], "2026-12-31")
+        self.assertEqual(
+            format_price(priced), "0.75 美元/百万 tokens 至 2026-12-31（原价 1.50）"
+        )
+        storage = price_lookup(offer, "cache_storage")
+        self.assertEqual(storage["effective_until"], "2026-12-31")
+        self.assertNotIn("list_amount", storage)
+        self.assertEqual(
+            format_price(storage), "0.50 美元/百万 tokens/小时 至 2026-12-31"
+        )
+
+    def test_a_rate_the_page_does_not_date_carries_no_period(self):
+        standard = next(
+            offer
+            for offer in self.adapter().query("gemini-test")[0]["offers"]
+            if offer["name"] == "standard"
+        )
+        priced = price_lookup(standard, "input")
+        self.assertNotIn("effective_until", priced)
+        self.assertNotIn("list_amount", priced)
+        self.assertEqual(format_price(priced), "0.50 美元/百万 tokens")
+
     def test_each_tier_becomes_its_own_offer(self):
         record = self.adapter().query("gemini-test")[0]
         self.assertEqual([offer["name"] for offer in record["offers"]], ["standard", "batch"])
@@ -1126,6 +1168,134 @@ class FreePriceTests(unittest.TestCase):
         self.assertEqual(
             format_price({"amount": "0", "unit": "CNY_per_million_tokens"}),
             "免费",
+        )
+
+
+class DatedRateTests(unittest.TestCase):
+    """A rate a vendor limits in time carries the day it stops applying.
+
+    Reading the amount alone makes a limited-time rate look like the model's ordinary
+    price, and drops an increase the vendor has already published.
+    """
+
+    def test_the_day_the_rate_stops_and_the_rate_that_follows_are_read(self):
+        self.assertEqual(
+            dated_rate_terms(
+                "$0.75 through December 31, 2026. $1.50 starting January 1, 2027."
+            ),
+            {"effective_until": "2026-12-31", "list_amount": "1.50"},
+        )
+
+    def test_a_rate_with_no_announced_successor_still_carries_its_day(self):
+        self.assertEqual(
+            dated_rate_terms(
+                "$0.50 / 1,000,000 tokens per hour (storage price) "
+                "through December 31, 2026."
+            ),
+            {"effective_until": "2026-12-31"},
+        )
+
+    def test_a_parenthetical_beside_each_amount_does_not_hide_the_successor(self):
+        self.assertEqual(
+            dated_rate_terms(
+                "$9.00 (audio) through December 31, 2026. $18.00 (audio) "
+                "starting January 1, 2027. Equivalent to $0.00225 per 10s audio."
+            ),
+            {"effective_until": "2026-12-31", "list_amount": "18.00"},
+        )
+
+    def test_a_cell_that_names_no_day_states_no_period(self):
+        for cell in ("$2.00", "Free of charge", "Not available", "", "$0.25"):
+            self.assertEqual(dated_rate_terms(cell), {}, cell)
+
+    def test_a_rate_that_starts_later_is_not_read_as_the_one_that_ends(self):
+        # "starting" alone dates the rate coming, not the rate being billed, so it
+        # is not a period this amount is limited to.
+        self.assertEqual(
+            dated_rate_terms("$2.00 starting January 1, 2027"), {}
+        )
+
+
+class DiscountedPriceTests(unittest.TestCase):
+    """A rate a vendor discounts publishes two numbers, and both are shown.
+
+    The multiplier is the vendor's, and it counts tenths of the rate it reduces:
+    Aliyun's market writes 限时5折 beside ``¥ 12 ¥ 6``, so 0.5 is 5 折. Reading the
+    multiplier as a 折 count would print half a rate as one twentieth of it.
+    """
+
+    def price(self, **extra):
+        return {
+            "type": "input",
+            "label": "输入（Batch Chat)",
+            "amount": "6",
+            "unit": "CNY_per_million_tokens",
+            **extra,
+        }
+
+    def test_a_multiplier_is_read_as_the_folds_it_names(self):
+        self.assertEqual(discount_folds("0.5"), "5")
+        self.assertEqual(discount_folds("0.7"), "7")
+        self.assertEqual(discount_folds("0.85"), "8.5")
+
+    def test_a_multiplier_that_reduces_nothing_names_no_folds(self):
+        for value in (None, "1", "1.0", "0", "", "abc", "-0.5", "1.2"):
+            self.assertIsNone(discount_folds(value), value)
+
+    def test_the_rate_that_stands_is_shown_beside_the_one_that_is_billed(self):
+        self.assertEqual(
+            format_price(self.price(list_amount="12", discount="0.5")),
+            "6 元/百万 tokens（原价 12，5 折）",
+        )
+
+    def test_a_list_price_without_a_multiplier_is_still_shown(self):
+        self.assertEqual(
+            format_price(self.price(list_amount="2")), "6 元/百万 tokens（原价 2）"
+        )
+
+    def test_a_rate_that_reduces_nothing_reads_as_one_number(self):
+        for extra in ({}, {"discount": "1"}, {"discount": "abc"}, {"discount": "0"}):
+            self.assertEqual(format_price(self.price(**extra)), "6 元/百万 tokens")
+
+    def test_a_multiplier_with_no_list_price_still_names_itself(self):
+        # No adapter publishes this, but a 折 is a fact about the rate whether or
+        # not the page also printed the rate it reduces.
+        self.assertEqual(
+            format_price(self.price(discount="0.5")), "6 元/百万 tokens（5 折）"
+        )
+
+    def test_the_terms_are_written_once_however_a_price_is_shown(self):
+        # The comparison and the scan read the same price through one renderer, so
+        # neither can lose the terms the other shows.
+        price = self.price(list_amount="12", discount="0.5")
+        rendered = price_text(price)
+        self.assertTrue(rendered.startswith("输入（Batch Chat)："))
+        self.assertIn(format_price(price), rendered)
+        self.assertEqual(rendered.count("5 折"), 1)
+        self.assertNotIn("折扣", rendered)
+
+    def test_the_terms_name_only_what_the_price_actually_carries(self):
+        self.assertEqual(price_terms_text({"amount": "6"}), "")
+        self.assertEqual(
+            price_terms_text({"amount": "6", "list_amount": "12"}), "原价 12"
+        )
+        self.assertEqual(price_terms_text({"amount": "6", "discount": "0.5"}), "5 折")
+
+    def test_a_condition_this_tool_states_is_named_in_chinese(self):
+        self.assertEqual(
+            conditions_text(
+                {
+                    "billing_mode": "pay_as_you_go",
+                    "source_section": "模型价格 / 文本生成",
+                    "time_band": "高峰时段",
+                    "channel": "在线推理",
+                    "promotion_window": "2026年9月24日 00:00 – 2026年10月7日 23:59",
+                    "context_tier": "输入Token数：[0,32k]",
+                }
+            ),
+            "time_band=高峰时段；计费通道=在线推理；"
+            "活动窗口=2026年9月24日 00:00 – 2026年10月7日 23:59；"
+            "context_tier=输入Token数：[0,32k]",
         )
 
 
@@ -2762,6 +2932,99 @@ def render_scan(store, providers, captured_at):
     return scan_message(
         scan_providers(list(providers), store, captured_at=captured_at)
     )
+
+
+class DiscountedScanTests(unittest.TestCase):
+    """A scan reports the numbers a reduction is between, not only the billed one.
+
+    An added offer is read out of a baseline rather than off the live record, so a
+    field the baseline drops is one the scan message cannot print.
+    """
+
+    def record(self, amount, *, list_amount=None, discount=None):
+        return make_record(
+            "fake",
+            "假渠道",
+            "m1",
+            "M1",
+            "中国区",
+            [
+                {
+                    "name": "standard",
+                    "conditions": {},
+                    "prices": [
+                        price_item(
+                            "input",
+                            "输入（Batch Chat)",
+                            amount,
+                            "CNY_per_million_tokens",
+                            list_amount=list_amount,
+                            discount=discount,
+                        )
+                    ],
+                }
+            ],
+            "https://example.test/fake",
+            "test",
+            "2026-09-16T00:00:00+08:00",
+        )
+
+    def scan(self, before, after):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            scan_providers(
+                [ScannedProvider(before)], store, captured_at="2026-09-15T10:00:00+08:00"
+            )
+            return scan_message(
+                scan_providers(
+                    [ScannedProvider(after)], store, captured_at="2026-09-16T10:00:00+08:00"
+                )
+            )
+
+    def test_an_added_offer_carries_the_rate_it_discounts(self):
+        # A promotion arrives as an offer the baseline has never had — which is how
+        # Baidu's activity and Aliyun's discounted variant both reach the report.
+        anchor = scanned_record("m0", "M0", "2", "8")
+        message = self.scan(
+            [anchor],
+            [anchor, self.record("6", list_amount="12", discount="0.5")],
+        )
+        self.assertIn("输入（Batch Chat) 6 元/百万 tokens（原价 12，5 折）", message)
+
+    def test_a_moved_discount_says_what_each_end_is_a_reduction_of(self):
+        message = self.scan(
+            [self.record("6", list_amount="12", discount="0.5")],
+            [self.record("9.6", list_amount="12", discount="0.8")],
+        )
+        self.assertIn("6 元/百万 tokens（原价 12，5 折） → 9.6 元/百万 tokens（原价 12，8 折）", message)
+
+    def test_a_list_price_alone_does_not_read_as_a_promotion(self):
+        message = self.scan([self.record("2")], [self.record("1.5", list_amount="2")])
+        self.assertIn("2 元/百万 tokens → 1.5 元/百万 tokens（原价 2）", message)
+
+    def test_the_terms_reach_the_baseline(self):
+        snapshot = snapshot_of([self.record("6", list_amount="12", discount="0.5")])
+        price = snapshot["models"]["m1"]["offers"][0]["prices"][0]
+        self.assertEqual(price["list_amount"], "12")
+        self.assertEqual(price["discount"], "0.5")
+
+    def test_a_baseline_that_predates_the_terms_reads_as_unchanged(self):
+        # The terms are shown with an amount but never compared by them, so a
+        # baseline archived before the report could print them is still the same
+        # catalogue rather than every price having moved.
+        current = json.loads(
+            json.dumps(snapshot_of([self.record("6", list_amount="12", discount="0.5")]))
+        )
+        earlier = json.loads(json.dumps(current))
+        earlier["captured_at"] = "2026-09-15T10:00:00+08:00"
+        for model in earlier["models"].values():
+            for offer in model["offers"]:
+                for price in offer["prices"]:
+                    for field in ("list_amount", "discount", "effective_until"):
+                        price.pop(field, None)
+        report = compare_snapshots(earlier, current)
+        self.assertEqual(report["status"], UNCHANGED)
+        self.assertEqual(report["changes"]["total"], 0)
 
 
 class SnapshotTests(unittest.TestCase):

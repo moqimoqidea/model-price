@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 from .deepseek_updates import DEEPSEEK_UPDATES_URL, UpdateEntry, read_updates
 from .errors import SourceError
 from .models import normalize_model
-from .parsing import headed_document_tables, markdown_tables
+from .parsing import date_value, headed_document_tables, markdown_tables
 from .text import clean_text, clean_zero_width_text
 
 LifecycleEvent = dict[str, Any]
@@ -53,38 +53,7 @@ ENGLISH_DATE = re.compile(
     r"Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}\b",
     re.I,
 )
-NUMERIC_DATE = re.compile(
-    r"(?P<year>20\d\d)\s*(?:年|[-/.])\s*(?P<month>\d{1,2})"
-    r"\s*(?:月|[-/.])\s*(?P<day>\d{1,2})\s*日?"
-    r"(?:\s*(?P<clock>\d{1,2}:\d{2}(?::\d{2})?))?"
-)
 MODEL_ID = re.compile(r"[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)+", re.I)
-
-
-def date_value(value: str, *, utc_offset: str = "") -> str | None:
-    """Keep the published precision; only attach an offset when the page states it."""
-    value = clean_zero_width_text(value)
-    match = NUMERIC_DATE.search(value)
-    if match:
-        try:
-            day = (
-                datetime(int(match["year"]), int(match["month"]), int(match["day"]))
-                .date()
-                .isoformat()
-            )
-        except ValueError:
-            return None
-        clock = match["clock"]
-        return f"{day}T{clock}{utc_offset}" if clock else day
-    match = ENGLISH_DATE.search(value)
-    if match:
-        candidate = match.group().replace(",", "")
-        for fmt in ("%B %d %Y", "%b %d %Y"):
-            try:
-                return datetime.strptime(candidate, fmt).date().isoformat()
-            except ValueError:
-                continue
-    return None
 
 
 def event(

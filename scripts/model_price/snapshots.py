@@ -27,7 +27,7 @@ from .paths import (
     SNAPSHOT_RETENTION_MONTHS,
     SNAPSHOT_SCHEMA_VERSION,
 )
-from .pricing import offer_priority, price_sort_key
+from .pricing import PRICE_TERM_FIELDS, offer_priority, price_sort_key
 
 LATEST = "latest"
 YESTERDAY = "yesterday"
@@ -103,11 +103,10 @@ NON_IDENTITY_CONDITIONS = frozenset({"source_section"})
 
 # Every field a price line is archived with. An offer that is reported as added is
 # read out of a baseline rather than off a live record, so a field missing here is a
-# field the reader cannot print: a promotion's 原价 would reach JSON and vanish from
-# the scan message. A field added here needs no baseline bump, because the diff
-# compares amounts rather than this tuple and an older baseline reads as ``None``
-# where the key is absent.
-PRICE_FIELDS = ("type", "label", "amount", "unit", "list_amount")
+# field the reader cannot print. A field added here needs no baseline bump, because
+# the diff compares amounts rather than this tuple and an older baseline reads as
+# ``None`` where the key is absent.
+PRICE_FIELDS = ("type", "label", "amount", "unit", *PRICE_TERM_FIELDS)
 
 
 def offer_identity(offer: dict[str, Any]) -> tuple[Any, ...]:

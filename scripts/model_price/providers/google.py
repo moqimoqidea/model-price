@@ -13,7 +13,7 @@ from typing import Any
 from ..core import PriceSource, now_iso
 from ..errors import SourceError
 from ..models import model_family, model_matches, normalize_model
-from ..parsing import markdown_link_text, markdown_tables
+from ..parsing import dated_rate_terms, markdown_link_text, markdown_tables
 from ..pricing import is_free_amount, make_record, price_item, usd_amount, usd_price
 from ..text import clean_text
 
@@ -125,15 +125,23 @@ class GeminiAdapter(PriceSource):
                     cell = CACHE_STORAGE_RE.sub("", cell).strip()
                 item = usd_price(kind, label, cell)
                 if item:
+                    # A cell that dates the rate it bills prices a period rather than
+                    # the model, so the day the amount stops and any rate that takes
+                    # over are both kept: read as one amount, a limited-time rate
+                    # would pass for what the model ordinarily costs and an increase
+                    # the vendor has already announced would be lost with it.
+                    item.update(dated_rate_terms(cell))
                     prices.append(item)
                 if storage:
+                    storage_cell = clean_text(storage.group(0))
                     prices.append(
                         price_item(
                             "cache_storage",
                             "Context cache storage",
                             storage.group(1),
                             "USD_per_million_tokens_per_hour",
-                            display=clean_text(storage.group(0)),
+                            display=storage_cell,
+                            **dated_rate_terms(storage_cell),
                         )
                     )
             if prices:

@@ -271,12 +271,9 @@ def price_lines(offer: dict[str, Any]) -> list[str]:
 
 
 def price_text(price: dict[str, Any]) -> str:
-    """One price as ``输入（未命中缓存）：2 元/百万 tokens``, discount included."""
+    """One price as ``输入（未命中缓存）：2 元/百万 tokens``."""
     label = price.get("label") or price.get("type", "价格")
-    value = format_price(price)
-    if price.get("discount") is not None:
-        value += f"；折扣 {price['discount']}"
-    return sentence_text(f"{label}：{value}")
+    return sentence_text(f"{label}：{format_price(price)}")
 
 
 def band_lines(results: list[dict[str, Any]]) -> list[str]:

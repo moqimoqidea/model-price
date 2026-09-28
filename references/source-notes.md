@@ -98,7 +98,14 @@ only models present in an actual change.
   `Prices[]` carries direct prices and `MultiPrices[]` carries input-length or other
   tiers, each of which remains a separate offer. `Discount` is a multiplier: the
   effective amount is `Price × Discount`, while `Price` and `Discount` remain as
-  `list_amount` and `discount` for auditability. `BuiltInToolMultiPrices` describes
+  `list_amount` and `discount` for auditability. The market page renders the same
+  relation in words and prints both numbers — `输入（Batch Chat) 限时5折 ¥ 12 ¥ 6`,
+  `视频生成（480P）限时7折 ¥ 0.3 ¥ 0.21` — so `Price` is the 刊例价 and the `Discount`
+  count is the 折 number (0.5 is 5 折). The sibling `input_token_batch` row publishes
+  the same discounted figure already flattened (6 beside the 12), which is what
+  cross-checks the multiplier reading. The page says 限时 but the API states no end
+  date, so no window is recorded: a period is written only where the vendor published
+  one. `BuiltInToolMultiPrices` describes
   optional tool calls rather than model inference, so those charges are not folded
   into a model's token or generation offers. Model detail URLs percent-encode the
   literal model id; their server-rendered tooltip is the official source for the
@@ -201,8 +208,54 @@ only models present in an actual change.
   A model section is an `h2`, its service tiers are `h3`, and the section's API ids
   are published on an italic link line (`*[`gemini-3.8-flash`](url)*`), which is a
   better model id than the heading slug the HTML carried. Sections that price tools,
-  agents, or general notes are excluded by name.
+  agents, or general notes are excluded by name. Google is the vendor that dates a
+  rate inside the price cell itself: the paid-tier column carries two dated amounts
+  (`$0.75 through December 31, 2026. $1.50 starting January 1, 2027.`) across 90
+  prices in 7 models, and its cache rows carry only the closing half
+  (`$0.50 / 1,000,000 tokens per hour (storage price) through December 31, 2026.`).
+  Both halves are read into the price's own terms — the day the amount stops and the
+  rate that takes over — because the current rate is itself the promotion and the
+  table publishes no list price to strike through. Every pair doubles, which is what
+  a reading of the pairs is checked against. The cell's sentence stays in `display`.
 - xAI Grok: `https://docs.x.ai/developers/pricing.md`. The rendered HTML page splits the text-pricing header across two rows with merged cells, which the shared table reader cannot align; the official Markdown keeps a single header row. Long-context billing tiers live in a trailing parenthetical in the model cell (`grok-4.6 (≥ 200k prompt tokens)`), so they are preserved as a `context_tier` condition rather than dropped with the model id.
+
+### Special prices, and where each vendor states them
+
+A price is not always one number. A vendor may publish the rate it reduces, a
+multiplier, and the day its rate stops. Each is read where that vendor stated it, and
+only where it stated it: a period is never inferred from a neighbouring vendor, and
+prose is never turned into a date.
+
+Read, because the vendor states them as data beside the amount:
+
+- **Aliyun** — `Discount` multiplier, plus the 刊例价 it multiplies. See its entry above.
+- **Baidu** — the activity banner's own name, window, and 原价/活动价 cell labels.
+  See its entry above.
+- **Google** — two dated amounts inside the price cell. See its entry above.
+- **MiniMax** — struck-through list amounts (`~~4.20~~ 2.10`) are read as
+  `list_amount`, so both numbers reach the report. The row's badge says 永久五折, but
+  no `discount` is recorded: both amounts are already published, the ratio is
+  arithmetic between two printed numbers rather than a figure the vendor states
+  separately, and deriving one would put a number in the report the row itself does
+  not print for that price. The badge is kept verbatim in the row's `context_tier`.
+
+Published, but only in a sentence beside the table — **not read**, because a sentence
+is not a field and "at least through November 21, 2026" is not the same fact as "ends
+November 21, 2026". The prices these describe are still read as the current billed
+rate, so nothing is misstated; what is missing is the vendor's own caveat:
+
+- **OpenAI** — `GPT-5.6 Sol's promotional pricing is available at least through
+  November 21, 2026.` The table publishes the promotional rate and no list price.
+- **Volcengine** — `Seedance 2.0 mini 与 Seedance 2.0 fast 现已开启限时优惠活动…达到规定
+  的 token 用量上限后将恢复按刊例价结算`, with the rules behind a separate link.
+- **xAI** — `Batch discounts by model: 20% off standard rates`, plus a 2× priority
+  multiplier. The discount belongs to the batch API, which is not read as an offer.
+- **Xiaomi** — `缓存写入：限时免费` and `mimo-v2.5-tts* 限时免费`. The first is preserved
+  through the free wording; the second prices models the catalogue does not list.
+
+Vendors with none of it: DeepSeek, Tencent, Kimi (its 限时免费 is a file API rather
+than a model rate), and Anthropic (its discounts are negotiated per account, and its
+geography multiplier is a term of service rather than a published price).
 
 Provider caches live under `cache/<provider>/`. A cache entry records its provider, operation, arguments, fetch time, schema version, and data. Entries older than 3 hours are not used as fallback when refresh fails, and `CACHE_SCHEMA_VERSION` is bumped whenever a source or parser changes so entries written by an older version are ignored.
 

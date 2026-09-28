@@ -161,6 +161,15 @@ def unit_code(label: str) -> str:
     return label or "provider_defined"
 
 
+# What a vendor publishes beside an amount, saying what the amount is besides how
+# much it is: the rate it reduces, the multiplier it reduces it by, and the last day
+# it applies. All three are shown with the amount and archived with it, so a rate
+# that is limited in time or in scope is never read as the model's ordinary price.
+# They sit apart from an offer's ``conditions``, which say how a charge is billed
+# rather than what one amount is against another.
+PRICE_TERM_FIELDS = ("list_amount", "discount", "effective_until")
+
+
 def price_item(
     kind: str,
     label: str,
@@ -170,6 +179,7 @@ def price_item(
     display: str | None = None,
     list_amount: str | None = None,
     discount: Any = None,
+    effective_until: str | None = None,
 ) -> dict[str, Any]:
     """Build one price entry with its original label and unit."""
     item: dict[str, Any] = {
@@ -184,6 +194,8 @@ def price_item(
         item["list_amount"] = list_amount
     if discount is not None:
         item["discount"] = discount
+    if effective_until is not None:
+        item["effective_until"] = effective_until
     return item
 
 

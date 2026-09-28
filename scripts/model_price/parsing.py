@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from html.parser import HTMLParser
 from typing import Any, NamedTuple
 
 from .models import model_family, normalize_model
 from .pricing import FREE_AMOUNT, is_free_statement
-from .text import clean_text, numeric_values, unescape_markdown
+from .text import clean_text, clean_zero_width_text, numeric_values, unescape_markdown
 
 HEADING_TAGS = ("h1", "h2", "h3", "h4")
 
@@ -54,6 +55,53 @@ def document_update_stamp(document: str, *, utc_offset: str = "") -> str | None:
     if not match:
         return None
     return normalize_update_stamp(match.group(0), utc_offset=utc_offset)
+
+
+# A vendor writes a date either as digits the locale orders or as an English month
+# name. Both readings live here because both are read off published documents — a
+# catalogue stamp, a notice headline, and a price that applies only until a day.
+ENGLISH_DATE = re.compile(
+    r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
+    r"Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}\b",
+    re.I,
+)
+NUMERIC_DATE_RE = re.compile(
+    r"(?P<year>20\d\d)\s*(?:年|[-/.])\s*(?P<month>\d{1,2})"
+    r"\s*(?:月|[-/.])\s*(?P<day>\d{1,2})\s*日?"
+    r"(?:\s*(?P<clock>\d{1,2}:\d{2}(?::\d{2})?))?"
+)
+
+
+def date_value(value: str, *, utc_offset: str = "") -> str | None:
+    """Read a published date, keeping the precision the vendor gave it.
+
+    A date-only source stays date-only, and an offset is attached only where the
+    document states a clock: inventing midnight would put a moment in the report
+    the vendor never published.
+    """
+    value = clean_zero_width_text(value)
+    match = NUMERIC_DATE_RE.search(value)
+    if match:
+        try:
+            day = (
+                datetime(int(match["year"]), int(match["month"]), int(match["day"]))
+                .date()
+                .isoformat()
+            )
+        except ValueError:
+            return None
+        clock = match["clock"]
+        return f"{day}T{clock}{utc_offset}" if clock else day
+    match = ENGLISH_DATE.search(value)
+    if match:
+        candidate = match.group().replace(",", "")
+        for fmt in ("%B %d %Y", "%b %d %Y"):
+            try:
+                return datetime.strptime(candidate, fmt).date().isoformat()
+            except ValueError:
+                continue
+    return None
 
 
 class SpanGrid:
@@ -660,3 +708,36 @@ def monetary_amount(value: str, header: str, currency: str) -> str | None:
         values = numeric_values(cell)
         return values[0] if values else None
     return None
+
+
+# A vendor that limits a rate in time dates it inside the cell: ``through <day>`` for
+# the last day it applies, and — when the rate that follows is already announced —
+# that rate and the day it starts. Google states both halves in its model rows and
+# only the first in its cache rows. Reading the amount alone would take a
+# limited-time rate for what the model ordinarily costs, and lose an increase the
+# vendor had already published.
+DATED_RATE_RE = re.compile(
+    r"\$\s*(?P<current>\d+(?:\.\d+)?)[^.$]*?\s*through\s*(?P<until>[^.$]+)"
+    r"(?:[.\s]*\$\s*(?P<next>\d+(?:\.\d+)?)[^.$]*?\s*starting\s*(?P<after>[^.$]+))?",
+    re.I,
+)
+
+
+def dated_rate_terms(value: str) -> dict[str, str]:
+    """Read the terms a cell that dates the rate it bills publishes.
+
+    The day the amount stops applying is always read; the amount that takes over is
+    read when the same cell announces one. The amount billed now is not returned —
+    the caller already reads it, and it is what a purchase costs today. An empty
+    mapping means the cell prices the charge once, which is every cell outside a
+    promotion.
+    """
+    match = DATED_RATE_RE.search(clean_text(value))
+    if not match:
+        return {}
+    terms: dict[str, str] = {}
+    if until := date_value(match["until"]):
+        terms["effective_until"] = until
+    if match["next"]:
+        terms["list_amount"] = match["next"]
+    return terms

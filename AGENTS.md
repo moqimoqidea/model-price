@@ -177,23 +177,32 @@ even when the tests still pass.
    facts reach the reader, and they never read alike. Free-price recognition
    lives in `pricing` (`is_free_statement`, `is_free_amount`); an adapter that
    reads its cells itself delegates to it rather than growing its own rule.
-6. **Peak/off-peak windows are per platform and quoted verbatim.** Read the window
+6. **An amount is shown with the terms the vendor published beside it.** When a
+   vendor prints a second rate, a multiplier, or the day its rate stops, that is
+   what the amount is — a rate limited in time or in scope, not the model's
+   ordinary price — and it travels in `list_amount`, `discount`, or
+   `effective_until`. Each is read only where the vendor stated it: a multiplier
+   is never derived from two amounts, and a period is never inferred from prose,
+   from another vendor, or from a neighbouring row. They are written once, in
+   `reporting` (`format_price`, `price_terms_text`), so the comparison and the
+   scan cannot show different numbers for the same price.
+7. **Peak/off-peak windows are per platform and quoted verbatim.** Read the window
    from that vendor's own document into `time_bands`; `publishes_time_bands` gates
    it so a platform that states no window is never handed another platform's. A
    rule is selected by model name first, delivery label second — one page can bill
    two generations on different calendars.
-7. **A description failure never touches a price result.** A missing, retired, or
+8. **A description failure never touches a price result.** A missing, retired, or
    unreadable introduction is reported as `not_found` or `source_error`; neither
    status may suppress or alter a price that parsed fine.
-8. **Never synthesize Tencent model text.** Its details sit behind an authenticated
+9. **Never synthesize Tencent model text.** Its details sit behind an authenticated
    console, so the checked-in mirror is the only source. A model absent from it is
    `not_found` — not a cue to infer capabilities from a name.
-9. **A failed or empty scan never writes a baseline.** `source_error` and
+10. **A failed or empty scan never writes a baseline.** `source_error` and
    `empty_scan` are reported and every prior successful archive is kept, so the
    change survives into the run after the source recovers. A listed model with
    no price is not an empty scan: keep it in the snapshot with unknown price so
    its listing and later price publication are detected separately.
-10. **Cache and baseline are different things.** The cache is a 3-hour TTL store of
+11. **Cache and baseline are different things.** The cache is a 3-hour TTL store of
    responses, reused inside that window. `delta` always reads the sources afresh —
    a cache hit would be handed back as "no change". Successful scans are archived
    per provider, with a hard limit of 1000 snapshots. Before pruning, reserve the
@@ -201,12 +210,12 @@ even when the tests still pass.
    first scan of each day while space remains; fill the rest with the newest scans.
    This preserves yesterday/month lookups and yesterday's first scan
    without letting a high-frequency schedule grow past the count limit.
-11. **Bump the schema version when a shape changes.** `CACHE_SCHEMA_VERSION` covers
+12. **Bump the schema version when a shape changes.** `CACHE_SCHEMA_VERSION` covers
     parsed responses (`CACHE_TTL`), `SNAPSHOT_SCHEMA_VERSION` covers baselines. A
     parser or source change requires the cache bump, or stale parsed data is served
     for the rest of its TTL; a baseline written by an older shape is treated as
     absent rather than diffed against.
-12. **A length limit is met by summarizing, never by truncating.** Two limits
+13. **A length limit is met by summarizing, never by truncating.** Two limits
     exist. An introduction over 300 characters is kept whole and marked
     `summary_needs_condensing` (`descriptions.core.SUMMARY_MAX_CHARS`), and the
     label says so and names the original length. A message over `--max-chars`
@@ -217,12 +226,12 @@ even when the tests still pass.
     summarizes either — it measures and says so, and whoever sends the message
     summarizes. Those are the only two length rules; nothing in `messages` may
     measure or slice a string, and `budget` only counts characters.
-13. **The message carries no Markdown.** No `**`, no `#`, no tables, no Markdown links —
+14. **The message carries no Markdown.** No `**`, no `#`, no tables, no Markdown links —
     hierarchy is numbering and indentation, and each source URL is written last
     on its line. Any displayed source URL starts with `https://` so a reader can
     open it directly. DingTalk reads a document back through its own parser, which
     mangles a report this dense.
-14. **The model introduction opens every message.** Both `comparison_blocks` and
+15. **The model introduction opens every message.** Both `comparison_blocks` and
     `scan_blocks` put it first, after the header and before prices or conclusions: a
     reader who does not know what a model is for cannot judge what it costs.
     Never move it below a price, and never print it per channel — what a model
@@ -232,28 +241,28 @@ even when the tests still pass.
     fact. A scan prefixes each introduction with 【上架】 or 【下架】, lists the
     former first, and shows prices only for the former. The message omits an `active` lifecycle because a newly listed model is
     necessarily available; preview, legacy, retired, and unknown remain visible.
-15. **Statuses are reported, never softened.** `source_error`, `not_found`, and
+16. **Statuses are reported, never softened.** `source_error`, `not_found`, and
     `empty_scan` reach the scan reader. `update_skipped` and `check_failed` remain
     in JSON while the scan message omits the Skill update check. A provider that
     held still is still named, because that shows the scan covered it.
-16. **No credentials, ever.** The only authenticated path is refreshing the
+17. **No credentials, ever.** The only authenticated path is refreshing the
     explicit Tencent mirror through a user-owned logged-in session, offline.
-17. **An official update time needs official evidence.** A vendor-labelled date or
+18. **An official update time needs official evidence.** A vendor-labelled date or
     a date the official update log publishes may populate `source_updated_at`. When
     no such evidence exists, JSON retains the most recent successful snapshot
     before the current run. The scan message does not print update times. A
     date-only source remains date-only rather than acquiring an invented midnight.
-18. **IM transport facts have one owner per channel.** `SKILL.md` routes a sender
+19. **IM transport facts have one owner per channel.** `SKILL.md` routes a sender
     to the selected channel contract; it does not restate versions or commands.
     DingTalk's DWS minimum version, exact route, preflight, target checks, and
     transport ceiling live only in `im/dingtalk.md`. `README.md` may
     explain why that contract exists, but must link to it instead of copying it.
-19. **One document is one request per run.** Every registered provider owns a
+20. **One document is one request per run.** Every registered provider owns a
     one-pass `catalog_records()` implementation, and adapters read stable pages
     through `PriceSource.document()`. `HttpClient` retries only safe requests,
     respects short `Retry-After` values, and enforces a per-host request budget.
     POST is never retried unless its caller marks the operation idempotent.
-20. **Retirement evidence is independent of catalogue disappearance.** A missing
+21. **Retirement evidence is independent of catalogue disappearance.** A missing
     price row alone does not prove EOS. Keep each hosting platform's literal ID
     and distinguish announcement, EOM, automatic redirect, and EOS. A failed or
     empty notice read cannot overwrite the prior notice history. The earliest

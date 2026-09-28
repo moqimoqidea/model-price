@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .pricing import PRICE_TERM_FIELDS
 from .snapshots import offer_identity, price_identity
 
 # What one scan can conclude about one provider.
@@ -113,7 +114,12 @@ def price_changes(
     """Record a price's appearance, disappearance, or new amount.
 
     Only the amount and its unit decide a change; a caption that merely moved
-    between columns is not a price movement.
+    between columns is not a price movement. What the change is *shown* with is
+    wider than that: a reduction is carried along so a reader can tell a rate cut
+    from a promotion that ended. Adding it to what is compared would instead report
+    every discounted price as newly changed the first time the baseline learns the
+    field, which is a change in what the report can say rather than in what is
+    billed.
     """
     shared = {
         **model,
@@ -124,22 +130,47 @@ def price_changes(
     after_prices = {price_identity(price): price for price in after.get("prices", [])}
     for key in sorted(set(after_prices) - set(before_prices)):
         changes.append(
-            {**shared, **_price_brief(after_prices[key]), "from": None, "to": _amount(after_prices[key])}
+            {
+                **shared,
+                **_price_brief(after_prices[key]),
+                "from": None,
+                "to": _amount_line(after_prices[key]),
+            }
         )
     for key in sorted(set(before_prices) - set(after_prices)):
         changes.append(
-            {**shared, **_price_brief(before_prices[key]), "from": _amount(before_prices[key]), "to": None}
+            {
+                **shared,
+                **_price_brief(before_prices[key]),
+                "from": _amount_line(before_prices[key]),
+                "to": None,
+            }
         )
     for key in sorted(set(before_prices) & set(after_prices)):
         was, now = before_prices[key], after_prices[key]
         if _amount(was) != _amount(now):
             changes.append(
-                {**shared, **_price_brief(now), "from": _amount(was), "to": _amount(now)}
+                {
+                    **shared,
+                    **_price_brief(now),
+                    "from": _amount_line(was),
+                    "to": _amount_line(now),
+                }
             )
 
 
 def _amount(price: dict[str, Any]) -> dict[str, Any]:
+    """The billed number, which is what a price is compared by."""
     return {"amount": price.get("amount"), "unit": price.get("unit")}
+
+
+def _amount_line(price: dict[str, Any]) -> dict[str, Any]:
+    """The billed number plus the terms it is published under, as the reader sees it."""
+    line = _amount(price)
+    line.update(
+        {field: price[field] for field in PRICE_TERM_FIELDS if price.get(field) is not None}
+    )
+    return line
 
 
 def _price_brief(price: dict[str, Any]) -> dict[str, Any]:

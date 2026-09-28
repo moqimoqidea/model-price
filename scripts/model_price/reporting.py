@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .delta import EMPTY_SCAN, SOURCE_ERROR
@@ -48,6 +49,17 @@ DELIVERY_LABELS = {
 # would change every offer's identity against the baselines already on disk, and
 # the next scan would read as every offer having been replaced.
 UNPRINTED_CONDITIONS = frozenset({"billing_mode", "source_section"})
+
+# The conditions this tool states on its own behalf, named in the language the
+# report is written in. Every other key is a field name a vendor chose, and is
+# printed exactly as that vendor published it: nothing at this layer knows what an
+# English key a source invented meant, and a translation here would be a sentence
+# the source page cannot be checked against. A key added to this map is one this
+# repository named, so its wording is ours to fix.
+CONDITION_LABELS = {
+    "channel": "计费通道",
+    "promotion_window": "活动窗口",
+}
 
 UNIT_LABELS = {
     "CNY_per_million_tokens": "元/百万 tokens",
@@ -217,6 +229,15 @@ def price_lookup(offer: dict[str, Any], kind: str) -> dict[str, Any] | None:
 
 
 def format_price(item: dict[str, Any] | None) -> str:
+    """One amount with whatever the vendor published beside it.
+
+    The cell's own sentence is the evidence, and it is what the report falls back to
+    for a charge that is not a plain rate against a unit — a wording that states a
+    free charge, or an amount the vendor equates to another. Once the numbers in that
+    sentence have been read into terms, though, the terms are what is printed: they
+    say the same thing in the language the report is written in, and leaving the
+    sentence in their place would hide the very fields this reads.
+    """
     if not item:
         return NO_CHANGE
     display = item.get("display")
@@ -227,6 +248,17 @@ def format_price(item: dict[str, Any] | None) -> str:
         # ("免费", "限时免费", "Free of charge") and as 免费 when it does not,
         # never as an amount of zero next to a unit it is not billed in.
         return display or FREE_LABEL
+    terms = price_terms_text(item)
+    # The last day the amount applies sits against the amount rather than inside the
+    # terms beside it: "原价 1.50，至 2026-12-31" reads as the list price being the
+    # one that ends, which is the reverse of what a vendor dating its current rate
+    # has said.
+    until = item.get("effective_until") or ""
+    if terms or until:
+        current = f"{amount} {UNIT_LABELS.get(unit, unit)}"
+        if until:
+            current += f" 至 {until}"
+        return f"{current}（{terms}）" if terms else current
     if display and (
         "免费" in display
         or len(re.findall(r"\$\s*\d", display)) > 1
@@ -235,17 +267,55 @@ def format_price(item: dict[str, Any] | None) -> str:
         return display
     if amount is None:
         return display or NO_CHANGE
-    current = f"{amount} {UNIT_LABELS.get(unit, unit)}"
+    return f"{amount} {UNIT_LABELS.get(unit, unit)}"
+
+
+def price_terms_text(item: dict[str, Any]) -> str:
+    """What an amount is published against, when it is published against anything.
+
+    A vendor running a promotion prints two numbers for one charge — the rate billed
+    now and the rate it gives way to — and the report shows both, so the lower one is
+    never taken for the model's ordinary price. Nothing here says how long the
+    reduction lasts: a period is stated only by a vendor who published one, and where
+    it is stated it belongs to the amount rather than to these terms.
+    """
+    parts = []
     if item.get("list_amount") is not None:
-        current += f"（原价 {item['list_amount']}）"
-    return current
+        parts.append(f"原价 {item['list_amount']}")
+    if (folds := discount_folds(item.get("discount"))) is not None:
+        parts.append(f"{folds} 折")
+    return "，".join(parts)
+
+
+def discount_folds(discount: Any) -> str | None:
+    """A vendor's discount multiplier as the 折 the report is written in.
+
+    The multiplier counts tenths of the standing rate, so ``0.5`` is 5 折 and not
+    0.5 折: Chinese reads the latter as five percent, which is the other end of the
+    scale from the half it means. A multiplier of one is no reduction at all, and a
+    value that is not a number is left to the JSON rather than guessed into a 折.
+    """
+    if discount is None:
+        return None
+    try:
+        folds = Decimal(str(discount)) * 10
+    except (InvalidOperation, ValueError):
+        return None
+    if folds <= 0 or folds >= 10:
+        return None
+    return format(folds.normalize(), "f")
 
 
 def amount_text(value: dict[str, Any] | None) -> str:
-    """Read a price stored in a snapshot as one comparable amount."""
+    """Read a price stored in a snapshot as the reader sees it.
+
+    The stored line is handed over whole, not reduced to its amount: a price that
+    moved is still a price with terms, and ``6 → 4.8`` leaves a reader unable to
+    tell a rate cut from a promotion that ended.
+    """
     if not value:
         return NO_CHANGE
-    return format_price({"amount": value.get("amount"), "unit": value.get("unit")})
+    return format_price(value)
 
 
 def price_movement(change: dict[str, Any]) -> str:
@@ -276,10 +346,11 @@ def conditions_text(conditions: dict[str, Any]) -> str:
     """Every term a billing condition carries, as the source published it.
 
     Terms that restate something the message already says are left out; see
-    ``UNPRINTED_CONDITIONS``.
+    ``UNPRINTED_CONDITIONS``. A term this tool states itself is named in Chinese;
+    see ``CONDITION_LABELS``.
     """
     return "；".join(
-        f"{key}={value}"
+        f"{CONDITION_LABELS.get(key, key)}={value}"
         for key, value in (conditions or {}).items()
         if key not in UNPRINTED_CONDITIONS
     )

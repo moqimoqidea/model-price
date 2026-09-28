@@ -29,7 +29,13 @@ Each result contains:
 - optional `source_updated_at`, when the official price page or the official update
   log publishes a date for that catalogue
 
-Price fields are `type`, `label`, `amount`, `unit`, and optional `display`, `list_amount`, or `discount`. Common units are `CNY_per_million_tokens`, `USD_per_million_tokens`, their `_per_hour` storage variants, `CNY_per_10k_characters`, and `CNY_per_request`. `list_amount` is the rate the one beside it discounts; the reader prints it as `（原价 …）`, so a promotion publishes both numbers rather than replacing one with the other.
+Price fields are `type`, `label`, `amount`, `unit`, and optional `display`, `list_amount`, `discount`, or `effective_until`. Common units are `CNY_per_million_tokens`, `USD_per_million_tokens`, their `_per_hour` storage variants, `CNY_per_10k_characters`, and `CNY_per_request`.
+
+`amount` is always what a purchase is billed at today. The three optional fields beside it are the terms the vendor published with it, and each is shown with the amount rather than instead of it:
+
+- `list_amount` — the other rate the vendor printed for the same charge, written as `（原价 …）`. A promotion publishes both numbers, so the lower one is never taken for what the model ordinarily costs.
+- `discount` — the multiplier the vendor itself published, written as the 折 a Chinese page reads (`0.5` is `5 折`, not `0.5 折`). It is recorded only where the vendor states one; where a vendor instead prints two dated amounts, the pair is recorded and no ratio is derived from it.
+- `effective_until` — the last day `amount` applies, written against the amount (`0.75 美元/百万 tokens 至 2026-12-31（原价 1.50）`) so the date cannot be read as qualifying the rate beside it. Where a vendor dates its rate per row, the date sits on the price; where it dates a whole activity in a banner, the window sits on the offer as `promotion_window` below.
 
 A vendor that runs an activity prices it as an offer of its own: `name` is the activity's own wording, and its `conditions` add `channel` (the serving channel it prices, which the activity's name has taken over from the standing offer) and `promotion_window` (the window the vendor published, in the vendor's words). Those two stay out of the offer's `name` because they are terms, and both are part of the offer's identity: an activity that ends is an offer that ended, not a price that moved. A standing rate carries neither.
 
@@ -185,8 +191,11 @@ published no price for it at all, so `offers: []`, and it still appears in
 is a price. When an unpriced model's price is later published, the change
 appears in `offers_added`, not `models_added` again. An
 offer entry is a model plus `offer` (`name`, `conditions`, and `prices`). A price change is a
-model plus `offer`, `conditions`, `type`, `label`, and `from`/`to` — each one an
-`{amount, unit}` pair, with `null` on the side where the price did not exist.
+model plus `offer`, `conditions`, `type`, `label`, and `from`/`to` — each one the
+billed `{amount, unit}` pair together with any price term that side carried, with
+`null` on the side where the price did not exist. A change is decided by the amount
+alone; the terms travel with it for the reader, so `6 → 4.8` never has to be read
+without `5 折` beside it.
 
 Baselines are timestamped files under `snapshots/<provider>/`. Every successful
 scan is archived, including an unchanged catalogue. Retention is hard-capped at
