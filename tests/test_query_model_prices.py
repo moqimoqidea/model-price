@@ -85,6 +85,14 @@ from model_price.providers.google import (
 )
 from model_price.providers.kimi import KIMI_INDEX_URL, KimiAdapter
 from model_price.providers.minimax import MINIMAX_URL, MiniMaxAdapter
+from model_price.providers.azure import (
+    ANTHROPIC_FOUNDRY_MARKDOWN_URL,
+    ANTHROPIC_MARKDOWN_URL,
+    AZURE_FOUNDRY_MODELS_URL,
+    AZURE_FOUNDRY_TABS_URL,
+    AZURE_OPENAI_URL,
+    AzureAdapter,
+)
 from model_price.providers.aws_bedrock import (
     BEDROCK_MARKETPLACE_URL,
     BEDROCK_MODELS_URL,
@@ -5310,11 +5318,11 @@ BEDROCK_MARKETPLACE_JSON = json.dumps(
 )
 
 
-def bedrock_adapter():
+def bedrock_adapter(first_party=BEDROCK_FIRST_PARTY_JSON):
     return AWSBedrockAdapter(
         MappingClient(
             {
-                BEDROCK_MODELS_URL: BEDROCK_FIRST_PARTY_JSON,
+                BEDROCK_MODELS_URL: first_party,
                 BEDROCK_MARKETPLACE_URL: BEDROCK_MARKETPLACE_JSON,
             }
         )
@@ -5367,23 +5375,37 @@ class AWSBedrockAdapterTests(unittest.TestCase):
         ]
         self.assertEqual(len(inputs), 1)
 
-    def test_each_region_is_priced_as_its_own_offer(self):
+    def test_one_region_is_read_and_named_on_the_record(self):
         record = bedrock_adapter().query("claude-3-haiku")[0]
-        standard = {
-            offer["conditions"]["region_code"]: offer["name"]
-            for offer in record["offers"]
-            if is_standard_offer(offer)
-        }
+        self.assertEqual(record["region"], "US East (N. Virginia)")
         self.assertEqual(
-            standard,
-            {"us-east-1": "US East (N. Virginia)", "us-west-2": "US West (Oregon)"},
+            {offer["conditions"]["region_code"] for offer in record["offers"]},
+            {"us-east-1"},
         )
-        oregon = next(
-            offer
-            for offer in record["offers"]
-            if offer["conditions"]["region_code"] == "us-west-2"
+        self.assertNotIn("0.3", {p["amount"] for o in record["offers"] for p in o["prices"]})
+
+    def test_a_model_the_first_region_does_not_list_is_read_where_it_is(self):
+        rates = json.loads(BEDROCK_FIRST_PARTY_JSON)
+        # Move every rate of one model out of us-east-1 and into Ohio.
+        for sku in ("SKU-A", "SKU-B", "SKU-C", "SKU-F"):
+            attributes = rates["products"][sku]["attributes"]
+            attributes["regionCode"] = "us-east-2"
+            attributes["location"] = "US East (Ohio)"
+        record = bedrock_adapter(json.dumps(rates)).query("claude-3-haiku")[0]
+        self.assertEqual(record["region"], "US East (Ohio)")
+        self.assertEqual(
+            {offer["conditions"]["region_code"] for offer in record["offers"]},
+            {"us-east-2"},
         )
-        self.assertEqual(oregon["prices"][0]["amount"], "0.3")
+
+    def test_a_model_with_no_american_region_is_read_where_the_list_prices_it(self):
+        rates = json.loads(BEDROCK_FIRST_PARTY_JSON)
+        for sku in ("SKU-A", "SKU-B", "SKU-C", "SKU-D", "SKU-F"):
+            attributes = rates["products"][sku]["attributes"]
+            attributes["regionCode"] = "ap-south-1"
+            attributes["location"] = "Asia Pacific (Mumbai)"
+        record = bedrock_adapter(json.dumps(rates)).query("claude-3-haiku")[0]
+        self.assertEqual(record["region"], "Asia Pacific (Mumbai)")
 
     def test_a_batch_rate_is_a_tier_beside_the_standard_one(self):
         record = bedrock_adapter().query("claude-3-haiku")[0]
@@ -5397,7 +5419,7 @@ class AWSBedrockAdapterTests(unittest.TestCase):
     def test_the_marketplace_suffix_is_not_part_of_the_model_name(self):
         record = bedrock_adapter().query("claude-sonnet-4.5")[0]
         self.assertEqual(record["display_name"], "Claude Sonnet 4.5")
-        self.assertEqual(record["offers"][0]["name"], "Europe (Zurich)")
+        self.assertEqual(record["region"], "Europe (Zurich)")
         self.assertEqual(record["offers"][0]["prices"][0]["amount"], "3.3")
 
     def test_a_price_list_that_is_not_json_is_a_source_error(self):
@@ -5586,4 +5608,248 @@ class GoogleCloudAdapterTests(unittest.TestCase):
         with self.assertRaises(SourceError):
             GoogleCloudAdapter(
                 MappingClient({GOOGLE_CLOUD_PRICING_URL: "<html></html>"})
+            ).list_models()
+
+
+AZURE_PRICE = (
+    "<span class='price-data ' data-amount='{{\"regional\":{{\"australia-east\":{au},"
+    "\"us-east\":{us},\"us-east-2\":{us},\"us-west\":{us}}}}}' data-disclaimer='False' "
+    "data-decimals=\"{decimals}\" data-region-unavailable=\"N/A\" "
+    "data-hide-meter-type-if-no-price='true'>"
+    "<span class='price-value'>$-</span></span>"
+)
+
+
+def azure_span(us, au=1.0, decimals="2"):
+    return AZURE_PRICE.format(us=us, au=au, decimals=decimals)
+
+
+AZURE_OPENAI_HTML = f"""<html><body>
+<h2>GPT-6 Series</h2>
+<div><table aria-label="GPT-6 Series" summary="GPT-6 Series">
+<thead><tr><th>Model</th><th>Pricing (1M Tokens)</th>
+<th>Priority Processing (1M Tokens)</th></tr></thead>
+<tbody>
+<tr><td>GPT-6 Astra (short context) Global</td>
+<td>Input: {azure_span(10)}<br /> Cached Input: {azure_span(1)}<br /> Output: {azure_span(50)}</td>
+<td>Input: {azure_span(25)}<br /> Output: {azure_span(125)}</td></tr>
+<tr><td>GPT-6 Astra (short context) Data Zone</td>
+<td>Input: {azure_span(11)}<br /> Cached Input: {azure_span(1.1)}<br /> Output: {azure_span(55)}</td>
+<td>N/A</td></tr>
+</tbody></table></div>
+<h2>Speech Models</h2>
+<div><table aria-label="Speech Models" summary="Speech Models">
+<thead><tr><th rowspan="2">Models</th><th>Price</th></tr></thead>
+<tbody>
+<tr><td>Whisper</td><td>N/A/hour</td></tr>
+<tr><td>TTS (Text to Speech)</td><td>$15 /1M characters</td></tr>
+</tbody></table></div>
+<h2>Image models</h2>
+<div><table aria-label="Image models" summary="Image models">
+<thead><tr><th>Models</th><th>Quality</th><th>Resolution</th>
+<th>Price (per 100 images)</th></tr></thead>
+<tbody>
+<tr><td rowspan="2">Dall-E-3</td><td>Standard</td><td>1024 * 1024</td><td>{azure_span(4.4)}</td></tr>
+<tr><td>HD</td><td>1024 * 1024</td><td>{azure_span(8.8)}</td></tr>
+</tbody></table></div>
+<h2>Provisioned</h2>
+<div><table aria-label="Provisioned" summary="Provisioned">
+<thead><tr><th>Model</th><th>Min PTUs</th><th>Per PTU Hourly pricing</th>
+<th>Per PTU Monthly Reservation Pricing</th></tr></thead>
+<tbody>
+<tr><td>GPT-6 Astra (short context) Global</td><td>15</td>
+<td>{azure_span(1.0)}</td><td>{azure_span(260.0)}</td></tr>
+</tbody></table></div>
+</body></html>
+"""
+
+AZURE_SERVERLESS_HTML = f"""<html><body>
+<div><table aria-label="Language models" summary="Language models">
+<thead><tr><th>Models</th><th>Input (Per 1M tokens)</th>
+<th>Cached Input (Per 1M tokens)</th><th>Output (Per 1M tokens)</th></tr></thead>
+<tbody>
+<tr><td>DeepSeek V3.2 Global</td><td>{azure_span(0.58, decimals="5")}</td><td>N/A</td>
+<td>{azure_span(1.68, decimals="5")}</td></tr>
+<tr><td>DeepSeek V3.2 DataZone</td><td>{azure_span(0.64, decimals="5")}</td><td>N/A</td>
+<td>{azure_span(1.85, decimals="5")}</td></tr>
+</tbody></table></div>
+</body></html>
+"""
+
+AZURE_TABS_HTML = """<html><body>
+<a href="/en-us/pricing/details/ai-foundry-models/aoai/" role="tab">AOAI</a>
+<a href="/en-us/pricing/details/ai-foundry-models/deepseek/" role="tab">DeepSeek</a>
+</body></html>
+"""
+
+AZURE_FOUNDRY_MARKDOWN = """# Claude in Microsoft Foundry
+
+| Model | Default deployment name | Hosted on Azure | Hosted on Anthropic |
+| --- | --- | --- | --- |
+| Claude Opus 5.5 | `claude-opus-5-5` | ✓ | ✓ |
+| Claude Sonnet 4.5 | `claude-sonnet-4-5` |  | ✓ |
+"""
+
+AZURE_ANTHROPIC_MARKDOWN = """# Pricing
+
+## Claude in Microsoft Foundry pricing
+
+A Foundry deployment is billed at Anthropic's standard rates. On Claude in Microsoft
+Foundry, the same 1.1x multiplier applies to deployments that use the US Data Zone
+Standard deployment type.
+
+## Model pricing
+
+| Model | Base input tokens | 5m cache writes | 1h cache writes | Cache hits and refreshes | Output tokens |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Claude Opus 5.5 | $4 / MTok | $5 / MTok | $8 / MTok | $0.20 / MTok | $20 / MTok |
+| Claude Sonnet 4.5 | $3 / MTok | $3.75 / MTok | $6 / MTok | $0.30 / MTok | $15 / MTok |
+"""
+
+
+def azure_adapter(openai=AZURE_OPENAI_HTML, serverless=AZURE_SERVERLESS_HTML):
+    return AzureAdapter(
+        MappingClient(
+            {
+                AZURE_OPENAI_URL: openai,
+                AZURE_FOUNDRY_TABS_URL: AZURE_TABS_HTML,
+                f"{AZURE_FOUNDRY_MODELS_URL}/deepseek/": serverless,
+                ANTHROPIC_FOUNDRY_MARKDOWN_URL: AZURE_FOUNDRY_MARKDOWN,
+                ANTHROPIC_MARKDOWN_URL: AZURE_ANTHROPIC_MARKDOWN,
+            }
+        )
+    )
+
+
+class AzureAdapterTests(unittest.TestCase):
+    def test_every_price_page_is_read_once(self):
+        client = MappingClient(
+            {
+                AZURE_OPENAI_URL: AZURE_OPENAI_HTML,
+                AZURE_FOUNDRY_TABS_URL: AZURE_TABS_HTML,
+                f"{AZURE_FOUNDRY_MODELS_URL}/deepseek/": AZURE_SERVERLESS_HTML,
+                ANTHROPIC_FOUNDRY_MARKDOWN_URL: AZURE_FOUNDRY_MARKDOWN,
+                ANTHROPIC_MARKDOWN_URL: AZURE_ANTHROPIC_MARKDOWN,
+            }
+        )
+        models = AzureAdapter(client).list_models()
+        self.assertEqual(
+            set(client.requests),
+            {
+                AZURE_OPENAI_URL,
+                AZURE_FOUNDRY_TABS_URL,
+                f"{AZURE_FOUNDRY_MODELS_URL}/deepseek/",
+                ANTHROPIC_FOUNDRY_MARKDOWN_URL,
+                ANTHROPIC_MARKDOWN_URL,
+            },
+        )
+        self.assertIn("gpt-6-astra", models)
+        self.assertIn("deepseek-v3.2", models)
+        self.assertIn("claude-opus-5.5", models)
+
+    def test_only_the_american_region_is_read_and_named(self):
+        record = azure_adapter().query("gpt-6-astra")[0]
+        self.assertEqual(record["region"], "us-east")
+        amounts = {
+            price["amount"] for offer in record["offers"] for price in offer["prices"]
+        }
+        # The Australian figure of 1.0 would appear beside the American ones if the
+        # region were not chosen, and "1" is an American cached-input price, so the
+        # distinction is which figures are present at all.
+        self.assertIn("10", amounts)
+        self.assertIn("55", amounts)
+        self.assertNotIn("1.0", amounts)
+
+    def test_a_deployment_scope_is_a_condition_rather_than_a_model(self):
+        record = azure_adapter().query("gpt-6-astra")[0]
+        self.assertEqual(
+            {offer["conditions"]["deployment_scope"] for offer in record["offers"]},
+            {"Global", "Data Zone"},
+        )
+        self.assertEqual(
+            {offer["conditions"]["context_tier"] for offer in record["offers"]},
+            {"short context"},
+        )
+        self.assertEqual(record["model_id"], "gpt-6-astra")
+        self.assertEqual(record["display_name"], "GPT-6 Astra (short context)")
+
+    def test_the_meter_inside_a_cell_keeps_its_own_scope(self):
+        scopes = {
+            offer["conditions"].get("price_scope")
+            for offer in azure_adapter().query("gpt-6-astra")[0]["offers"]
+        }
+        self.assertLessEqual({"Input", "Cached Input", "Output"}, scopes)
+
+    def test_an_amount_for_a_hundred_pictures_keeps_that_unit(self):
+        offers = azure_adapter().query("dall-e-3")[0]["offers"]
+        price = offers[0]["prices"][0]
+        self.assertEqual(price["amount"], "4.4")
+        self.assertEqual(price["unit"], "USD_per_hundred_images")
+        self.assertEqual(offers[0]["conditions"]["Quality"], "Standard")
+
+    def test_a_model_the_page_lists_without_a_figure_is_still_listed(self):
+        record = azure_adapter().query("whisper")[0]
+        self.assertEqual(record["offers"], [])
+        self.assertEqual(record["display_name"], "Whisper")
+
+    def test_reserved_capacity_is_not_priced_as_use_of_a_model(self):
+        record = azure_adapter().query("gpt-6-astra")[0]
+        labels = {price["label"] for offer in record["offers"] for price in offer["prices"]}
+        self.assertFalse([label for label in labels if "PTU" in label])
+
+    def test_a_serverless_page_is_read_from_the_tab_strip(self):
+        record = azure_adapter().query("deepseek-v3.2")[0]
+        self.assertEqual(
+            [offer["name"] for offer in record["offers"]], ["Global", "DataZone"]
+        )
+        self.assertEqual(price_lookup(record["offers"][0], "input")["amount"], "0.58")
+        self.assertEqual(
+            price_lookup(record["offers"][0], "input")["unit"], "USD_per_million_tokens"
+        )
+
+    def test_claude_is_priced_at_the_rates_anthropic_publishes(self):
+        record = azure_adapter().query("claude-opus-5.5")[0]
+        self.assertEqual(record["model_id"], "claude-opus-5.5")
+        standard, data_zone = record["offers"]
+        self.assertEqual(standard["conditions"]["deployment_name"], "claude-opus-5-5")
+        self.assertEqual(price_lookup(standard, "input")["amount"], "4")
+        self.assertEqual(standard["conditions"]["deployment_scope"], "Global Standard")
+
+    def test_the_data_zone_premium_is_the_multiplier_the_vendor_published(self):
+        record = azure_adapter().query("claude-opus-5.5")[0]
+        data_zone = record["offers"][1]
+        self.assertEqual(data_zone["conditions"]["deployment_scope"], "US Data Zone Standard")
+        input_price = price_lookup(data_zone, "input")
+        self.assertEqual(input_price["amount"], "4.4")
+        self.assertEqual(input_price["list_amount"], "4")
+        self.assertEqual(input_price["discount"], "1.1")
+
+    def test_a_multiplier_without_a_foundry_sentence_is_not_applied(self):
+        adapter = azure_adapter(
+            openai=AZURE_OPENAI_HTML,
+            serverless=AZURE_SERVERLESS_HTML,
+        )
+        adapter.client.values[ANTHROPIC_MARKDOWN_URL] = AZURE_ANTHROPIC_MARKDOWN.replace(
+            "Foundry", "another platform"
+        )
+        record = adapter.query("claude-opus-5.5")[0]
+        self.assertEqual(len(record["offers"]), 1)
+
+    def test_a_header_rowspan_the_table_never_uses_does_not_eat_a_model(self):
+        models = azure_adapter().list_models()
+        self.assertIn("whisper", models)
+        self.assertNotIn("models", models)
+
+    def test_a_page_with_no_price_table_is_a_source_error(self):
+        with self.assertRaises(SourceError):
+            AzureAdapter(
+                MappingClient(
+                    {
+                        AZURE_OPENAI_URL: "<html></html>",
+                        AZURE_FOUNDRY_TABS_URL: AZURE_TABS_HTML,
+                        f"{AZURE_FOUNDRY_MODELS_URL}/deepseek/": "<html></html>",
+                        ANTHROPIC_FOUNDRY_MARKDOWN_URL: "<html></html>",
+                        ANTHROPIC_MARKDOWN_URL: AZURE_ANTHROPIC_MARKDOWN,
+                    }
+                )
             ).list_models()

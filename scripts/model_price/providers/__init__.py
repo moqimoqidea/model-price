@@ -5,6 +5,7 @@ from __future__ import annotations
 from .aliyun import AliyunAdapter
 from .anthropic import AnthropicAdapter
 from .aws_bedrock import AWSBedrockAdapter
+from .azure import AzureAdapter
 from .baidu import BaiduAdapter
 from .deepseek import DeepSeekAdapter
 from .google import GeminiAdapter
@@ -46,6 +47,7 @@ OVERSEAS_PROVIDERS = (
     OpenRouterAdapter,
     GoogleCloudAdapter,
     AWSBedrockAdapter,
+    AzureAdapter,
 )
 
 ALL_PROVIDERS = (*DOMESTIC_PROVIDERS, *OVERSEAS_PROVIDERS)

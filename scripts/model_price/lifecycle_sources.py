@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 from .deepseek_updates import DEEPSEEK_UPDATES_URL, UpdateEntry, read_updates
 from .errors import SourceError
 from .models import normalize_model
+from .providers.azure import AZURE_MODEL_RETIREMENTS_URL
 from .providers.google_cloud import GOOGLE_CLOUD_MODEL_VERSIONS_URL
 from .providers.openrouter import OPENROUTER_MODELS_URL
 from .parsing import date_value, headed_document_tables, markdown_tables
@@ -40,6 +41,7 @@ SOURCES = {
     "minimax": "https://platform.minimax.io/docs/guides/models-intro.md",
     "google-cloud": GOOGLE_CLOUD_MODEL_VERSIONS_URL,
     "openrouter": OPENROUTER_MODELS_URL,
+    "azure": AZURE_MODEL_RETIREMENTS_URL,
 }
 # Providers that publish no per-model retirement schedule this tool can read. The
 # absence is a fact about the vendor rather than a gap here: Kling announces a
@@ -437,6 +439,40 @@ def google_cloud_events(document: str) -> list[LifecycleEvent]:
     return found
 
 
+def azure_events(document: str) -> list[LifecycleEvent]:
+    """Read Microsoft's own retirement schedule for the models it hosts.
+
+    The page dates two milestones: the last day a model can be trained on, and the
+    day its deployments stop. Only dates the vendor states are read — a training date
+    published as a floor ("No earlier than 2027-04-01") is not a day anything happens,
+    and recording it as one would assert a shutdown Microsoft did not announce. The
+    model keeps the literal name Microsoft publishes, which is the name its price
+    pages use as well; the version beside it pins the deployment rather than naming
+    a different model.
+    """
+    found = []
+    for _, rows in headed_document_tables(document):
+        header = [clean_text(cell) for cell in rows[0]] if rows else []
+        if "Model" not in header or "Deployment retirement date" not in header:
+            continue
+        for row in rows[1:]:
+            cells = [clean_text(cell) for cell in row] + [""] * len(header)
+            model_id = cells[header.index("Model")]
+            when = date_value(cells[header.index("Deployment retirement date")])
+            if not model_id or not when:
+                continue
+            found.append(
+                event(
+                    model_id,
+                    SOURCES["azure"],
+                    eos_at=when,
+                    end_behavior="unavailable",
+                    scope="Azure Foundry",
+                )
+            )
+    return found
+
+
 def openrouter_events(records: list[dict[str, Any]]) -> list[LifecycleEvent]:
     """Read the deprecation date each catalogue entry publishes for itself.
 
@@ -799,6 +835,7 @@ PARSERS: dict[str, Callable[[str], list[LifecycleEvent]]] = {
     "google": gemini_events,
     "minimax": minimax_events,
     "google-cloud": google_cloud_events,
+    "azure": azure_events,
 }
 
 

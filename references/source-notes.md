@@ -5,6 +5,12 @@ markup: its own Markdown copy when the tables are real Markdown tables, otherwis
 its public structured JSON. Parse rendered HTML only when the vendor publishes
 neither.
 
+The two clouds that price a model per region — AWS Bedrock and Azure Foundry — are
+each read for **one** region, the American one the vendor lists first, and the
+record says which. A cloud price without its region is a price for nowhere, and a
+scan of every region is a report nobody reads: the same model, the same charges,
+thirty-five times over.
+
 ## Model retirement notices
 
 Retirement dates are read independently of price tables on every `delta` run.
@@ -30,6 +36,7 @@ source keeps its last successful notice archive.
 | Zhipu BigModel | [GLM-4.5-Flash](https://docs.bigmodel.cn/cn/guide/models/free/glm-4.5-flash.md), [GLM-Z1](https://docs.bigmodel.cn/cn/guide/models/text/glm-z1.md), and [GLM-4.5](https://docs.bigmodel.cn/cn/guide/models/text/glm-4.5.md) model pages | No central retirement feed. Read explicit banner text on these known official pages: a dated shutdown with automatic routing, an undated “已下线” series notice, and undated “即将下线” plans. Only literal named IDs are recorded; a series notice is not expanded into guessed variants. These pages are a maintained source list, not a complete vendor-wide schedule. |
 | OpenRouter | The models API entry itself | Each catalogue entry publishes its own `expiration_date` while the model is still served, so the date is an announced withdrawal rather than the catalogue going quiet. Read from the price records, like Aliyun's offline times. |
 | Google Cloud Vertex | [Model versions and lifecycle](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions) | One table per modality: the literal model ID, its release date, its retirement date and what replaces it. A date the page qualifies ("July 21, 2027 or later", "No sooner than May 20, 2028") is a floor and is recorded as `eos_earliest`; "No retirement date announced" yields no event. |
+| Azure Foundry | [Model retirements](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/model-retirements) | A table of the literal model name, the version pinning a deployment, and the day its deployments stop. Only dates the vendor states are read: a training date published as a floor ("No earlier than 2027-04-01") is not a day anything happens, so it is not recorded as a milestone. |
 | Kling | none published | The console announces a withdrawal rather than a page. Reported as `no_public_schedule`, which is the honest status rather than a failed read. |
 | AWS Bedrock | none readable here | AWS files its dates on `docs.aws.amazon.com`, a host that does not resolve on every network this skill runs from; a reader would report a failed source on each scan instead of the truth that no schedule was read. Reported as `no_public_schedule`. |
 | MiniMax | [Official model overview](https://platform.minimax.io/docs/guides/models-intro.md) | `Legacy Models` accordions identify old versions but provide no shutdown date and do not prove service cessation. A separate music notice explicitly discontinues three free music API IDs on 2026-08-20; the paid API restriction applies only to new users and does not retire those models. |
@@ -354,7 +361,7 @@ Two catalogue-level traps:
   converted to dollars, `video_tokens` keeps its own measure. Negative figures are
   the vendor's marker for a charge that depends on the routed model and are never
   amounts.
-- **AWS Bedrock** — the two public offer files
+- **AWS Bedrock** — one region per model, read from the two public offer files
   (`AmazonBedrock` and `AmazonBedrockFoundationModels`), read together because
   neither is complete: the first prices the models under AWS's own offer code, the
   second the ones billed through Marketplace, and only three names overlap. The
@@ -366,6 +373,38 @@ Two catalogue-level traps:
   `reserved`, `custom`, `tuning` or `storage` is a tier beside the standard rate,
   not part of it. One charge published under several SKUs is stated once. AWS
   publishes no model ids in these files, so the model name is the identity.
+  **One region is read**, because the list prices a model in every region AWS serves
+  it from and a report of thirty-five regions is not a price a reader can use: US
+  East (N. Virginia) first, then the other American regions in the order AWS lists
+  them, then GovCloud, and — for a model AWS serves nowhere in the United States —
+  the region it does publish. The record names both the region read and its code, so
+  an amount is never quoted without the region it is for. A price change in another
+  region is therefore not reported; read that region by changing the declared order.
+- **Microsoft Azure Foundry** — the OpenAI page, the Foundry Models pages, and
+  Claude. The Foundry Models landing page names its sibling pages in a tab strip, so
+  the serverless catalogue is discovered from that strip rather than listed in code:
+  the set of vendors Azure prices changes, and the alternative is a catalogue this
+  tool silently does not cover. Two rewrites make those pages readable at all: their
+  amounts are a per-region JSON attribute on a ``$-`` placeholder the browser fills
+  in, so the figure one region yields is written back where the placeholder was (the
+  sign included — an amount naming no currency is not a price this tool reads), and
+  each table's ``aria-label`` becomes the heading the shared reader looks for. One
+  table declares a ``rowspan="2"`` model header and publishes a single header row;
+  the span covers nothing and is dropped, because the shared reader carries a spanned
+  cell into the rows it covers and the header would otherwise land on the table's
+  first model. One region is read, as for AWS: East US when a page prices it, else
+  the first American region the page names. Reservation columns — "Per PTU Hourly
+  pricing", "Price (Unit/Hour) Monthly Commit" — are not read: capacity is not what
+  this tool compares, and read as a use price a monthly reservation would be quoted
+  as the cost of a request. A model the page lists without quoting a figure keeps its
+  place with no price, which is what the page published.
+  Claude has no Azure price page at all: the Foundry page publishes the catalogue and
+  the deployment name, and states that a deployment is billed at Anthropic's standard
+  rates, which are read from the Anthropic page that publishes them. The US Data Zone
+  deployment type adds the multiplier that same page states (1.1x), recorded as a
+  second offer carrying the rate it is a premium on. The model keeps the name it is
+  published under rather than the deployment name beside it, which spells the version
+  in dashes ("claude-opus-5-5") where the model's own id carries a dot.
 - **Google Cloud Vertex** — one request to the Agent Platform pricing page, which is
   where `vertex-ai/generative-ai/pricing` now redirects. Three things about the
   markup: a delivery tier is a *tab*, so each `role="tabpanel"` is rewritten as a

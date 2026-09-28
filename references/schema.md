@@ -39,8 +39,9 @@ Price fields are `type`, `label`, `amount`, `unit`, and optional `display`, `lis
 
 `unit` is a code built as `<currency>_per_<measure>`, so a new currency or a new measure costs one entry in the vocabulary rather than one entry per combination. The measures read today are `million_tokens`, `million_tokens_per_hour` (cache storage), `thousand_tokens`, `10k_tokens`, `million_characters`, `10k_characters`, `thousand_characters`, `character`, `image`, `frame`, `second`, `minute`, `hour`, `request`, `thousand_requests`, `10k_requests`, `video`, `item`, `song`, `page`,
 `million_video_tokens` (a vendor that bills video by the token, which is not a
-language token rate), and `megapixel_second` (a video upscaler, billed by the area
-it processes over the time it runs) — `CNY_per_image` is 元/张, `USD_per_second` is
+language token rate), `hundred_images` (an amount published for a hundred
+pictures, kept at the scale the page printed it), and `megapixel_second` (a video
+upscaler, billed by the area it processes over the time it runs) — `CNY_per_image` is 元/张, `USD_per_second` is
 美元/秒, `CNY_per_million_tokens_per_hour` is cache storage. A vendor that bills in its own credit keeps that credit as the unit (`积分/次`): the amount is a price, and converting it would print a rate the page never published. A price whose vendor stated no unit at all carries `provider_defined`, which is rendered as the amount alone.
 
 Two things a vendor publishes beside an amount decide which of several prices one cell holds. A cell that prices several tiers states each tier's scope in the cell itself, and that scope is `conditions.price_scope` on the offer the amount belongs to — one offer per scope, because merging them would quote one tier's rate for another. A cell that lists several model IDs prices each of them, and each becomes a model of its own rather than a note on the first.

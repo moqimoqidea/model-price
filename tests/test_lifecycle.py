@@ -25,6 +25,7 @@ from model_price.lifecycle_sources import (
     deepseek_events,
     event,
     gemini_events,
+    azure_events,
     google_cloud_events,
     kimi_events,
     minimax_events,
@@ -148,6 +149,22 @@ class OfficialSourceTests(unittest.TestCase):
         self.assertEqual(found[0]["eos_at"], "2027-05-19")
         self.assertFalse(found[1]["eos_earliest"])
         self.assertEqual(found[1]["replacement"], "veo-3.1-generate-001")
+
+    def test_azure_reads_the_deployment_date_and_not_a_training_floor(self):
+        page = """<h1>Model retirements</h1>
+<table><tr><th>Model</th><th>Version</th><th>Training retirement date</th>
+<th>Deployment retirement date</th></tr>
+<tr><td>gpt-4o</td><td>2024-08-06</td><td>No earlier than 2027-04-01 1</td>
+<td>2027-10-01</td></tr>
+<tr><td>gpt-4o-mini</td><td>2024-07-18</td><td>No earlier than 2027-04-01</td>
+<td></td></tr>
+</table>
+"""
+        found = azure_events(page)
+        self.assertEqual([item["model_id"] for item in found], ["gpt-4o"])
+        self.assertEqual(found[0]["eos_at"], "2027-10-01")
+        self.assertIsNone(found[0]["eom_at"])
+        self.assertEqual(found[0]["scope"], "Azure Foundry")
 
     def test_a_dated_deprecation_is_a_retirement_and_a_zero_price_is_not(self):
         found = openrouter_events(

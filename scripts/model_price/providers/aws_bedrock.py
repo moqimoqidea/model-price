@@ -15,7 +15,7 @@ by side, and one default unit would misprice all but one of them.
 from __future__ import annotations
 
 import json
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 from ..core import PriceSource, now_iso
 from ..errors import SourceError
@@ -32,6 +32,24 @@ BEDROCK_PRICING_PAGE = "https://aws.amazon.com/bedrock/pricing/"
 
 # The suffix AWS Marketplace listings carry in the model name they publish.
 MARKETPLACE_SUFFIX = " (Amazon Bedrock Edition)"
+
+# One region is read per model. The list prices a model in every region it is served
+# from — thirty-odd of them for a model AWS hosts everywhere — and the rate a reader
+# means by "the Bedrock price" is the one AWS publishes for the United States: US
+# East (N. Virginia) first, then the other American regions in the order AWS lists
+# them, then GovCloud. A model AWS serves nowhere in the United States is read from
+# the region it does publish, so no model is left without the price the list gives
+# it. Which region was read is written on the record, because a rate without its
+# region is a rate for nowhere.
+BEDROCK_REGION_ORDER = (
+    "us-east-1",
+    "us-east-2",
+    "us-west-2",
+    "us-west-1",
+    "us-gov-west-1",
+    "us-gov-east-1",
+)
+BEDROCK_US_PREFIX = "us-"
 
 # What each charge the lists name is, in the order a bill is read. The two files
 # word the same charge differently — "Input tokens" in one, "Million Input Tokens
@@ -170,6 +188,18 @@ def bedrock_rates(
                 }
 
 
+def bedrock_region(region_codes: Iterable[str]) -> str:
+    """The one region a model's rates are read from."""
+    available = {str(code) for code in region_codes if code}
+    for code in BEDROCK_REGION_ORDER:
+        if code in available:
+            return code
+    american = sorted(code for code in available if code.startswith(BEDROCK_US_PREFIX))
+    if american:
+        return american[0]
+    return sorted(available)[0] if available else ""
+
+
 def bedrock_unit(unit: str) -> tuple[str, int]:
     """The unit phrase and token scale one published unit is billed at."""
     return BEDROCK_UNITS.get(unit.strip().lower(), (unit, 1))
@@ -261,20 +291,20 @@ class AWSBedrockAdapter(PriceSource):
         return [self._record_for(grouped[key]) for key in sorted(grouped)]
 
     def _record_for(self, rates: list[dict[str, Any]]) -> dict[str, Any]:
-        """Keep each region's rates as that region's offer.
+        """Read one model's rates from the one region its price is quoted for.
 
-        A rate is published per region, so merging regions would quote one region's
-        amount for another's; each offer carries the region it is billed in, both as
-        the name it is read by and as the code the vendor prices it under.
+        The tiers stay apart: a batch rate is half price and a provisioned-throughput
+        reservation is bought by the hour, and neither is the model's ordinary rate.
         """
-        grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
-        for rate in rates:
-            key = (rate["region"], rate["region_code"], rate["tier"])
-            grouped.setdefault(key, []).append(rate)
+        region_code = bedrock_region(rate["region_code"] for rate in rates)
+        selected = [rate for rate in rates if rate["region_code"] == region_code]
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for rate in selected:
+            grouped.setdefault(rate["tier"], []).append(rate)
         offers = []
-        for region, region_code, tier in sorted(grouped):
+        for tier in sorted(grouped):
             seen: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-            for row in grouped[(region, region_code, tier)]:
+            for row in grouped[tier]:
                 # One charge can be published under several SKUs — a global and a
                 # regional one, say. Stating it once is not losing a rate; stating
                 # the same rate twice would read as two charges.
@@ -288,19 +318,20 @@ class AWSBedrockAdapter(PriceSource):
                 conditions["service_tier"] = tier
             offers.append(
                 {
-                    "name": tier if tier != BEDROCK_STANDARD_TIER else (region or "standard"),
+                    "name": tier,
                     "conditions": conditions,
                     "prices": list(seen.values()),
                 }
             )
-        display_name = rates[0]["model"]
+        location = selected[0]["region"] if selected else ""
+        display_name = selected[0]["model"]
         model_id = normalize_model(display_name)
         return make_record(
             self.provider_id,
             self.provider_name,
             model_id,
             display_name,
-            self.region,
+            location or self.region,
             offers,
             BEDROCK_PRICING_PAGE,
             self.source_kind,

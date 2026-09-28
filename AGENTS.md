@@ -18,7 +18,7 @@ This file deliberately does not restate the other documents.
 
 A single-skill repository whose root **is** the skill directory. It queries public,
 credential-free model catalogues, introductions, capabilities, specifications, and
-official price documents across 17 providers. Its two output modes are a model and
+official price documents across 18 providers. Its two output modes are a model and
 cross-provider comparison, and a whole-catalogue scan that reports launches,
 withdrawals, billing changes, and price moves since the previous scan or a
 retained historical baseline.

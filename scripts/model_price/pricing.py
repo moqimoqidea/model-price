@@ -133,6 +133,13 @@ UNIT_MEASURES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("10k_characters", ("万字符", "10kcharacter", "10kcharacters")),
     ("thousand_characters", ("千字符", "1kcharacter", "1kcharacters")),
     ("character", ("字符", "character", "characters", "char", "chars")),
+    # An amount published for a hundred pictures is a rate per picture at that scale,
+    # and the scale is the vendor's own: shown per picture it would be a hundredth of
+    # the figure the page printed.
+    (
+        "hundred_images",
+        ("/100images", "/100image", "/100张", "/100图", "/百张"),
+    ),
     ("image", ("/张", "/幅", "/image", "/images", "/图")),
     ("frame", ("/帧", "/frame", "/frames")),
     # A video upscaler bills by the area it processes over the time it runs, which

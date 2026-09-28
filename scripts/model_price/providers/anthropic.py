@@ -34,6 +34,89 @@ TIER_HEADINGS = {
 }
 
 
+def anthropic_price_rows(client: Any) -> list[dict[str, Any]]:
+    """Every priced row the official Anthropic pages publish.
+
+    Read as a function as well as through the adapter because these rates are not
+    only Anthropic's: a Microsoft Foundry deployment of a Claude model is billed at
+    them, which is what Anthropic's own Foundry page says it is.
+    """
+    text = client.get_text(ANTHROPIC_MARKDOWN_URL)
+    tables = markdown_tables(text)
+    table = next(
+        (rows for headings, rows in tables if headings[-1:] == ["Model pricing"]),
+        [],
+    )
+    if len(table) < 2:
+        raise SourceError("official model pricing table was not found")
+    rows = []
+    for cells in table[1:]:
+        cells += [""] * (6 - len(cells))
+        display_name = markdown_link_text(cells[0])
+        model_id = normalize_model(without_trailing_parenthetical(display_name))
+        prices = [
+            item
+            for item in (
+                usd_price(kind, label, value)
+                for kind, label, value in zip(
+                    STANDARD_KINDS, STANDARD_LABELS, cells[1:6]
+                )
+            )
+            if item
+        ]
+        # Rows are identified by pricing content, never by a name prefix, so a
+        # renamed or newly branded model family is picked up without a code fix.
+        if not model_id:
+            continue
+        conditions: dict[str, Any] = {"service_tier": "standard"}
+        status = re.search(
+            r"\(([^)]*(?:retired|limited availability)[^)]*)\)", display_name, re.I
+        )
+        if status:
+            conditions["status"] = status.group(1)
+        rows.append(
+            {
+                "model_id": model_id,
+                "display_name": display_name,
+                "offer": {
+                    "name": "standard",
+                    "conditions": conditions,
+                    "prices": prices,
+                },
+            }
+        )
+    for headings, price_table in tables:
+        service_tier = TIER_HEADINGS.get(headings[-1] if headings else "")
+        if not service_tier:
+            continue
+        for cells in price_table[1:]:
+            cells += [""] * (3 - len(cells))
+            for name in markdown_link_text(cells[0]).split(" / "):
+                model_id = normalize_model(without_trailing_parenthetical(name))
+                prices = [
+                    item
+                    for item in (
+                        usd_price("input", "Input", cells[1]),
+                        usd_price("output", "Output", cells[2]),
+                    )
+                    if item
+                ]
+                if not model_id:
+                    continue
+                rows.append(
+                    {
+                        "model_id": model_id,
+                        "display_name": name,
+                        "offer": {
+                            "name": service_tier,
+                            "conditions": {"service_tier": service_tier},
+                            "prices": prices,
+                        },
+                    }
+                )
+    return rows
+
+
 class AnthropicAdapter(PriceSource):
     provider_id = "anthropic"
     provider_name = "Anthropic"
@@ -45,82 +128,8 @@ class AnthropicAdapter(PriceSource):
         self._parsed_rows: list[dict[str, Any]] | None = None
 
     def _rows(self) -> list[dict[str, Any]]:
-        if self._parsed_rows is not None:
-            return self._parsed_rows
-        text = self.document(ANTHROPIC_MARKDOWN_URL)
-        tables = markdown_tables(text)
-        table = next(
-            (rows for headings, rows in tables if headings[-1:] == ["Model pricing"]),
-            [],
-        )
-        if len(table) < 2:
-            raise SourceError("official model pricing table was not found")
-        rows = []
-        for cells in table[1:]:
-            cells += [""] * (6 - len(cells))
-            display_name = markdown_link_text(cells[0])
-            model_id = normalize_model(without_trailing_parenthetical(display_name))
-            prices = [
-                item
-                for item in (
-                    usd_price(kind, label, value)
-                    for kind, label, value in zip(
-                        STANDARD_KINDS, STANDARD_LABELS, cells[1:6]
-                    )
-                )
-                if item
-            ]
-            # Rows are identified by pricing content, never by a name prefix, so a
-            # renamed or newly branded model family is picked up without a code fix.
-            if not model_id:
-                continue
-            conditions: dict[str, Any] = {"service_tier": "standard"}
-            status = re.search(
-                r"\(([^)]*(?:retired|limited availability)[^)]*)\)", display_name, re.I
-            )
-            if status:
-                conditions["status"] = status.group(1)
-            rows.append(
-                {
-                    "model_id": model_id,
-                    "display_name": display_name,
-                    "offer": {
-                        "name": "standard",
-                        "conditions": conditions,
-                        "prices": prices,
-                    },
-                }
-            )
-        for headings, price_table in tables:
-            service_tier = TIER_HEADINGS.get(headings[-1] if headings else "")
-            if not service_tier:
-                continue
-            for cells in price_table[1:]:
-                cells += [""] * (3 - len(cells))
-                for name in markdown_link_text(cells[0]).split(" / "):
-                    model_id = normalize_model(without_trailing_parenthetical(name))
-                    prices = [
-                        item
-                        for item in (
-                            usd_price("input", "Input", cells[1]),
-                            usd_price("output", "Output", cells[2]),
-                        )
-                        if item
-                    ]
-                    if not model_id:
-                        continue
-                    rows.append(
-                        {
-                            "model_id": model_id,
-                            "display_name": name,
-                            "offer": {
-                                "name": service_tier,
-                                "conditions": {"service_tier": service_tier},
-                                "prices": prices,
-                            },
-                        }
-                    )
-        self._parsed_rows = rows
+        if self._parsed_rows is None:
+            self._parsed_rows = anthropic_price_rows(self.client)
         return self._parsed_rows
 
     def _rows_by_model(self) -> dict[str, list[dict[str, Any]]]:

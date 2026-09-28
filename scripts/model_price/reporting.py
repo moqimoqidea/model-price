@@ -65,6 +65,15 @@ CONDITION_LABELS = {
     "channel": "计费通道",
     "promotion_window": "活动窗口",
     "price_scope": "计价范围",
+    # A cloud prices one model differently in each region it serves it from, and the
+    # region a rate was read for is a term this tool states on the reader's behalf.
+    "region_code": "计费区域",
+    # The deployment scope a cloud bills under (Azure's Global / Data Zone Standard),
+    # which is where the invoicing happens rather than what the model is; the name the
+    # subscription gives that deployment; and where the inference it pays for runs.
+    "deployment_scope": "部署范围",
+    "deployment_name": "部署名称",
+    "hosting": "托管方式",
 }
 
 # What a price is billed against, written once per measure rather than once per
@@ -82,6 +91,7 @@ UNIT_MEASURE_LABELS = {
     "thousand_characters": "千字符",
     "character": "字符",
     "image": "张",
+    "hundred_images": "百张",
     "frame": "帧",
     "megapixel_second": "百万像素秒",
     "second": "秒",
