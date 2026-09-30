@@ -1,38 +1,16 @@
-"""Resolve one authoritative introduction for each model in a report."""
+"""Resolve a model's introduction only from the channel that lists it."""
 
 from __future__ import annotations
 
-import re
 from typing import Any, Iterable
 
 from ..caching import CacheStore
-from ..models import canonical_model, normalize_model
+from ..models import normalize_model
 from .core import (
     NOT_FOUND,
     SOURCE_ERROR,
     DescriptionSource,
     unavailable_description,
-)
-
-# A model vendor is preferred to whichever cloud happens to sell it.  Provider
-# sources remain fallbacks for platform-native families and third-party models
-# whose first-party documentation has no durable per-model page.
-SOURCE_PATTERNS = (
-    ("openai", re.compile(r"(?:^|[-/])(?:gpt|chatgpt|codex|sora)(?:[-/]|$)|^o\d")),
-    ("anthropic", re.compile(r"(?:^|[-/])claude(?:[-/]|$)")),
-    ("google", re.compile(r"(?:^|[-/])(?:gemini|gemma|veo|imagen|lyria)(?:[-/]|$)")),
-    ("xai", re.compile(r"(?:^|[-/])grok(?:[-/]|$)")),
-    ("deepseek", re.compile(r"(?:^|[-/])deepseek(?:[-/]|$)")),
-    ("kimi", re.compile(r"(?:^|[-/])(?:kimi|moonshot)(?:[-/]|$)")),
-    ("zhipu", re.compile(r"(?:^|[-/])(?:glm|cogview|cogvideo|autoglm)(?:[-/]|$)")),
-    ("minimax", re.compile(r"(?:^|[-/])(?:minimax|hailuo)(?:[-/]|$)")),
-    ("xiaomi", re.compile(r"(?:^|[-/])mimo(?:[-/]|$)")),
-    (
-        "aliyun",
-        re.compile(r"(?:^|[-/])(?:qwen|wanx|tongyi|paraformer|sambert)(?:[-/]|$)"),
-    ),
-    ("volcengine", re.compile(r"(?:^|[-/])(?:doubao|seedream|seedance)(?:[-/]|$)")),
-    ("baidu", re.compile(r"(?:^|[-/])ernie(?:[-/]|$)")),
 )
 
 
@@ -67,99 +45,83 @@ class CachedDescriptionSource(DescriptionSource):
         return result
 
 
-def inferred_sources(model_id: str, display_name: str = "") -> list[str]:
-    value = normalize_model(f"{model_id} {display_name}")
-    return [
-        source_id for source_id, pattern in SOURCE_PATTERNS if pattern.search(value)
-    ]
-
-
 class DescriptionResolver:
-    """Try first-party then hosting-platform sources without failing prices."""
+    """Use each hosting channel's own source without failing price results."""
 
     def __init__(self, sources: dict[str, DescriptionSource]) -> None:
         self.sources = sources
 
     @staticmethod
     def _group(targets: Iterable[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-        groups: dict[str, list[dict[str, Any]]] = {}
+        groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for target in targets:
             model_id = target.get("model_id", "")
             if model_id:
-                groups.setdefault(canonical_model(model_id), []).append(target)
+                key = (target.get("provider_id") or "", normalize_model(model_id))
+                groups.setdefault(key, []).append(target)
         return list(groups.values())
 
     def resolve(self, targets: list[dict[str, Any]]) -> dict[str, Any]:
-        """Resolve one canonical model represented by one or more price records."""
+        """Resolve one literal model on one provider, including honest failures."""
+        if len(self._group(targets)) != 1:
+            raise ValueError("description targets must name one model on one provider")
         head = targets[0]
         model_id = head["model_id"]
-        canonical_id = canonical_model(model_id)
         display_name = head.get("display_name") or model_id
-        candidates: list[tuple[str, dict[str, Any]]] = []
-        for target in targets:
-            ids = inferred_sources(
-                target["model_id"], target.get("display_name", "")
-            )
-            provider_id = target.get("provider_id")
-            if provider_id:
-                ids.append(provider_id)
-            for source_id in ids:
-                if source_id in self.sources and all(
-                    existing[0] != source_id for existing in candidates
-                ):
-                    candidates.append((source_id, target))
-        attempted = []
-        had_error = False
-        for source_id, target in candidates:
-            source = self.sources[source_id]
+        provider_id = head.get("provider_id") or ""
+        source = self.sources.get(provider_id)
+        attempted: list[dict[str, str]] = []
+        description: dict[str, Any] | None = None
+        status = NOT_FOUND
+        note = ""
+        error = ""
+        if source is not None:
             try:
                 description = source.describe(
-                    target["model_id"],
-                    target.get("display_name", ""),
-                    record=target.get("record"),
+                    model_id, display_name, record=head.get("record")
                 )
             except Exception as exc:
-                had_error = True
-                attempted.append(
-                    {
-                        "name": source.source_name,
-                        "url": source.source_url,
-                        "status": SOURCE_ERROR,
-                        "error": str(exc),
-                    }
-                )
-                continue
-            attempted.append(
-                {
-                    "name": source.source_name,
-                    "url": source.source_url,
-                    "status": "available" if description else NOT_FOUND,
-                }
+                status = SOURCE_ERROR
+                error = str(exc)
+                note = f"该渠道的模型介绍来源暂时无法读取；价格结果不受影响。原因：{error}"
+            attempt = {
+                "name": source.source_name,
+                "url": source.source_url,
+                "status": "available" if description else status,
+            }
+            if status == SOURCE_ERROR:
+                attempt["error"] = error
+            attempted.append(attempt)
+        elif provider_id:
+            note = "该渠道尚无可读取的官方模型介绍源；价格结果不受影响。"
+        result = (
+            dict(description) if description else unavailable_description(
+                model_id, display_name, status=status, note=note,
+                attempted_sources=attempted,
             )
-            if description:
-                description["observed_model_ids"] = list(
-                    dict.fromkeys(target["model_id"] for target in targets)
-                )
-                description["model_id"] = canonical_id
-                description["canonical_model_id"] = canonical_id
-                return description
-        unavailable = unavailable_description(
-            canonical_id,
-            display_name,
-            status=SOURCE_ERROR if had_error else NOT_FOUND,
-            attempted_sources=attempted,
         )
-        unavailable["observed_model_ids"] = list(
+        result["model_id"] = model_id
+        result["provider"] = {
+            "id": provider_id,
+            "name": head.get("provider_name")
+            or (source.source_name if source is not None else provider_id),
+        }
+        result["observed_model_ids"] = list(
             dict.fromkeys(target["model_id"] for target in targets)
         )
-        return unavailable
+        if not description and (url := head.get("reference_url")):
+            result["reference_url"] = url
+        return result
 
     def resolve_many(self, targets: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         return [self.resolve(group) for group in self._group(targets)]
 
 
 def query_targets(
-    query: str, records: Iterable[dict[str, Any]]
+    query: str,
+    records: Iterable[dict[str, Any]],
+    *,
+    providers: Iterable[dict[str, Any]] = (),
 ) -> list[dict[str, Any]]:
     """Build model-level targets from query results, retaining provider metadata."""
     targets = [
@@ -167,8 +129,20 @@ def query_targets(
             "model_id": record["model_id"],
             "display_name": record.get("display_name", record["model_id"]),
             "provider_id": (record.get("provider") or {}).get("id"),
+            "provider_name": (record.get("provider") or {}).get("name"),
+            "reference_url": (record.get("source") or {}).get("url"),
             "record": record,
         }
         for record in records
     ]
-    return targets or [{"model_id": query, "display_name": query}]
+    if targets:
+        return targets
+    return [
+        {
+            "model_id": query, "display_name": query,
+            "provider_id": check["provider"]["id"],
+            "provider_name": check["provider"]["name"],
+            "reference_url": (check.get("source") or {}).get("url"),
+        }
+        for check in providers
+    ] or [{"model_id": query, "display_name": query}]

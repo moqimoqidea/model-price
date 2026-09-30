@@ -3,22 +3,28 @@
 Prices are strings. A comparison contains `query`, `match_mode`, `retrieved_at`,
 `model_descriptions`, `results`, and `source_checks`.
 
-`model_descriptions` contains one entry per canonical model, not one per hosting
-provider. Each entry contains:
+`model_descriptions` contains one entry per hosting provider and normalized
+literal model ID. Identical IDs on different channels keep separate descriptions,
+and retired-name aliases are not merged. Each entry contains:
 
-- `model_id`, `display_name`, and `canonical_model_id` when a match was found
-- `observed_model_ids[]`: the provider spellings grouped into that canonical model;
+- `provider.id`, `provider.name`, `model_id`, and `display_name`; `model_id` keeps
+  the hosting channel's literal spelling rather than a canonical first-party ID
+- `observed_model_ids[]`: spellings of that literal ID within the same provider;
   it is present for available and unavailable introductions
 - `status`: `available`, `not_found`, or `source_error`
 - `summary`, `capabilities[]`, `lifecycle`, and `specifications`
 - for an available introduction, `source.name`, `source.url`, `source.kind`, and
   `source.retrieved_at`
 - for an unavailable introduction, `note` and `attempted_sources[]`
+- optional `reference_url` for an unavailable introduction: the same channel's
+  official page for follow-up, not evidence that capabilities were read there
 
 `lifecycle` is `active`, `preview`, `legacy`, `retired`, or `unknown`. A missing
 introduction never changes price-source status and never removes a price result.
-When no price record matches the query, `model_descriptions` still contains one
-honest `not_found` or `source_error` entry for the requested name.
+The resolver reads only that provider's registered description source. A missing
+or failed introduction never falls back to another channel or the model creator.
+When no price record matches the query, `model_descriptions` still contains an
+honest status entry for the requested name on each queried channel.
 
 Each result contains:
 
@@ -173,9 +179,22 @@ left that provider's monitored price catalogue without a still-open official
 notice, or has confirmed retirement evidence. A future or undated legacy notice
 keeps a model listed even if that price page has no row for it. Catalogue removal
 alone does not prove the API stopped serving the ID.
-The message prefixes each introduction with 【上架】 or 【下架】, groups listed models
-first, and shows only listed models in its 模型价格 section. JSON keeps all price
-changes and removed-model counts for audit.
+Availability controls which models can appear in 模型价格; it never replaces a
+change category. 模型能力 groups literal IDs by provider and labels every actual
+cause: 新增上架, 目录下架, 价格调整, 计费模式新增/移除, 替代模型更新, 退役公告新增,
+退役日期更新, 官方状态更新, 退役信息更新, or 退役时间节点. One model can carry
+several labels, and its notice facts and evidence appear beside its own channel's
+introduction. There is no separate retirement section. Catalogue removal does not
+establish actual service shutdown.
+
+If one channel has standard price movements on at least two distinct listed
+models, 模型能力 and 模型价格 each show one linked batch item. It names every
+literal model ID and the standard movement count, without individual amounts or
+repeated price-only introductions. Models with additional changes retain those
+separate facts. New-model prices, added/removed standard offers, and single-model
+price movements remain detailed. JSON retains every description, price change,
+amount, condition, and removed-model count; batching never changes this payload
+or the stored baselines and does not depend on the character budget.
 
 Notice archives are under `snapshots/lifecycle-<provider>/`, independent of the
 price archives and with their own `lifecycle_schema_version`. A failed or empty
@@ -201,14 +220,26 @@ one of:
 The two failure statuses omit `model_count` and `changes`. `baseline_at` is `null`
 when no matching baseline existed. A failed scan writes no archive.
 
-`source.updated_at` is official vendor evidence copied into the snapshot; it is
-`null` when the source publishes none. The plain-text report then displays
-`last_successful_at` as 上次更新时间, rather than presenting a scan timestamp as an
-official vendor update. Date-only official values remain date-only.
+The scan adds `catalog_url` to every provider report: that adapter's official
+human-readable catalogue when declared, otherwise its price source URL. It is
+used for batch follow-up links and unavailable-introduction references. It is
+runtime metadata and does not change the price or lifecycle snapshot shapes.
 
-A `changed` provider also carries `model_descriptions`, covering each unique model
-named anywhere in its changes. Unchanged and first-baseline providers omit it, so a
-daily scan never walks every model detail page merely to repeat unchanged prose.
+`summary.changed` and `summary.unchanged` remain catalogue comparison counts;
+`summary.lifecycle_changes` counts notices separately. The message's combined
+channel conclusion also counts notice-only changes as changed and partial notice
+read failures as incomplete, naming the price and notice outcomes independently.
+
+`source.updated_at` is official vendor evidence copied into the snapshot; it is
+`null` when the source publishes none. `last_successful_at` retains the fallback
+scan time without claiming an official update; the scan message prints no source
+update times. Date-only official values remain date-only.
+
+A provider with catalogue or notice changes also carries `model_descriptions`,
+covering each unique literal model named in either set of changes. This includes
+notice-only changes on a provider whose price status is `unchanged` or
+`source_error`. Providers with neither kind of change omit it, so a daily scan
+never walks every detail page merely to repeat unchanged prose.
 
 `model_count` includes listed models with no parseable price. `changes` holds `models_added`, `models_removed`, `offers_added`, `offers_removed`,
 `price_changes`, and their `total`. A model entry is the snapshot model, offers and

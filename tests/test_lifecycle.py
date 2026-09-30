@@ -40,7 +40,6 @@ from model_price.lifecycle_sources import (
 )
 from model_price.errors import SourceError
 from model_price.messages import scan_message
-from model_price.reporting import changed_descriptions
 from model_price.snapshots import (
     SnapshotStore,
     parse_baseline_selection,
@@ -523,9 +522,10 @@ class LifecycleScanTests(unittest.TestCase):
         self.assertEqual(report["status"], "unchanged")
         self.assertEqual(report["lifecycle"]["status"], "changed")
         message = scan_message(payload)
-        self.assertLess(
-            message.index("【模型能力】"), message.index("【退役公告与时间节点】")
-        )
+        self.assertIn("【退役日期更新】o1", message)
+        self.assertNotIn("【退役公告与时间节点】", message)
+        self.assertIn("1 个有变化，0 个无变化", message)
+        self.assertIn("价格目录无变化；退役日期更新 1", message)
         self.assertIn("2026-10-01 → 2026-10-03", message)
         self.assertIn("https://official.example/notice", message)
 
@@ -555,7 +555,10 @@ class LifecycleScanTests(unittest.TestCase):
         report = result["providers"][0]
         self.assertEqual(report["status"], "source_error")
         self.assertEqual(report["lifecycle"]["status"], "changed")
-        self.assertIn("退役公告与时间节点", scan_message(result))
+        message = scan_message(result)
+        self.assertIn("【退役日期更新】o1", message)
+        self.assertIn("pricing unavailable", message)
+        self.assertIn("2026-10-01 → 2026-10-03", message)
 
     def test_due_shutdown_marks_even_a_still_priced_model_delisted(self):
         class PriceAdapter:
@@ -610,24 +613,14 @@ class LifecycleScanTests(unittest.TestCase):
         self.assertEqual(report["model_availability"]["future"], "listed")
         self.assertEqual(report["model_availability"]["earliest"], "listed")
         message = scan_message(payload)
-        abilities = message.split("【模型能力】", 1)[1].split("【退役公告与时间节点】", 1)[0]
+        abilities = message.split("【模型能力】", 1)[1].split("【模型价格】", 1)[0]
         prices = message.split("【模型价格】", 1)[1].split("【渠道结论】", 1)[0]
-        self.assertEqual(abilities.count("【下架】"), 1)
-        self.assertLess(abilities.index("【上架】"), abilities.index("【下架】"))
+        self.assertIn("【价格调整】【退役时间节点】due", abilities)
+        self.assertNotIn("【上架】", abilities)
+        self.assertNotIn("【下架】", abilities)
         self.assertIn("due", abilities)
         self.assertNotIn("due", prices)
         self.assertIn("live", prices)
-
-    def test_canonical_description_uses_observed_retired_alias_state(self):
-        payload = {"providers": [{
-            "model_availability": {"deepseek-v4-flash": "delisted"},
-            "model_descriptions": [{
-                "model_id": "deepseek-flash",
-                "canonical_model_id": "deepseek-flash",
-                "observed_model_ids": ["deepseek-v4-flash"],
-            }],
-        }]}
-        self.assertEqual(changed_descriptions(payload)[0]["availability"], "delisted")
 
     def test_future_notice_keeps_a_model_listed_without_a_price_row(self):
         class PriceAdapter:

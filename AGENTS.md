@@ -55,6 +55,7 @@ Standard library only, Python 3, no install step, no build step.
 │       ├── updating.py          Git fast-forward before an explicit refresh
 │       ├── snapshots.py         archived baselines, retention, and point-in-time selection
 │       ├── diffing.py           what moved between two baselines
+│       ├── changes.py           every change cause grouped by channel and literal model ID
 │       ├── delta.py             the scan-every-catalogue run
 │       ├── deepseek_updates.py  DeepSeek's official update log, read once for every date consumer
 │       ├── lifecycle_sources.py official retirement notice readers
@@ -69,7 +70,7 @@ Standard library only, Python 3, no install step, no build step.
 │           ├── core.py          the DescriptionSource contract and record shape
 │           ├── sources.py       one class per official introduction source
 │           ├── parsing.py       Markdown/HTML readers specific to introduction pages
-│           ├── resolver.py      pick one authoritative introduction per canonical model
+│           ├── resolver.py      read only the hosting channel's introduction per literal model ID
 │           ├── registry.py      construct the resolver
 │           ├── tencent_mirror.py  validate the checked-in Tencent capture
 │           └── data/tencent-models.json   the checked-in mirror
@@ -123,11 +124,18 @@ where a line goes, and never let `budget.py` know what a message says.
 
 ### How a message stays within its limit
 
-Every block a report can carry is always rendered. Two limits exist and both are
+Every selected report block is rendered. Two limits exist and both are
 handled the same way — by measuring and saying so, never by cutting:
 
-The scan's default presentation includes standard prices only. Other offers
-remain in JSON and snapshots; this choice is made before measuring length.
+The scan's default presentation includes standard prices only. When a channel
+has standard price movements on at least two distinct listed models, both its
+capability and price sections use one batch item naming all affected IDs and the
+channel's official HTTPS catalogue page. Price-only models need no repeated prose
+in that item; other changes to those models still get their own introductions and
+facts. Single-model movements, new listings, and new/removed standard offers stay
+detailed. Full introductions remain in JSON; full prices remain in JSON and
+snapshots. These presentation choices are made before measuring length, never
+to meet a budget.
 
 - **The introduction limit** (300 characters) lives at `descriptions.core`: a
   vendor summary longer than that is kept whole and marked
@@ -204,7 +212,10 @@ even when the tests still pass.
    two generations on different calendars.
 9. **A description failure never touches a price result.** A missing, retired, or
    unreadable introduction is reported as `not_found` or `source_error`; neither
-   status may suppress or alter a price that parsed fine.
+   status may suppress or alter a price that parsed fine. Introductions are scoped
+   to the hosting provider and literal model ID. Never infer an introduction source
+   from the model name, fall back to its creator, or merge introductions across
+   channels or retired-name aliases. A channel without a reader reports absence.
 10. **Never synthesize Tencent model text.** Its details sit behind an authenticated
    console, so the checked-in mirror is the only source. A model absent from it is
    `not_found` — not a cue to infer capabilities from a name.
@@ -245,12 +256,16 @@ even when the tests still pass.
 16. **The model introduction opens every message.** Both `comparison_blocks` and
     `scan_blocks` put it first, after the header and before prices or conclusions: a
     reader who does not know what a model is for cannot judge what it costs.
-    Never move it below a price, and never print it per channel — what a model
-    does is a property of the model, so a scan introduces each moved model once
-    from `changed_descriptions` rather than once per channel that reported it.
+    Never move it below a price. Each channel introduces its own changed models
+    using its own words and sources, once per literal model ID; a batch of price
+    movements uses the linked presentation defined above.
     Its source line is never optional: an unsourced capability claim is not a
-    fact. A scan prefixes each introduction with 【上架】 or 【下架】, lists the
-    former first, and shows prices only for the former. The message omits an `active` lifecycle because a newly listed model is
+    fact. A scan labels every cause: new listing, catalogue removal, price
+    movement, billing-mode addition/removal, replacement revision, notice change,
+    or crossed milestone. Simultaneous causes all remain visible; listing state
+    never replaces them. Notice facts and evidence belong with the same channel's
+    model in 模型能力, not a separate section. Prices are shown only for models
+    whose `model_availability` is `listed`. The message omits an `active` lifecycle because a newly listed model is
     necessarily available; preview, legacy, retired, and unknown remain visible.
 17. **Statuses are reported, never softened.** `source_error`, `not_found`, and
     `empty_scan` reach the scan reader. `update_skipped` and `check_failed` remain
@@ -278,7 +293,7 @@ even when the tests still pass.
     and distinguish announcement, EOM, automatic redirect, and EOS. A failed or
     empty notice read cannot overwrite the prior notice history. The earliest
     possible shutdown date never becomes an asserted actual shutdown. A
-    【下架】 tag caused by catalogue removal describes that catalogue only.
+    【目录下架】 tag describes that catalogue only.
 
 ## Where a change goes
 
@@ -290,6 +305,7 @@ even when the tests still pass.
 | A cell that publishes several rates reads wrongly | `parsing.cell_rates` and the rules it is built from |
 | Add a model-introduction source | `descriptions/sources.py` and `DESCRIPTION_SOURCE_CLASSES`; routing in `descriptions/resolver.py` |
 | Change how one value reads | `reporting.py` |
+| Change how catalogue and notice changes are grouped by model | `changes.py`; keep labels in `reporting.py` |
 | Change how a message is laid out | `messages.py` |
 | Change which blocks a density keeps, or what opens a message | the section list in `messages.py` (`comparison_sections` / `scan_sections`) |
 | Change the character budget or how a density is chosen | `budget.py`, plus `DEFAULT_MAX_CHARS` callers in `query_model_prices.py` |

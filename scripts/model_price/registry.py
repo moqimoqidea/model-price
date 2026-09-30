@@ -168,6 +168,6 @@ def query_adapters(
     }
     if descriptions is not None:
         payload["model_descriptions"] = descriptions.resolve_many(
-            query_targets(model, records)
+            query_targets(model, records, providers=checks)
         )
     return payload

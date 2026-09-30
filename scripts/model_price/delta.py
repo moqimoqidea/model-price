@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, Iterable
 
 from .core import PriceSource, now_iso
+from .changes import changed_model_groups
 from .descriptions import DescriptionResolver
 from .diffing import (
     BASELINE_CREATED,
@@ -156,25 +157,8 @@ def _scan_provider(
         report["lifecycle"] = scan_lifecycle(
             adapter, lifecycle_client, records, store, captured_at, selection, reference_at
         )
-    targets = changed_model_targets(report, records or [], adapter.provider_id)
-    targeted = {normalize_model(target["model_id"]) for target in targets}
-    for change in (report.get("lifecycle") or {}).get("changes", []):
-        name = change["event"]["model_id"]
-        key = normalize_model(name)
-        if key not in targeted:
-            record = next(
-                (item for item in records or [] if normalize_model(item["model_id"]) == key),
-                None,
-            )
-            targets.append(
-                {
-                    "model_id": name,
-                    "display_name": name,
-                    "provider_id": adapter.provider_id,
-                    "record": record,
-                }
-            )
-            targeted.add(key)
+    report["catalog_url"] = getattr(adapter, "catalog_url", None) or adapter.source_url
+    targets = changed_model_targets(report, records or [])
     if targets:
         current_ids = {
             normalize_model(item["model_id"]) for item in records or []
@@ -219,29 +203,22 @@ def listing_state(
 def changed_model_targets(
     report: dict[str, Any],
     records: Iterable[dict[str, Any]],
-    provider_id: str,
 ) -> list[dict[str, Any]]:
     """Return each model touched by a delta once, with current metadata if any."""
     current = {
         normalize_model(record.get("model_id", "")): record for record in records
     }
-    targets: dict[str, dict[str, Any]] = {}
-    for field in CHANGE_FIELDS:
-        for change in (report.get("changes") or {}).get(field, []):
-            model_id = change.get("model_id", "")
-            if not model_id:
-                continue
-            record = current.get(normalize_model(model_id))
-            targets.setdefault(
-                normalize_model(model_id),
-                {
-                    "model_id": model_id,
-                    "display_name": change.get("display_name") or model_id,
-                    "provider_id": provider_id,
-                    "record": record,
-                },
-            )
-    return list(targets.values())
+    return [
+        {
+            "model_id": model["model_id"],
+            "display_name": model["display_name"],
+            "provider_id": report["provider"]["id"],
+            "provider_name": report["provider"]["name"],
+            "reference_url": report["catalog_url"],
+            "record": current.get(normalize_model(model["model_id"])),
+        }
+        for model in changed_model_groups(report)
+    ]
 
 
 def failed(

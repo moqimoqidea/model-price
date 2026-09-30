@@ -1,4 +1,4 @@
-"""Provider-independent model-description contracts and record shapes."""
+"""Keep each channel's introduction independent from its price result."""
 
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ def unavailable_description(
 ) -> dict[str, Any]:
     """Describe an honest absence instead of inventing model capabilities."""
     default = (
-        "未找到该模型的官方独立介绍；它可能是旧型号、已下线，"
+        "未找到该渠道的该模型官方独立介绍；它可能是旧型号、已下线，"
         "或只保留在价格目录中。"
         if status == NOT_FOUND
         else "模型介绍来源暂时无法读取；价格结果不受影响。"

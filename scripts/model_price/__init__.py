@@ -15,6 +15,7 @@ Responsibility split:
 - ``updating``     Git self-update before an explicit refresh
 - ``snapshots``    archived baselines, retention, and point-in-time selection
 - ``diffing``      what moved between two baselines
+- ``changes``      all change causes grouped by a channel's literal model ID
 - ``delta``        the scan-every-catalogue-and-compare run
 - ``reporting``    the shared wording and single-value formatters
 - ``messages``     the plain-text messages those formatted values are laid into

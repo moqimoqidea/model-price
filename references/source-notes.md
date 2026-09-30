@@ -60,11 +60,15 @@ from price snapshots, and is never populated from the three-hour cache.
 ## Model introductions
 
 Introductions live in `model_price/descriptions/`, independently of price adapters.
-The resolver first tries the model vendor and then the platform whose price record
-named it. It returns one introduction per canonical model, so provider spellings
-such as `deepseek-v4.1-flash`, `deepseek-v4-1-flash`, and `deepseek-flash` do not
-produce duplicate prose. Query failures are isolated from prices; `delta` resolves
-only models present in an actual change.
+The resolver selects only the hosting provider's registered reader and groups by
+provider ID plus the normalized literal model ID. It never infers a reader from a
+model's family, falls back to its creator, or merges introductions across channels
+or retired-name aliases. Query failures are isolated from prices; `delta` resolves
+only models present in an actual catalogue or notice change. The same model on two
+platforms keeps each platform's own prose and evidence. Baidu, Vertex AI, AWS
+Bedrock, and Azure currently have no registered introduction reader: they report
+`not_found` with their channel reference page, rather than borrowing a first-party
+introduction. Retirement evidence is independent and never substituted for prose.
 
 - OpenAI, Gemini, and xAI use the official per-model Markdown variants. Anthropic
   first reads its official models-overview Markdown, which publishes each model's
@@ -111,6 +115,10 @@ only models present in an actual change.
 - Tencent model details require an authenticated console. The checked-in
   `descriptions/data/tencent-models.json` file is the explicit mirror. Absence from
   the mirror is `not_found`, never a cue to synthesize an introduction.
+
+Batch price links use the adapter's own `catalog_url` when present, otherwise its
+price source URL. OpenRouter therefore links its public `/models` page rather
+than its API. This is runtime report metadata, not part of snapshot identity.
 
 - Aliyun Bailian: `https://www.qianwenai.com/models` and its public
   `ListModelSeries` POST endpoint at `platform-home.qianwenai.com`. The endpoint

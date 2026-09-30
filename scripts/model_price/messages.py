@@ -11,8 +11,8 @@ Both messages open with what the model is for rather than what it costs. A scan
 then shows standard prices before closing with the channel outcomes.
 
 A message also has to fit the channel it is sent through, and this module neither
-measures nor shortens anything to make it fit: every block the sources support is
-laid out, and ``budget`` reports by how much the result overruns. Shortening is
+measures nor shortens anything to make it fit: every selected block is laid out,
+and ``budget`` reports by how much the result overruns. Shortening is
 summarizing, which needs a model, and this tool takes no credentials — so an
 over-long message leaves here as the report in full, saying that it still has to
 be summarized before it goes out.
@@ -26,6 +26,7 @@ from .budget import DEFAULT_MAX_CHARS, overage
 from .delta import EMPTY_SCAN, SOURCE_ERROR
 
 from .descriptions.core import AVAILABLE as DESCRIPTION_AVAILABLE
+from .models import normalize_model
 from .pricing import is_standard_offer
 from .diffing import (
     BASELINE_CREATED,
@@ -47,10 +48,10 @@ from .reporting import (
     UNPRICED,
     UNSTATED,
     banded_records,
-    availability_label,
     baseline_selection_text,
+    channel_status,
     change_digest,
-    changed_descriptions,
+    changed_model_details,
     comparison_conclusion,
     comparison_differences,
     conditions_text,
@@ -59,11 +60,18 @@ from .reporting import (
     format_moment,
     format_price,
     lifecycle_change_text,
+    lifecycle_digest,
+    model_change_title,
     model_digest,
     model_availability,
+    model_offer_changes_text,
+    model_title,
     offer_condition_text,
     offering_text,
+    partial_catalogue_text,
     price_movement,
+    price_batch_text,
+    price_change_batch,
     pricing_state_text,
     provider_name,
     scan_conclusion,
@@ -71,6 +79,7 @@ from .reporting import (
     shared_conditions,
     skill_update_text,
     specification_text,
+    standard_price_changes,
     summary_label,
 )
 
@@ -183,7 +192,7 @@ def comparison_message(
 ) -> str:
     """Render a model comparison as the message a channel receives.
 
-    The model's own introduction opens the message, so a reader learns what the
+    Each channel's introduction opens the message, so a reader learns what the
     model is for before reading what it costs. The conclusion, the channels, and
     what differs between them follow in that order, so the first screen still
     answers what the comparison covers and where the channels part company. The
@@ -319,24 +328,13 @@ def band_lines(results: list[dict[str, Any]]) -> list[str]:
     return stacked(blocks)
 
 
-def description_lines(
-    descriptions: list[dict[str, Any]], *, show_availability: bool = False
-) -> list[str]:
-    """One entry per model, from its vendor's own introduction.
-
-    An introduction is a property of the model rather than of a price channel, so
-    a model served by five platforms is introduced once here instead of five
-    times over, and its source is independent of every price source.
-
-    This block opens both messages, so a reader learns what the model is for
-    before reading what it costs.
-    """
+def description_lines(descriptions: list[dict[str, Any]]) -> list[str]:
+    """Introduce each channel's model before its price, keeping sources separate."""
     return stacked(
         entry(
             position,
-            f"{availability_label(description) if show_availability else ''}"
-            f"{description.get('display_name') or description.get('model_id', '')}"
-            f"（{description.get('model_id', '')}）",
+            (f"{provider_name(description)}｜" if description.get("provider") else "")
+            + model_title(description),
             description_fields(description),
         )
         for position, description in enumerate(descriptions, start=1)
@@ -358,7 +356,7 @@ def description_fields(description: dict[str, Any]) -> list[str]:
         state = field(
             "状态", sentence_text(f"{status}；{note_text}" if note_text else status)
         )
-        return [state, field("已检查", description_source_text(description))]
+        return [state, field("介绍来源", description_source_text(description))]
     lifecycle = description.get("lifecycle", "unknown")
     lines = [
         field(
@@ -430,14 +428,13 @@ def scan_message(
 
 
 def scan_blocks(payload: dict[str, Any]) -> list[list[str]]:
-    """Introduce changed models once, then show prices and channel outcomes."""
+    """Group capabilities and notice changes by channel, then prices and outcomes."""
     reports = payload.get("providers", [])
     comparison = baseline_selection_text(payload)
     subject = f"{SCAN_SUBJECT}（{comparison}）" if comparison else SCAN_SUBJECT
     return [
         header(SCAN_TITLE, subject, payload),
-        section("模型能力", description_lines(changed_descriptions(payload), show_availability=True)),
-        section("退役公告与时间节点", lifecycle_lines(reports)),
+        section("模型能力", scan_capability_lines(reports)),
         section("模型价格", changed_blocks(reports)),
         section("渠道结论", channel_conclusion(payload)),
     ]
@@ -448,7 +445,7 @@ def channel_conclusion(payload: dict[str, Any]) -> list[str]:
     reports = payload.get("providers", [])
     lines = scan_conclusion(payload)
     for status in (CHANGED, UNCHANGED, BASELINE_CREATED, BASELINE_NOT_FOUND):
-        matching = [report for report in reports if report["status"] == status]
+        matching = [report for report in reports if channel_status(report) == status]
         if not matching:
             continue
         label = DELTA_STATUS_LABELS[status]
@@ -464,6 +461,12 @@ def channel_conclusion(payload: dict[str, Any]) -> list[str]:
         for report in reports
         if report["status"] in (EMPTY_SCAN, SOURCE_ERROR)
     )
+    lines.extend(
+        partial_catalogue_text(report)
+        for report in reports
+        if channel_status(report) == SOURCE_ERROR
+        and report["status"] not in (EMPTY_SCAN, SOURCE_ERROR)
+    )
     for report in reports:
         lifecycle = report.get("lifecycle") or {}
         status = lifecycle.get("status")
@@ -473,6 +476,8 @@ def channel_conclusion(payload: dict[str, Any]) -> list[str]:
             lines.append(sentence_text(f"{report['provider']['name']} 退役公告：暂无可核实的公开逐模型时间表"))
         elif status in (BASELINE_CREATED, BASELINE_NOT_FOUND):
             lines.append(sentence_text(f"{report['provider']['name']} 退役公告：{DELTA_STATUS_LABELS[status]}；记录 {lifecycle.get('event_count', 0)} 项"))
+        elif status == CHANGED and report["status"] in (EMPTY_SCAN, SOURCE_ERROR):
+            lines.append(sentence_text(f"{report['provider']['name']} 退役公告：{lifecycle_digest(report)}"))
     baselines = {
         report.get("baseline_at") for report in reports if report.get("baseline_at")
     }
@@ -487,19 +492,45 @@ def channel_conclusion(payload: dict[str, Any]) -> list[str]:
     return lines
 
 
-def lifecycle_lines(reports: list[dict[str, Any]]) -> list[str]:
-    """Lay out each changed official model ID with its own evidence URL."""
+def scan_capability_lines(reports: list[dict[str, Any]]) -> list[str]:
+    """Show all causes per channel model, with one item for bulk price moves."""
     blocks = []
     for report in reports:
-        changes = (report.get("lifecycle") or {}).get("changes") or []
-        if not changes:
-            continue
+        batch = price_change_batch(report)
+        batched_ids = (
+            {normalize_model(name) for name in batch["model_ids"]} if batch else set()
+        )
         details = []
-        for change in changes:
-            details.append(bullet(sentence_text(lifecycle_change_text(change)), FIELD))
-            details.append(note(f"来源：{change['event']['source_url']}", ITEM))
-        blocks.append(entry(len(blocks) + 1, report["provider"]["name"], details))
+        for model in changed_model_details(report):
+            if (
+                model["change_kinds"] == [PRICE_CHANGE_FIELD]
+                and normalize_model(model["model_id"]) in batched_ids
+            ):
+                continue
+            details.extend(scan_model_entry(model))
+        if batch:
+            details.append(bullet(price_batch_text(batch), FIELD))
+        if details:
+            blocks.append(entry(len(blocks) + 1, report["provider"]["name"], details))
     return stacked(blocks)
+
+
+def scan_model_entry(model: dict[str, Any]) -> list[str]:
+    """Keep simultaneous billing and notice changes beside the correct introduction."""
+    fields: list[str] = []
+    if text := model_offer_changes_text(model):
+        fields.append(field("计费变化", sentence_text(text)))
+    fields.extend(description_fields(model["description"]))
+    for change in model["lifecycle_changes"]:
+        fields.append(field("公告变化", sentence_text(lifecycle_change_text(change))))
+    urls = dict.fromkeys(
+        change["event"]["source_url"] for change in model["lifecycle_changes"]
+    )
+    fields.extend(field("公告来源", url) for url in urls)
+    return [
+        bullet(sentence_text(model_change_title(model)), FIELD),
+        *(f"{INDENT}{line}" for line in fields),
+    ]
 
 
 def changed_blocks(reports: list[dict[str, Any]]) -> list[str]:
@@ -525,16 +556,17 @@ def changed_notes(changes: dict[str, Any]) -> list[str]:
     same sentence, so it is taken once: repeated per bullet it would read as several
     notes saying one thing.
     """
-    for field_name in CHANGE_FIELDS:
-        for item in changes.get(field_name) or []:
-            if notes := item.get("pricing_notes"):
-                return list(notes)
-    return []
+    return list(dict.fromkeys(
+        note for field_name in CHANGE_FIELDS
+        for item in changes.get(field_name) or []
+        for note in item.get("pricing_notes") or []
+    ))
 
 
 def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
-    """Show standard prices while keeping distinct conditions separate."""
+    """Show selected standard prices or a linked batch, without merging rates."""
     changes = report.get("changes") or {}
+    displayed: dict[str, Any] = {}
     details: list[str] = []
     for field_name in PRICE_BULLET_CHANGE_FIELDS:
         items = changes.get(field_name) or []
@@ -544,32 +576,30 @@ def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
         ]
         if field_name in ("offers_added", "offers_removed"):
             items = [item for item in items if is_standard_offer(item.get("offer") or {})]
+        displayed[field_name] = items
         details.extend(
             group(
                 f"{CHANGE_FIELD_LABELS[field_name]}（{len(items)}）",
                 bullets((change_text(item) for item in items), ITEM),
             )
         )
-    moves = [
-        move for move in changes.get(PRICE_CHANGE_FIELD) or []
-        if model_availability(report, move.get("model_id", "")) == "listed"
-        and is_standard_offer(
-            {"name": move.get("offer"), "conditions": move.get("conditions")}
-        )
-    ]
+    moves = standard_price_changes(report)
+    batch = price_change_batch(report)
+    displayed[PRICE_CHANGE_FIELD] = [] if batch else moves
     details.extend(
         group(
             f"{CHANGE_FIELD_LABELS[PRICE_CHANGE_FIELD]}（{len(moves)}）",
-            bullets((price_change_text(move) for move in moves), ITEM),
+            [bullet(price_batch_text(batch), ITEM)] if batch
+            else bullets((price_change_text(move) for move in moves), ITEM),
         )
     )
-    details.extend(price_note_lines({"pricing_notes": changed_notes(changes)}))
+    details.extend(price_note_lines({"pricing_notes": changed_notes(displayed)}))
     return entry(position, report["provider"]["name"], details) if details else []
 
 
 def change_text(change: dict[str, Any]) -> str:
     """Read one change: a whole model, or one offer of a model that stayed."""
-    model = f"{change.get('display_name')}（{change.get('model_id')}）"
+    model = model_title(change)
     offer = change.get("offer")
     if offer is None:
         digest = model_digest(change) or UNPRICED
@@ -580,10 +610,7 @@ def change_text(change: dict[str, Any]) -> str:
 
 def price_change_text(change: dict[str, Any]) -> str:
     """Read one price move as its model, its condition, and the move itself."""
-    model = (
-        f"{change.get('display_name') or change.get('model_id', '')}"
-        f"（{change.get('model_id', '')}）"
-    )
+    model = model_title(change)
     condition = offering_text(change.get("offer", ""), change.get("conditions", {}))
     label = change.get("label") or change.get("type", "")
     return sentence_text(

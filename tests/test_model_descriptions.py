@@ -103,8 +103,10 @@ class FakeDescriptionSource(DescriptionSource):
         self.source_name = source_id
         self.source_url = f"https://example.test/{source_id}"
         self.summary = summary
+        self.calls = []
 
     def describe(self, model_id, display_name="", *, record=None):
+        self.calls.append(model_id)
         return description_record(
             model_id,
             display_name or model_id,
@@ -565,10 +567,11 @@ class SummaryOverLimitTests(unittest.TestCase):
 
 
 class ResolverTests(unittest.TestCase):
-    def test_first_party_source_precedes_the_hosting_platform(self):
+    def test_only_the_hosting_platform_source_is_used(self):
+        vendor = FakeDescriptionSource("deepseek", "原厂介绍")
         resolver = DescriptionResolver(
             {
-                "deepseek": FakeDescriptionSource("deepseek", "原厂介绍"),
+                "deepseek": vendor,
                 "aliyun": FakeDescriptionSource("aliyun", "平台介绍"),
             }
         )
@@ -581,7 +584,56 @@ class ResolverTests(unittest.TestCase):
                 }
             ]
         )
-        self.assertEqual(result["summary"], "原厂介绍")
+        self.assertEqual(result["summary"], "平台介绍")
+        self.assertEqual(result["model_id"], "deepseek-v4.1-flash")
+        self.assertEqual(result["provider"]["id"], "aliyun")
+        self.assertEqual(vendor.calls, [])
+
+    def test_identical_model_ids_keep_their_channel_introductions(self):
+        resolver = DescriptionResolver({
+            name: FakeDescriptionSource(name, f"{name} 的说明")
+            for name in ("deepseek", "tencent")
+        })
+        descriptions = resolver.resolve_many([
+            {"model_id": "deepseek-flash", "provider_id": name}
+            for name in ("deepseek", "tencent")
+        ])
+        self.assertEqual([item["summary"] for item in descriptions], ["deepseek 的说明", "tencent 的说明"])
+        self.assertEqual([item["provider"]["id"] for item in descriptions], ["deepseek", "tencent"])
+
+    def test_model_aliases_on_one_channel_are_not_merged(self):
+        descriptions = DescriptionResolver({"fake": FakeDescriptionSource("fake", "说明")}).resolve_many([
+            {"model_id": name, "provider_id": "fake"}
+            for name in ("deepseek-v4-flash", "deepseek-flash")
+        ])
+        self.assertEqual([item["model_id"] for item in descriptions], ["deepseek-v4-flash", "deepseek-flash"])
+
+    def test_missing_and_broken_channel_sources_never_fall_back_to_vendor(self):
+        class MissingSource(FakeDescriptionSource):
+            def describe(self, *args, **kwargs):
+                return None
+
+        for source, expected in ((None, "not_found"), (MissingSource("tencent", ""), "not_found"), (BrokenDescriptionSource("tencent", ""), "source_error")):
+            with self.subTest(expected=expected, source=source):
+                vendor = FakeDescriptionSource("deepseek", "不应借用的原厂介绍")
+                sources = {"deepseek": vendor}
+                if source is not None:
+                    sources["tencent"] = source
+                result = DescriptionResolver(sources).resolve([{
+                    "model_id": "deepseek-flash", "provider_id": "tencent",
+                    "reference_url": "https://channel.test/models",
+                }])
+                self.assertEqual(result["status"], expected)
+                self.assertEqual(result["provider"]["id"], "tencent")
+                self.assertEqual(result["reference_url"], "https://channel.test/models")
+                self.assertEqual(vendor.calls, [])
+
+    def test_a_direct_resolution_rejects_mixed_channels(self):
+        with self.assertRaises(ValueError):
+            DescriptionResolver({}).resolve([
+                {"model_id": "m1", "provider_id": name}
+                for name in ("aliyun", "tencent")
+            ])
 
     def test_an_unknown_model_returns_an_explicit_absence(self):
         result = DescriptionResolver({}).resolve(
@@ -787,9 +839,7 @@ class DeltaDescriptionTests(unittest.TestCase):
         message = scan_message(payload)
         self.assertIn("【模型能力】", message)
         self.assertIn("适合代码与智能体任务", message)
-        # What a model is for is a property of the model, not of the channel that
-        # reported the change, so the scan opens with it. The channel's own block
-        # then carries the before-and-after without repeating the introduction.
+        # The channel's introduction opens the scan, before its price changes.
         self.assertLess(message.index("【模型能力】"), message.index("【模型价格】"))
         self.assertEqual(message.count("适合代码与智能体任务"), 1)
 

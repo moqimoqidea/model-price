@@ -14,10 +14,12 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from .changes import changed_model_groups, lifecycle_change_kind
 from .delta import EMPTY_SCAN, SOURCE_ERROR
 from .descriptions.core import AVAILABLE as DESCRIPTION_AVAILABLE
 from .descriptions.core import NOT_FOUND as DESCRIPTION_NOT_FOUND
 from .descriptions.core import SUMMARY_MAX_CHARS
+from .descriptions.core import unavailable_description
 from .diffing import (
     BASELINE_CREATED,
     BASELINE_NOT_FOUND,
@@ -154,8 +156,6 @@ LIFECYCLE_LABELS = {
     "unknown": "官方未说明",
 }
 
-AVAILABILITY_LABELS = {"listed": "【上架】", "delisted": "【下架】"}
-
 SPECIFICATION_LABELS = {
     "context_window": "上下文窗口",
     "input_token_limit": "最大输入",
@@ -196,6 +196,20 @@ CHANGE_FIELD_LABELS = {
     "offers_added": "新增计费方式",
     "offers_removed": "移除计费方式",
     PRICE_CHANGE_FIELD: "价格变化",
+}
+
+MODEL_CHANGE_LABELS = {
+    "models_added": "新增上架",
+    "models_removed": "目录下架",
+    PRICE_CHANGE_FIELD: "价格调整",
+    "offers_added": "计费模式新增",
+    "offers_removed": "计费模式移除",
+    "replacement_updated": "替代模型更新",
+    "new_notice": "退役公告新增",
+    "date_revised": "退役日期更新",
+    "lifecycle_status_updated": "官方状态更新",
+    "lifecycle_detail_updated": "退役信息更新",
+    "milestone_reached": "退役时间节点",
 }
 
 CACHE_PRICE_TYPES = {"cache_hit", "cache_write", "cache_storage"}
@@ -523,12 +537,13 @@ def description_source_text(description: dict[str, Any]) -> str:
         label = source.get("name") or "官方介绍"
         return f"{label}：{source['url']}"
     attempts = description.get("attempted_sources") or []
-    names = list(
-        dict.fromkeys(
-            item.get("name", "") for item in attempts if item.get("name")
-        )
-    )
-    return "、".join(names) or "未命中可用介绍源"
+    if attempts:
+        attempt = attempts[0]
+        name = attempt.get("name") or "该渠道官方介绍"
+        return f"{name}：{attempt['url']}" if attempt.get("url") else name
+    if url := description.get("reference_url"):
+        return f"该渠道页面（未取得独立介绍）：{url}"
+    return "未命中该渠道的可用介绍源"
 
 
 def specification_text(specifications: dict[str, Any]) -> str:
@@ -540,36 +555,89 @@ def specification_text(specifications: dict[str, Any]) -> str:
     )
 
 
-def changed_descriptions(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Every model a scan reports as moved, introduced once for the whole scan.
+def changed_model_details(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Join every change to this channel's own introduction, never another's."""
+    descriptions = {
+        normalize_model(name): description
+        for description in report.get("model_descriptions") or []
+        for name in description.get("observed_model_ids") or [description["model_id"]]
+    }
+    details: list[dict[str, Any]] = []
+    for model in changed_model_groups(report):
+        description = descriptions.get(normalize_model(model["model_id"]))
+        if description is None:
+            description = unavailable_description(model["model_id"], model["display_name"])
+            description["reference_url"] = (
+                report.get("catalog_url") or (report.get("source") or {}).get("url")
+            )
+        details.append({**model, "description": description})
+    return details
 
-    A scan resolves introductions only for the models named in a change, so what
-    this returns is exactly the set that needs one. The same model can be named by
-    two channels, and what it is for does not vary by channel, so the repeats are
-    dropped and the model is introduced once rather than once per channel.
+
+def model_title(model: dict[str, Any]) -> str:
+    """Name the channel's literal ID beside its display name in every section."""
+    model_id = model.get("model_id", "")
+    return f"{model.get('display_name') or model_id}（{model_id}）"
+
+
+def model_change_title(model: dict[str, Any]) -> str:
+    """Show all causes of a model's change rather than its listing state."""
+    labels = "".join(
+        f"【{label}】" for kind, label in MODEL_CHANGE_LABELS.items()
+        if kind in model["change_kinds"]
+    )
+    return f"{labels}{model_title(model)}"
+
+
+def model_offer_changes_text(model: dict[str, Any]) -> str:
+    """Name changed billing modes and conditions without quoting other tiers' prices."""
+    parts = []
+    for kind in ("offers_added", "offers_removed"):
+        offers = list(
+            dict.fromkeys(
+                offering_text(
+                    item["offer"].get("name", ""),
+                    item["offer"].get("conditions") or {},
+                )
+                for item in model["changes"].get(kind) or []
+            )
+        )
+        if offers:
+            parts.append(f"{MODEL_CHANGE_LABELS[kind]}：{'、'.join(offers)}")
+    return "；".join(parts)
+
+
+def standard_price_changes(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Select standing price movements once for both scan sections."""
+    return [
+        move for move in (report.get("changes") or {}).get(PRICE_CHANGE_FIELD) or []
+        if model_availability(report, move["model_id"]) == "listed"
+        and is_standard_offer(
+            {"name": move.get("offer"), "conditions": move.get("conditions")}
+        )
+    ]
+
+
+def price_change_batch(report: dict[str, Any]) -> dict[str, Any] | None:
+    """Link multi-model adjustments as one item, independently of message length.
+
+    Full rates and conditions stay in JSON and snapshots. A single model's many
+    charges or context tiers remain detailed; only distinct models form a batch.
+    Without an official HTTPS page, the detailed rendering remains necessary.
     """
-    seen: dict[str, dict[str, Any]] = {}
-    for report in payload.get("providers", []):
-        for description in report.get("model_descriptions") or []:
-            key = normalize_model(
-                description.get("canonical_model_id")
-                or description.get("model_id")
-                or description.get("display_name", "")
-            )
-            observed = description.get("observed_model_ids") or [
-                description.get("model_id", "")
-            ]
-            availability = (
-                "listed"
-                if any(model_availability(report, name) == "listed" for name in observed)
-                else "delisted"
-            )
-            if key not in seen:
-                seen[key] = {**description, "availability": availability}
-            elif availability == "listed":
-                seen[key]["availability"] = "listed"
-    return sorted(
-        seen.values(), key=lambda description: description["availability"] != "listed"
+    moves = standard_price_changes(report)
+    models = {normalize_model(move["model_id"]): move["model_id"] for move in moves}
+    url = report.get("catalog_url") or (report.get("source") or {}).get("url") or ""
+    if len(models) < 2 or not url.startswith("https://"):
+        return None
+    return {"model_ids": list(models.values()), "change_count": len(moves), "url": url}
+
+
+def price_batch_text(batch: dict[str, Any]) -> str:
+    """Name every affected model and leave the official details URL at line end."""
+    return (
+        f"【价格调整】（{len(batch['model_ids'])} 个模型，{batch['change_count']} 项标准价格变化）："
+        f"{'、'.join(batch['model_ids'])}；详情查看该渠道官方页面：{batch['url']}"
     )
 
 
@@ -581,11 +649,6 @@ def model_availability(report: dict[str, Any], model_id: str) -> str:
         (status for name, status in statuses.items() if normalize_model(name) == key),
         "listed",
     )
-
-
-def availability_label(description: dict[str, Any]) -> str:
-    """Put a clear listing state before each model introduction."""
-    return AVAILABILITY_LABELS.get(description.get("availability"), "【上架】")
 
 
 def skill_update_text(payload: dict[str, Any]) -> str:
@@ -718,14 +781,48 @@ def change_digest(report: dict[str, Any]) -> str:
             for field in CHANGE_FIELDS
             if changes.get(field)
         ]
-        return "；".join(counts) or NO_CHANGE
-    if status == BASELINE_CREATED:
-        return f"记录 {report.get('model_count', 0)} 个模型，下次扫描起参与对比"
-    if status == BASELINE_NOT_FOUND:
-        return "没有符合请求时间的历史基线；本次扫描已归档"
-    if status in (EMPTY_SCAN, SOURCE_ERROR):
-        return report.get("error") or UNSTATED
-    return NO_CHANGE
+        catalogue = "；".join(counts) or NO_CHANGE
+    elif status == BASELINE_CREATED:
+        catalogue = f"记录 {report.get('model_count', 0)} 个模型，下次扫描起参与对比"
+    elif status == BASELINE_NOT_FOUND:
+        catalogue = "没有符合请求时间的历史基线；本次扫描已归档"
+    elif status in (EMPTY_SCAN, SOURCE_ERROR):
+        catalogue = report.get("error") or UNSTATED
+    else:
+        catalogue = "价格目录无变化" if (report.get("lifecycle") or {}).get("changes") else NO_CHANGE
+    return "；".join(filter(None, [catalogue, lifecycle_digest(report)]))
+
+
+def lifecycle_digest(report: dict[str, Any]) -> str:
+    """Count notice changes by cause, including replacement updates."""
+    counts: dict[str, int] = {}
+    for change in (report.get("lifecycle") or {}).get("changes") or []:
+        kind = lifecycle_change_kind(change)
+        counts[kind] = counts.get(kind, 0) + 1
+    return "；".join(
+        f"{MODEL_CHANGE_LABELS[kind]} {count}" for kind, count in counts.items()
+    )
+
+
+def partial_catalogue_text(report: dict[str, Any]) -> str:
+    """Keep a usable price outcome visible when the independent notice read failed."""
+    digest = change_digest(report)
+    detail = f"；{digest}" if digest != NO_CHANGE else ""
+    return sentence_text(
+        f"{report['provider']['name']}：价格目录{DELTA_STATUS_LABELS[report['status']]}{detail}"
+    )
+
+
+def channel_status(report: dict[str, Any]) -> str:
+    """Count partial failures honestly and include notice-only changes."""
+    if report["status"] in (EMPTY_SCAN, SOURCE_ERROR):
+        return report["status"]
+    lifecycle = report.get("lifecycle") or {}
+    if lifecycle.get("status") == SOURCE_ERROR:
+        return SOURCE_ERROR
+    if lifecycle.get("changes"):
+        return CHANGED
+    return report["status"]
 
 
 def all_unchanged(payload: dict[str, Any]) -> bool:
@@ -759,19 +856,20 @@ def scan_conclusion(payload: dict[str, Any]) -> list[str]:
         scope += f"共 {total_models} 个模型"
     if all_unchanged(payload):
         return [f"{scope}，全部无变化。"]
+    statuses = [channel_status(report) for report in reports]
     counts = [
-        f"{summary.get(CHANGED, 0)} 个有变化",
-        f"{summary.get(UNCHANGED, 0)} 个无变化",
+        f"{statuses.count(CHANGED)} 个有变化",
+        f"{statuses.count(UNCHANGED)} 个无变化",
     ]
     if summary.get("lifecycle_changes"):
         counts.append(f"退役公告及时间节点变化 {summary['lifecycle_changes']} 项")
     if summary.get("lifecycle_source_errors"):
         counts.append(f"退役公告读取失败 {summary['lifecycle_source_errors']} 个")
-    if summary.get(BASELINE_CREATED):
-        counts.append(f"{summary[BASELINE_CREATED]} 个首次建立基线")
-    if summary.get(BASELINE_NOT_FOUND):
-        counts.append(f"{summary[BASELINE_NOT_FOUND]} 个未找到匹配基线")
-    failed = summary.get(EMPTY_SCAN, 0) + summary.get(SOURCE_ERROR, 0)
+    if statuses.count(BASELINE_CREATED):
+        counts.append(f"{statuses.count(BASELINE_CREATED)} 个首次建立基线")
+    if statuses.count(BASELINE_NOT_FOUND):
+        counts.append(f"{statuses.count(BASELINE_NOT_FOUND)} 个未找到匹配基线")
+    failed = statuses.count(EMPTY_SCAN) + statuses.count(SOURCE_ERROR)
     counts.append(f"{failed} 个未能完成")
     return [f"{scope}：{'，'.join(counts)}。"]
 

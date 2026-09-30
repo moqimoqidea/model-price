@@ -13,7 +13,7 @@ BASELINE_NOT_FOUND = "baseline_not_found"
 UNCHANGED = "unchanged"
 CHANGED = "changed"
 
-# The one change a report lays out as a table; the rest read as bullet lists.
+# Price movements remain distinct from whole-model and billing-mode changes.
 PRICE_CHANGE_FIELD = "price_changes"
 
 CHANGE_FIELDS = (
