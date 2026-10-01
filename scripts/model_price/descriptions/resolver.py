@@ -75,7 +75,9 @@ class DescriptionResolver:
         status = NOT_FOUND
         note = ""
         error = ""
-        if source is not None:
+        if head.get("description") is not None:
+            description = dict(head["description"])
+        elif source is not None:
             try:
                 description = source.describe(
                     model_id, display_name, record=head.get("record")
@@ -83,7 +85,9 @@ class DescriptionResolver:
             except Exception as exc:
                 status = SOURCE_ERROR
                 error = str(exc)
-                note = f"该渠道的模型介绍来源暂时无法读取；价格结果不受影响。原因：{error}"
+                note = (
+                    f"该渠道的模型介绍来源暂时无法读取；价格结果不受影响。原因：{error}"
+                )
             attempt = {
                 "name": source.source_name,
                 "url": source.source_url,
@@ -95,8 +99,13 @@ class DescriptionResolver:
         elif provider_id:
             note = "该渠道尚无可读取的官方模型介绍源；价格结果不受影响。"
         result = (
-            dict(description) if description else unavailable_description(
-                model_id, display_name, status=status, note=note,
+            dict(description)
+            if description
+            else unavailable_description(
+                model_id,
+                display_name,
+                status=status,
+                note=note,
                 attempted_sources=attempted,
             )
         )
@@ -139,7 +148,8 @@ def query_targets(
         return targets
     return [
         {
-            "model_id": query, "display_name": query,
+            "model_id": query,
+            "display_name": query,
             "provider_id": check["provider"]["id"],
             "provider_name": check["provider"]["name"],
             "reference_url": (check.get("source") or {}).get("url"),

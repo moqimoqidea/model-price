@@ -14,7 +14,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from .changes import changed_model_groups, lifecycle_change_kind
+from .changes import announcement_facts, changed_model_groups, lifecycle_change_kind
 from .delta import EMPTY_SCAN, SOURCE_ERROR
 from .descriptions.core import AVAILABLE as DESCRIPTION_AVAILABLE
 from .descriptions.core import NOT_FOUND as DESCRIPTION_NOT_FOUND
@@ -136,6 +136,7 @@ def unit_label(unit: Any) -> str:
             return f"{CURRENCY_LABELS.get(currency, currency)}/{label}"
     return str(unit or "")
 
+
 SOURCE_STATUS_LABELS = {
     "available": "已找到",
     "not_found": "未找到匹配模型",
@@ -210,6 +211,23 @@ MODEL_CHANGE_LABELS = {
     "lifecycle_status_updated": "官方状态更新",
     "lifecycle_detail_updated": "退役信息更新",
     "milestone_reached": "退役时间节点",
+    "announcement_observed": "官方公布·首次收录",
+    "model_announced": "新增公布",
+    "access_changed": "开放状态更新",
+    "announced_price_changed": "公告报价更新",
+    "announcement_listing_changed": "公布模型目录状态更新",
+}
+
+ACCESS_STATUS_LABELS = {
+    "unknown": "官方未明确说明",
+    "pending": "尚待开放",
+    "limited": "限定对象开放",
+    "public": "已公开开放",
+}
+CATALOGUE_STATUS_LABELS = {
+    "listed": "本渠道价格目录已收录",
+    "not_listed": "未匹配到本渠道价格目录中的同名条目（不据此推断服务关闭）",
+    "unknown": "本次价格目录未能核实",
 }
 
 CACHE_PRICE_TYPES = {"cache_hit", "cache_write", "cache_storage"}
@@ -473,9 +491,7 @@ def shared_conditions(record: dict[str, Any]) -> dict[str, Any]:
     for offer in offers[1:]:
         conditions = offer.get("conditions") or {}
         common = {
-            key: value
-            for key, value in common.items()
-            if conditions.get(key) == value
+            key: value for key, value in common.items() if conditions.get(key) == value
         }
     return common
 
@@ -488,9 +504,7 @@ def terms_beyond_name(name: str, conditions: dict[str, Any]) -> dict[str, Any]:
     ``service_tier=priority``). The message prints that name as the offer's own
     heading, so repeating it as a term reads as a stutter rather than as two facts.
     """
-    return {
-        key: value for key, value in conditions.items() if str(value) != str(name)
-    }
+    return {key: value for key, value in conditions.items() if str(value) != str(name)}
 
 
 def offer_condition_text(offer: dict[str, Any], shared: dict[str, Any]) -> str:
@@ -566,10 +580,12 @@ def changed_model_details(report: dict[str, Any]) -> list[dict[str, Any]]:
     for model in changed_model_groups(report):
         description = descriptions.get(normalize_model(model["model_id"]))
         if description is None:
-            description = unavailable_description(model["model_id"], model["display_name"])
-            description["reference_url"] = (
-                report.get("catalog_url") or (report.get("source") or {}).get("url")
+            description = unavailable_description(
+                model["model_id"], model["display_name"]
             )
+            description["reference_url"] = report.get("catalog_url") or (
+                report.get("source") or {}
+            ).get("url")
         details.append({**model, "description": description})
     return details
 
@@ -583,7 +599,8 @@ def model_title(model: dict[str, Any]) -> str:
 def model_change_title(model: dict[str, Any]) -> str:
     """Show all causes of a model's change rather than its listing state."""
     labels = "".join(
-        f"【{label}】" for kind, label in MODEL_CHANGE_LABELS.items()
+        f"【{label}】"
+        for kind, label in MODEL_CHANGE_LABELS.items()
         if kind in model["change_kinds"]
     )
     return f"{labels}{model_title(model)}"
@@ -607,10 +624,55 @@ def model_offer_changes_text(model: dict[str, Any]) -> str:
     return "；".join(parts)
 
 
+def announcement_access_text(item: dict[str, Any]) -> str:
+    """Distinguish public access from a price row, with both audiences visible."""
+    access = item.get("access") or {}
+    parts = [ACCESS_STATUS_LABELS.get(access.get("status", "unknown"), UNKNOWN)]
+    parts.extend(
+        f"{label}：{ACCESS_STATUS_LABELS.get(access.get(audience, 'unknown'), UNKNOWN)}"
+        for audience, label in (("developers", "开发者"), ("consumers", "普通用户"))
+    )
+    return "；".join(parts)
+
+
+def announcement_catalogue_text(item: dict[str, Any]) -> str:
+    return CATALOGUE_STATUS_LABELS.get(item.get("catalog_status", "unknown"), UNKNOWN)
+
+
+def announcement_price_text(item: dict[str, Any]) -> str:
+    """Quote release rates as announcement evidence, never as today's API bill."""
+    offers = item.get("announced_offers") or []
+    if offers:
+        state = "公告报价（保留公布时的适用条款；不代表当前可调用或当前账单）"
+        parts = [
+            f"公告条款 {index}："
+            + "；".join(
+                f"{price['label']} {format_price(price)}" for price in offer["prices"]
+            )
+            for index, offer in enumerate(offers, start=1)
+        ]
+        return f"{state}：{'；'.join(parts)}"
+    if item.get("catalog_status") == "listed":
+        return "公告未给出独立报价；本渠道目录价格按价格监控结果展示"
+    return "公告尚无已核实报价"
+
+
+def announcement_digest(report: dict[str, Any]) -> str:
+    """Count release causes independently of price and retirement counts."""
+    counts: dict[str, int] = {}
+    for change in announcement_facts(report):
+        kind = change["kind"]
+        counts[kind] = counts.get(kind, 0) + 1
+    return "；".join(
+        f"{MODEL_CHANGE_LABELS[kind]} {count}" for kind, count in counts.items()
+    )
+
+
 def standard_price_changes(report: dict[str, Any]) -> list[dict[str, Any]]:
     """Select standing price movements once for both scan sections."""
     return [
-        move for move in (report.get("changes") or {}).get(PRICE_CHANGE_FIELD) or []
+        move
+        for move in (report.get("changes") or {}).get(PRICE_CHANGE_FIELD) or []
         if model_availability(report, move["model_id"]) == "listed"
         and is_standard_offer(
             {"name": move.get("offer"), "conditions": move.get("conditions")}
@@ -789,8 +851,14 @@ def change_digest(report: dict[str, Any]) -> str:
     elif status in (EMPTY_SCAN, SOURCE_ERROR):
         catalogue = report.get("error") or UNSTATED
     else:
-        catalogue = "价格目录无变化" if (report.get("lifecycle") or {}).get("changes") else NO_CHANGE
-    return "；".join(filter(None, [catalogue, lifecycle_digest(report)]))
+        catalogue = (
+            "价格目录无变化"
+            if (report.get("lifecycle") or {}).get("changes")
+            else NO_CHANGE
+        )
+    return "；".join(
+        filter(None, [catalogue, lifecycle_digest(report), announcement_digest(report)])
+    )
 
 
 def lifecycle_digest(report: dict[str, Any]) -> str:
@@ -817,10 +885,10 @@ def channel_status(report: dict[str, Any]) -> str:
     """Count partial failures honestly and include notice-only changes."""
     if report["status"] in (EMPTY_SCAN, SOURCE_ERROR):
         return report["status"]
-    lifecycle = report.get("lifecycle") or {}
-    if lifecycle.get("status") == SOURCE_ERROR:
+    independent = [report.get(key) or {} for key in ("lifecycle", "announcements")]
+    if any(item.get("status") == SOURCE_ERROR for item in independent):
         return SOURCE_ERROR
-    if lifecycle.get("changes"):
+    if any(item.get("changes") or item.get("observations") for item in independent):
         return CHANGED
     return report["status"]
 
@@ -836,6 +904,8 @@ def all_unchanged(payload: dict[str, Any]) -> bool:
         report["status"] == UNCHANGED
         and (report.get("lifecycle") or {}).get("status", UNCHANGED)
         in (UNCHANGED, "no_public_schedule")
+        and (report.get("announcements") or {}).get("status", UNCHANGED)
+        in (UNCHANGED, "catalogue_only", "no_announcements")
         for report in reports
     )
 
@@ -865,6 +935,16 @@ def scan_conclusion(payload: dict[str, Any]) -> list[str]:
         counts.append(f"退役公告及时间节点变化 {summary['lifecycle_changes']} 项")
     if summary.get("lifecycle_source_errors"):
         counts.append(f"退役公告读取失败 {summary['lifecycle_source_errors']} 个")
+    if summary.get("announcement_changes"):
+        counts.append(f"模型公布及开放变化 {summary['announcement_changes']} 项")
+    if summary.get("announcement_observations"):
+        counts.append(
+            f"官方模型首次收录 {summary['announcement_observations']} 项（缺少所选公告历史基线）"
+        )
+    if summary.get("announcement_source_errors"):
+        counts.append(
+            f"模型发布来源读取失败 {summary['announcement_source_errors']} 个"
+        )
     if statuses.count(BASELINE_CREATED):
         counts.append(f"{statuses.count(BASELINE_CREATED)} 个首次建立基线")
     if statuses.count(BASELINE_NOT_FOUND):

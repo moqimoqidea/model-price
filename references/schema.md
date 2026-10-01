@@ -138,6 +138,89 @@ Explicit refreshes also add `skill_update` before querying official sources:
 }
 ```
 
+### Official model announcements
+
+The CLI's `delta` also adds independent `announcements` evidence to every selected
+provider. `compare`, `provider`, and `list` continue to discover from catalogues.
+Price report `status` and `changes` retain their original meanings; announcement
+discoveries never become fake `models_added` price records. The announcement
+result contains:
+
+- `status`: `changed`, `unchanged`, `baseline_created`, `baseline_not_found`,
+  `no_announcements`, `source_error`, or `catalogue_only`
+- `source.url/kind`, `coverage`, and `note`: the registered source and its scope,
+  retained even on read failures. `coverage` is `recent_official_news`,
+  `official_model_inventory`, or `catalogue_only` (with `source: null`)
+- `baseline_at`, `last_successful_at`: independently selected and latest successful
+  announcement archive timestamps
+- `models[]`, optional `model_count`: all retained publication records, not only
+  the current rolling index; a record omitted from that index is not retracted
+- `changes[]`, `observations[]`, and `error` on a failure
+
+Each publication record carries:
+
+- `model_id`, `display_name`: the literal official published name, or the literal
+  ID its capability document publishes; no generated API slug
+- `identity_kind`: `published_name` or `document_model_id`
+- `source_url`, `source_name`, `published_at`, and `summary`: official evidence,
+  preserving date precision and complete prose. A missing official date is `null`
+- `access.status/developers/consumers`: each is `unknown`, `pending`, `limited`, or
+  `public`, established by the official wording; `access.statements[]` retains
+  that wording and any different access scope within it
+- `announced_offers[]`: separate quoted announcement rates, each with `name`,
+  `conditions.published_terms`, and ordinary price-shaped `prices[]`; introductory
+  and later prices remain separate offers. These never join live `offers[]`
+- `pricing_notes[]`: verbatim pricing sentences, including percentages and
+  imprecise promotion periods; no derived prices, discounts, or expiry dates
+- `catalog_model_ids[]`: exact normalized literal ID/display-name matches on this
+  provider only, with no family/retirement aliases and no inferred variants
+- `catalog_status`: `listed` when an exact match exists, `not_listed` when no
+  same-name entry matches a successfully read catalogue, `unknown` when the
+  catalogue could not be verified. A `not_listed` match result is not evidence of
+  closed service, and an ambiguous set of matches never merges several IDs
+- optional `description`: an already verified same-channel inventory introduction
+- optional `detail_status: source_error`, `detail_error`, and `article_url` when
+  only the official index was readable. Then `source_url` identifies that index,
+  and unavailable article prose never becomes a capability claim
+
+`changes[].kind` is `announcement_observed` on the first default scan, then
+`model_announced`, `access_changed`, `announced_price_changed`, or
+`announcement_listing_changed`. Every change keeps its full `event`; revisions
+also carry `field`, `before`, and `after`. Access revisions compare status enums;
+announced-rate revisions compare each offer's `(type, amount, unit)` rates, so
+reworded evidence alone is not a rate movement. `unknown` catalogue reads do not
+pretend the model was listed or removed.
+
+An initial `baseline_created` announcement result carries first observations,
+unlike the initial price baseline's empty changes: these prove prior official
+publication, not a launch on the scan date. A historical selection with no
+announcement archive reports `baseline_not_found` with no invented delta, while
+archiving the current successful read. New records absent from the most recent
+archive remain visible under `observations[]` as `announcement_observed`; these
+are explicitly first observations, not `--since` changes, and are not repeated
+on the next read. A readable news index with no qualifying
+model and no retained history gives `no_announcements` and writes no empty
+baseline. Complete or partial failures give `source_error`, keep the prior
+archive, and can still display verified index discoveries. Each independent
+source's failures leave the other successful histories untouched.
+
+Announcement archives live under `snapshots/announcements-<provider>/`, use
+`announcement_schema_version: 1`, and retain `captured_at`, `provider`, `source`,
+and `models` keyed by the normalized published identity. They reuse the same
+point-in-time selection and retention policy without changing price snapshot
+version 4 or lifecycle version 2. Model summaries continue to use the shared
+300-character condensing flag; full announcement data is never cut for a budget.
+
+`summary.announcement_changes` counts all publication/access/rate/listing causes;
+`summary.announcement_observations` counts first observations when the selected
+historical announcement baseline is absent, separately from comparison changes;
+`summary.announcement_source_errors` counts independent incomplete reads. The
+message combines these with catalogue/retirement outcomes. Capabilities appear
+first, including explicit access evidence; 公告报价 is separate from live directory
+prices in 模型价格. All quoted amounts and terms remain visible even over budget.
+
+### Retirement notices
+
 When the CLI runs `delta`, each provider also carries an independent `lifecycle`
 result. Its `status` is `changed`, `unchanged`, `baseline_created`,
 `baseline_not_found`, `source_error`, or `no_public_schedule` (for an unregistered
@@ -174,12 +257,17 @@ including Google's gray row marker even when the row has no date.
 results separately from price changes when lifecycle scanning is enabled.
 
 For changed models, a provider report carries `model_availability`, a mapping
-from its literal model IDs to `listed` or `delisted`. `delisted` means the model
+from its literal model IDs to `listed`, `delisted`, `announced`, or `unknown`.
+`announced` identifies official publication without a same-name current catalogue
+match; `unknown` identifies announcement evidence whose catalogue read failed.
+Neither establishes API availability, which is kept in `announcements.access`.
+`delisted` means the model
 left that provider's monitored price catalogue without a still-open official
 notice, or has confirmed retirement evidence. A future or undated legacy notice
 keeps a model listed even if that price page has no row for it. Catalogue removal
 alone does not prove the API stopped serving the ID.
-Availability controls which models can appear in 模型价格; it never replaces a
+Availability controls which catalogue prices can appear in 模型价格; separately
+quoted announcement rates retain their published scope. Availability never replaces a
 change category. 模型能力 groups literal IDs by provider and labels every actual
 cause: 新增上架, 目录下架, 价格调整, 计费模式新增/移除, 替代模型更新, 退役公告新增,
 退役日期更新, 官方状态更新, 退役信息更新, or 退役时间节点. One model can carry
@@ -226,7 +314,8 @@ used for batch follow-up links and unavailable-introduction references. It is
 runtime metadata and does not change the price or lifecycle snapshot shapes.
 
 `summary.changed` and `summary.unchanged` remain catalogue comparison counts;
-`summary.lifecycle_changes` counts notices separately. The message's combined
+`summary.lifecycle_changes` counts notices separately, and
+`summary.announcement_changes` counts publications and access separately. The message's combined
 channel conclusion also counts notice-only changes as changed and partial notice
 read failures as incomplete, naming the price and notice outcomes independently.
 
@@ -235,10 +324,10 @@ read failures as incomplete, naming the price and notice outcomes independently.
 scan time without claiming an official update; the scan message prints no source
 update times. Date-only official values remain date-only.
 
-A provider with catalogue or notice changes also carries `model_descriptions`,
-covering each unique literal model named in either set of changes. This includes
+A provider with catalogue, notice, or announcement changes also carries `model_descriptions`,
+covering each unique literal model named in those changes. This includes
 notice-only changes on a provider whose price status is `unchanged` or
-`source_error`. Providers with neither kind of change omit it, so a daily scan
+`source_error`. Providers with none of those changes omit it, so a daily scan
 never walks every detail page merely to repeat unchanged prose.
 
 `model_count` includes listed models with no parseable price. `changes` holds `models_added`, `models_removed`, `offers_added`, `offers_removed`,

@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Any, Iterable, Sequence
 
 from .budget import DEFAULT_MAX_CHARS, overage
+from .changes import announcement_facts
 from .delta import EMPTY_SCAN, SOURCE_ERROR
 
 from .descriptions.core import AVAILABLE as DESCRIPTION_AVAILABLE
@@ -48,6 +49,10 @@ from .reporting import (
     UNPRICED,
     UNSTATED,
     banded_records,
+    announcement_access_text,
+    announcement_catalogue_text,
+    announcement_digest,
+    announcement_price_text,
     baseline_selection_text,
     channel_status,
     change_digest,
@@ -212,9 +217,7 @@ def comparison_blocks(payload: dict[str, Any]) -> list[list[str]]:
     subject = COMPARISON_SUBJECT.format(model=payload.get("query", ""))
     return [
         header(COMPARISON_TITLE, subject, payload),
-        section(
-            "模型介绍", description_lines(payload.get("model_descriptions", []))
-        ),
+        section("模型介绍", description_lines(payload.get("model_descriptions", []))),
         section("结论", comparison_conclusion(results)),
         section("渠道对比", provider_entries(results)),
         section("差异总结", bullets(comparison_differences(results))),
@@ -276,9 +279,9 @@ def price_lines(offer: dict[str, Any]) -> list[str]:
     bills cached input, or splits by input length, publishes more prices than a
     fixed set of columns could hold without dropping one.
     """
-    return bullets(
-        (price_text(price) for price in offer.get("prices", [])), ITEM
-    ) or [bullet(UNPRICED, ITEM)]
+    return bullets((price_text(price) for price in offer.get("prices", [])), ITEM) or [
+        bullet(UNPRICED, ITEM)
+    ]
 
 
 def price_text(price: dict[str, Any]) -> str:
@@ -369,15 +372,11 @@ def description_fields(description: dict[str, Any]) -> list[str]:
     # reader's decision even when the price source still lists the model.
     if lifecycle != "active":
         lines.append(
-            field(
-                "生命周期", sentence_text(LIFECYCLE_LABELS.get(lifecycle, lifecycle))
-            )
+            field("生命周期", sentence_text(LIFECYCLE_LABELS.get(lifecycle, lifecycle)))
         )
     if description.get("capabilities"):
         lines.append(
-            field(
-                "主打能力", sentence_text("、".join(description["capabilities"]))
-            )
+            field("主打能力", sentence_text("、".join(description["capabilities"])))
         )
     if specs := specification_text(description.get("specifications") or {}):
         lines.append(field("规格", sentence_text(specs)))
@@ -420,9 +419,7 @@ def source_status_text(check: dict[str, Any]) -> str:
     return f"{status}（{error}）" if error else status
 
 
-def scan_message(
-    payload: dict[str, Any], *, max_chars: int = DEFAULT_MAX_CHARS
-) -> str:
+def scan_message(payload: dict[str, Any], *, max_chars: int = DEFAULT_MAX_CHARS) -> str:
     """Render a scan with model capabilities, standard prices, and outcomes."""
     return finalize(scan_blocks(payload), max_chars)
 
@@ -450,7 +447,9 @@ def channel_conclusion(payload: dict[str, Any]) -> list[str]:
             continue
         label = DELTA_STATUS_LABELS[status]
         if status == UNCHANGED:
-            lines.append(f"{label}：{'、'.join(report['provider']['name'] for report in matching)}。")
+            lines.append(
+                f"{label}：{'、'.join(report['provider']['name'] for report in matching)}。"
+            )
         else:
             lines.extend(
                 f"{report['provider']['name']}：{label}；{change_digest(report)}。"
@@ -471,13 +470,54 @@ def channel_conclusion(payload: dict[str, Any]) -> list[str]:
         lifecycle = report.get("lifecycle") or {}
         status = lifecycle.get("status")
         if status == SOURCE_ERROR:
-            lines.append(sentence_text(f"{report['provider']['name']} 退役公告：读取失败；{lifecycle.get('error') or UNSTATED}；历史记录保留"))
+            lines.append(
+                sentence_text(
+                    f"{report['provider']['name']} 退役公告：读取失败；{lifecycle.get('error') or UNSTATED}；历史记录保留"
+                )
+            )
         elif status == "no_public_schedule":
-            lines.append(sentence_text(f"{report['provider']['name']} 退役公告：暂无可核实的公开逐模型时间表"))
+            lines.append(
+                sentence_text(
+                    f"{report['provider']['name']} 退役公告：暂无可核实的公开逐模型时间表"
+                )
+            )
         elif status in (BASELINE_CREATED, BASELINE_NOT_FOUND):
-            lines.append(sentence_text(f"{report['provider']['name']} 退役公告：{DELTA_STATUS_LABELS[status]}；记录 {lifecycle.get('event_count', 0)} 项"))
+            lines.append(
+                sentence_text(
+                    f"{report['provider']['name']} 退役公告：{DELTA_STATUS_LABELS[status]}；记录 {lifecycle.get('event_count', 0)} 项"
+                )
+            )
         elif status == CHANGED and report["status"] in (EMPTY_SCAN, SOURCE_ERROR):
-            lines.append(sentence_text(f"{report['provider']['name']} 退役公告：{lifecycle_digest(report)}"))
+            lines.append(
+                sentence_text(
+                    f"{report['provider']['name']} 退役公告：{lifecycle_digest(report)}"
+                )
+            )
+        announcements = report.get("announcements") or {}
+        if announcements.get("status") == SOURCE_ERROR:
+            lines.append(
+                sentence_text(
+                    f"{report['provider']['name']} 模型发布来源：读取失败；{announcements.get('error') or UNSTATED}；历史记录保留"
+                )
+            )
+        elif announcements.get("status") == "catalogue_only":
+            lines.append(
+                sentence_text(
+                    f"{report['provider']['name']} 模型发布来源：{announcements.get('note') or UNSTATED}"
+                )
+            )
+        elif announcements.get("status") == BASELINE_NOT_FOUND:
+            lines.append(
+                sentence_text(
+                    f"{report['provider']['name']} 模型发布来源：{DELTA_STATUS_LABELS[BASELINE_NOT_FOUND]}；本次发现已归档"
+                )
+            )
+        elif announcement_facts(report) and channel_status(report) == SOURCE_ERROR:
+            lines.append(
+                sentence_text(
+                    f"{report['provider']['name']} 模型发布来源：{announcement_digest(report)}"
+                )
+            )
     baselines = {
         report.get("baseline_at") for report in reports if report.get("baseline_at")
     }
@@ -521,6 +561,26 @@ def scan_model_entry(model: dict[str, Any]) -> list[str]:
     if text := model_offer_changes_text(model):
         fields.append(field("计费变化", sentence_text(text)))
     fields.extend(description_fields(model["description"]))
+    announcements = {
+        change["event"]["source_url"]: change["event"]
+        for change in model["announcement_changes"]
+    }
+    if item := model.get("announcement"):
+        announcements.setdefault(item["source_url"], item)
+    for item in announcements.values():
+        if item.get("published_at"):
+            fields.append(field("官方公布时间", format_moment(item["published_at"])))
+        fields.append(
+            field("公告开放说明", sentence_text(announcement_access_text(item)))
+        )
+        fields.append(
+            field("目录状态", sentence_text(announcement_catalogue_text(item)))
+        )
+        fields.extend(
+            field("开放原文", sentence_text(statement))
+            for statement in item["access"]["statements"]
+        )
+        fields.append(field("发布来源", item["source_url"]))
     for change in model["lifecycle_changes"]:
         fields.append(field("公告变化", sentence_text(lifecycle_change_text(change))))
     urls = dict.fromkeys(
@@ -537,14 +597,43 @@ def changed_blocks(reports: list[dict[str, Any]]) -> list[str]:
     """Standard prices for models and offers that changed."""
     blocks = []
     for report in reports:
-        if report["status"] == CHANGED:
-            if lines := changed_entry(len(blocks) + 1, report):
-                blocks.append(lines)
+        details = (
+            changed_entry(len(blocks) + 1, report)
+            if report["status"] == CHANGED
+            else []
+        )
+        announced = announcement_price_lines(report)
+        if details:
+            blocks.append([*details, *announced])
+        elif announced:
+            blocks.append(entry(len(blocks) + 1, report["provider"]["name"], announced))
     return stacked(blocks)
 
 
+def announcement_price_lines(report: dict[str, Any]) -> list[str]:
+    """Publish announced rates separately even when no price row has appeared yet."""
+    items: dict[str, dict[str, Any]] = {}
+    for change in announcement_facts(report):
+        item = change["event"]
+        items[item["model_id"]] = item
+    lines = []
+    for item in items.values():
+        lines.append(
+            bullet(
+                sentence_text(
+                    f"{model_title(item)}：{announcement_price_text(item)}；{announcement_access_text(item)}"
+                ),
+                FIELD,
+            )
+        )
+        lines.extend(f"{INDENT}{line}" for line in price_note_lines(item))
+        lines.append(f"{INDENT}{field('公告价格来源', item['source_url'])}")
+    return lines
+
+
 PRICE_BULLET_CHANGE_FIELDS = tuple(
-    field for field in CHANGE_FIELDS
+    field
+    for field in CHANGE_FIELDS
     if field not in ("models_removed", PRICE_CHANGE_FIELD)
 )
 
@@ -556,11 +645,14 @@ def changed_notes(changes: dict[str, Any]) -> list[str]:
     same sentence, so it is taken once: repeated per bullet it would read as several
     notes saying one thing.
     """
-    return list(dict.fromkeys(
-        note for field_name in CHANGE_FIELDS
-        for item in changes.get(field_name) or []
-        for note in item.get("pricing_notes") or []
-    ))
+    return list(
+        dict.fromkeys(
+            note
+            for field_name in CHANGE_FIELDS
+            for item in changes.get(field_name) or []
+            for note in item.get("pricing_notes") or []
+        )
+    )
 
 
 def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
@@ -571,11 +663,14 @@ def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
     for field_name in PRICE_BULLET_CHANGE_FIELDS:
         items = changes.get(field_name) or []
         items = [
-            item for item in items
+            item
+            for item in items
             if model_availability(report, item.get("model_id", "")) == "listed"
         ]
         if field_name in ("offers_added", "offers_removed"):
-            items = [item for item in items if is_standard_offer(item.get("offer") or {})]
+            items = [
+                item for item in items if is_standard_offer(item.get("offer") or {})
+            ]
         displayed[field_name] = items
         details.extend(
             group(
@@ -589,8 +684,11 @@ def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
     details.extend(
         group(
             f"{CHANGE_FIELD_LABELS[PRICE_CHANGE_FIELD]}（{len(moves)}）",
-            [bullet(price_batch_text(batch), ITEM)] if batch
-            else bullets((price_change_text(move) for move in moves), ITEM),
+            (
+                [bullet(price_batch_text(batch), ITEM)]
+                if batch
+                else bullets((price_change_text(move) for move in moves), ITEM)
+            ),
         )
     )
     details.extend(price_note_lines({"pricing_notes": changed_notes(displayed)}))
@@ -613,9 +711,7 @@ def price_change_text(change: dict[str, Any]) -> str:
     model = model_title(change)
     condition = offering_text(change.get("offer", ""), change.get("conditions", {}))
     label = change.get("label") or change.get("type", "")
-    return sentence_text(
-        f"{model}：{condition}；{label} {price_movement(change)}"
-    )
+    return sentence_text(f"{model}：{condition}；{label} {price_movement(change)}")
 
 
 def failed_text(report: dict[str, Any]) -> str:

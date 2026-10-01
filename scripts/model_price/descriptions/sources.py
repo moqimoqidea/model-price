@@ -68,7 +68,9 @@ KLING_VIDEO_CAPABILITY_URL = (
 KLING_IMAGE_CAPABILITY_URL = (
     "https://klingai.com/document-api/guides/capability-map/image.md"
 )
-XIAOMI_MODEL_ID = re.compile(r"(?<![\w.-])[A-Za-z][A-Za-z0-9]*(?:[._-][A-Za-z0-9]+)+(?![\w.-])")
+XIAOMI_MODEL_ID = re.compile(
+    r"(?<![\w.-])[A-Za-z][A-Za-z0-9]*(?:[._-][A-Za-z0-9]+)+(?![\w.-])"
+)
 VOLCENGINE_MODELS_URL = "https://console.volcengine.com/ark/region:cn-beijing/model"
 
 
@@ -327,9 +329,7 @@ class MarkdownTableDescriptionSource(DescriptionSource):
         self._entries = entries
         return entries
 
-    def _document_entries(
-        self, text: str, source_url: str
-    ) -> list[dict[str, Any]]:
+    def _document_entries(self, text: str, source_url: str) -> list[dict[str, Any]]:
         """Every model one document's tables describe."""
         entries: list[dict[str, Any]] = []
         for headings, table in markdown_tables(text):
@@ -410,9 +410,18 @@ class MarkdownTableDescriptionSource(DescriptionSource):
             entry["url"],
             self.source_kind,
             source_name=self.source_name,
-            capabilities=entry["capabilities"] or ([entry["category"]] if entry["category"] else []),
+            capabilities=entry["capabilities"]
+            or ([entry["category"]] if entry["category"] else []),
             lifecycle=entry["lifecycle"],
         )
+
+    def catalogue_descriptions(self) -> list[dict[str, Any]]:
+        """Expose the same parsed overview for discovery even without a price row."""
+        return [
+            description
+            for entry in self._catalogue()
+            if (description := self.describe(entry["model_id"])) is not None
+        ]
 
 
 class KimiDescriptionSource(MarkdownTableDescriptionSource):
@@ -452,7 +461,14 @@ class KlingDescriptionSource(MarkdownTableDescriptionSource):
     source_urls = (KLING_VIDEO_CAPABILITY_URL, KLING_IMAGE_CAPABILITY_URL)
     source_kind = "official_markdown"
     model_headers = ("模型", "model", "capability")
-    capability_headers = ("input", "generation range", "resolution", "输入", "时长", "分辨率")
+    capability_headers = (
+        "input",
+        "generation range",
+        "resolution",
+        "输入",
+        "时长",
+        "分辨率",
+    )
 
 
 class XiaomiDescriptionSource(DescriptionSource):
@@ -483,19 +499,11 @@ class XiaomiDescriptionSource(DescriptionSource):
                                 clean_text(row[0])
                             )
                 continue
-            if (
-                not headers
-                or "模型 ID" not in headers[0]
-                or "能力支持" not in headers
-            ):
+            if not headers or "模型 ID" not in headers[0] or "能力支持" not in headers:
                 continue
             ability_index = headers.index("能力支持")
             limit_index = next(
-                (
-                    index
-                    for index, value in enumerate(headers)
-                    if "长度限制" in value
-                ),
+                (index for index, value in enumerate(headers) if "长度限制" in value),
                 None,
             )
             category = headings[-1] if headings else ""
@@ -520,7 +528,7 @@ class XiaomiDescriptionSource(DescriptionSource):
                         if index + 1 < len(matches)
                         else len(row[0])
                     )
-                    suffix = row[0][match.end():next_start]
+                    suffix = row[0][match.end() : next_start]
                     entries[normalize_model(model)] = {
                         "model": model,
                         "capabilities": capabilities,
@@ -548,9 +556,7 @@ class XiaomiDescriptionSource(DescriptionSource):
             return None
         scenarios = entry.get("scenarios") or []
         summary = (
-            "、".join(scenarios)
-            if scenarios
-            else "、".join(entry["capabilities"])
+            "、".join(scenarios) if scenarios else "、".join(entry["capabilities"])
         )
         if entry["limits"]:
             summary = f"{summary}；{entry['limits']}" if summary else entry["limits"]
@@ -564,6 +570,14 @@ class XiaomiDescriptionSource(DescriptionSource):
             capabilities=[entry["category"], *entry["capabilities"]],
             lifecycle=entry["lifecycle"],
         )
+
+    def catalogue_descriptions(self) -> list[dict[str, Any]]:
+        """Use the existing table reader for both introductions and discovery."""
+        return [
+            description
+            for entry in self._catalogue().values()
+            if (description := self.describe(entry["model"])) is not None
+        ]
 
 
 class DeepSeekDescriptionSource(DescriptionSource):
@@ -725,9 +739,7 @@ def openrouter_modal_text(modalities: Any, direction: str) -> str:
     values = [str(value) for value in modalities or []]
     if not values:
         return ""
-    labels = "、".join(
-        OPENROUTER_MODALITY_LABELS.get(value, value) for value in values
-    )
+    labels = "、".join(OPENROUTER_MODALITY_LABELS.get(value, value) for value in values)
     return f"{direction}：{labels}"
 
 
@@ -768,7 +780,9 @@ def openrouter_specifications(entry: dict[str, Any]) -> dict[str, str]:
         "knowledge_cutoff": entry.get("knowledge_cutoff"),
     }
     stated = {
-        key: value for key, value in specifications.items() if value not in (None, "", 0)
+        key: value
+        for key, value in specifications.items()
+        if value not in (None, "", 0)
     }
     if entry.get("expiration_date"):
         stated["sunset_note"] = f"{entry['expiration_date']} 停止提供"
@@ -844,9 +858,7 @@ class OpenRouterDescriptionSource(DescriptionSource):
             capabilities=openrouter_capabilities(
                 entry, billed_elsewhere=self._billed_elsewhere(entry)
             ),
-            lifecycle=(
-                LEGACY if entry.get("expiration_date") else ACTIVE
-            ),
+            lifecycle=(LEGACY if entry.get("expiration_date") else ACTIVE),
             specifications=openrouter_specifications(entry),
         )
 

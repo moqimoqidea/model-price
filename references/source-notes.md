@@ -11,6 +11,66 @@ record says which. A cloud price without its region is a price for nowhere, and 
 scan of every region is a report nobody reads: the same model, the same charges,
 thirty-five times over.
 
+## Model announcements
+
+`model_price/announcements/` reads official publication evidence independently
+of price adapters and retirement notices. A publication can establish a model's
+existence and capabilities before a public API, consumer product, or rate exists.
+Conversely, a rate in the catalogue does not establish general access. Keep
+literal published names until an exact normalized catalogue ID or display name
+matches; never guess an ID, expand a series into variants, or use retired aliases.
+No third-party host inherits its creator's announcement as a hosted listing.
+
+| Channel | Discovery evidence | Reader and boundary |
+| --- | --- | --- |
+| Google Gemini | [Gemini blog](https://blog.google/innovation-and-ai/models-and-research/gemini-models/) and its [RSS](https://blog.google/innovation-and-ai/models-and-research/gemini-models/rss/) | Read release subjects from RSS, then official article JSON-LD and paragraphs. The feed can link related official Google sections; only the same HTTPS host is accepted. |
+| OpenAI | [News RSS](https://openai.com/news/rss.xml) | Model subjects in release titles, then official articles. An inaccessible body retains verified feed evidence and reports partial `source_error`; customer stories without model-title subjects and bug-bounty campaigns do not discover models. |
+| Anthropic | [News](https://www.anthropic.com/news) | Follow indexed official model-release links, including article paths outside `/news`. Scope Fable and Mythos facts separately within their shared article. |
+| xAI | [News](https://x.ai/news) | Read card dates before following recent model subjects, so old indexed releases do not exhaust the request budget. |
+| Aliyun Bailian | [Qwen blog](https://qwen.ai/) | Anonymous `GET /api/v2/article/retrieval?type=qwen_ai&language=en-US` returns `data.articles`: `title`, `path`, `content`, and `extra.date/description/introduction`. Public `blog?id=<path>` uses the published path, not the internal UUID. The old GitHub Pages blog announces its migration and is not a current substitute. Qwen research/open weights do not themselves prove Bailian hosting. |
+| Volcengine Ark | [Seed models](https://seed.bytedance.com/en/blog) | Read `window._ROUTER_DATA.loaderData.layout.footer_config`, the group titled `Models`, and its `labelEn/linkEn`. This is operator research inventory evidence, not guessed Ark IDs. A name-only entry has an unavailable capability summary rather than invented prose. |
+| Tencent TokenHub | [Hunyuan research](https://hunyuan.tencent.com/) | Anonymous read-only `POST https://api.hunyuan.tencent.com/api/blog/publicList`, paged by `pageNum/pageSize`; `needFilter=true`. Read the published `title/desc/content/customUrl`, and only official dates when present. This idempotent read is retryable. Public research evidence does not replace the authenticated TokenHub description mirror or prove a TokenHub listing. |
+| Baidu Qianfan | [ERNIE blog RSS](https://ernie.baidu.com/blog/index.xml) | Official model-release subjects and full feed content. Research/Arena previews need not have Qianfan rates. An old feed cannot establish coverage of announcements absent from that feed. |
+| DeepSeek | [Official updates](https://api-docs.deepseek.com/zh-cn/updates/) | Reuse `deepseek_updates.read_updates` and its official dated model entries, shared with introductions and retirement evidence. Do not treat an upcoming benchmark framework as a closed API. |
+| Kimi | [Official blog](https://www.kimi.com/blog) | Official release cards, including navigation research links; follow only blog article paths. Upcoming weights and technical reports do not close an already usable Kimi API. |
+| Zhipu | [Model overview Markdown](https://docs.bigmodel.cn/cn/guide/start/model-overview.md) | Reuse the introduction table parser's complete inventory, without price lookups or a model-name list. This covers the published capability inventory, not every research news source. |
+| MiniMax | [Official news](https://www.minimax.io/news) | Official indexed model releases. Announced weights and API access remain different claims. |
+| Xiaomi MiMo | [Model overview](https://mimo.mi.com/docs/zh-CN/quick-start/summary/model) | Reuse the existing overview reader; TTS entries without a price row are retained. Absence of prices never becomes a free rate or a claim of closed access. |
+| Kling | [Video](https://klingai.com/document-api/guides/capability-map/video.md) and [image](https://klingai.com/document-api/guides/capability-map/image.md) capability maps | Reuse the introduction inventory for independent model/capability discovery. Both named models and officially named billable capabilities keep their literal entries. |
+| Google Cloud Vertex | [Official release-note Atom feed](https://cloud.google.com/static/feeds/generative-ai-on-vertex-ai-release-notes.xml) | Dated bodies name the hosted models; evidence links use `docs.cloud.google.com`. The feed may lag the platform's current renamed product pages; do not claim its silence proves no release. |
+| AWS Bedrock | [AWS What's New RSS](https://aws.amazon.com/about-aws/whats-new/recent/feed/) | Keep only model-subject entries whose title or summary identifies Bedrock. Original creator announcements are insufficient. |
+| Azure Foundry | [Azure blog RSS](https://azure.microsoft.com/en-us/blog/feed/) | Keep Foundry/Azure model subjects and quoted body scope. A Limited Access Program remains limited even when the headline uses general-availability wording. WordPress's repeated “The post … appeared first on …” trailer is not release evidence. |
+| OpenRouter | Its existing [models API](https://openrouter.ai/api/v1/models?output_modalities=all) | Explicit `catalogue_only` announcement coverage. Free, unpriced, and router listings already participate in catalogue scans; creator blogs never prove OpenRouter hosting. |
+
+News discovery uses a 90-day window; current capability inventories have no age
+cutoff, and undated current-index releases are readable. The scope is independent
+of character limits. Retained releases survive rolling-index omissions; newer
+evidence cannot be replaced by an older repeat. The initial successful scan emits
+first-observation causes. A missing historical baseline keeps comparison changes
+empty but exposes new first observations once, so upgrading a historical monitor
+does not silently absorb releases. Later comparisons detect new publications,
+explicit access-status changes, announced-rate changes, and same-name catalogue
+matching changes. Separate `snapshots/announcements-<provider>/` archives use
+their own schema version and the existing historical selection/retention rules.
+An empty first discovery or a partial/failed read writes no announcement baseline.
+Price and notice baselines are unaffected.
+
+Access is quoted per model and audience. Longest named variants own their clauses;
+an anaphoric sentence can reuse the single subject of its own paragraph, never
+another paragraph's subject. An early-access testimonial, restricted feature, or
+future model weights do not establish the model's API status. A public API and a
+private preview on another surface can coexist; retain their complete sentence.
+Unknown stays unknown when the official evidence does not establish access.
+
+Announcement token rates retain each independent sentence's original terms under
+`announced_offers[].conditions.published_terms` and in `pricing_notes`. These are
+quoted publication evidence, not current billed catalogue offers. For Argon, keep
+the introductory $2/$10 and later $4/$20 input/output rates separately. Do not
+calculate cache rates from “95% off” or create `effective_until` from “at least
+through”. Unreadable prices are not zero. Full amounts, terms, summaries, and
+source URLs survive message overruns. The dated [coverage audit](announcement-audit.md)
+records current examples, live-read failures, and remaining source limits.
+
 ## Model retirement notices
 
 Retirement dates are read independently of price tables on every `delta` run.
@@ -64,11 +124,13 @@ The resolver selects only the hosting provider's registered reader and groups by
 provider ID plus the normalized literal model ID. It never infers a reader from a
 model's family, falls back to its creator, or merges introductions across channels
 or retired-name aliases. Query failures are isolated from prices; `delta` resolves
-only models present in an actual catalogue or notice change. The same model on two
+only models present in an actual catalogue, notice, or publication change. The same model on two
 platforms keeps each platform's own prose and evidence. Baidu, Vertex AI, AWS
-Bedrock, and Azure currently have no registered introduction reader: they report
+Bedrock, and Azure currently have no registered catalogue-introduction reader: they report
 `not_found` with their channel reference page, rather than borrowing a first-party
-introduction. Retirement evidence is independent and never substituted for prose.
+introduction. Retirement evidence is independent and never substituted for prose. Verified
+announcement prose is passed directly from that channel's registered release
+source, without guessing a per-model API documentation URL.
 
 - OpenAI, Gemini, and xAI use the official per-model Markdown variants. Anthropic
   first reads its official models-overview Markdown, which publishes each model's

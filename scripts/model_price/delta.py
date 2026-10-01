@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, Iterable
 
 from .core import PriceSource, now_iso
+from .announcements import announcement_description, scan_announcements
 from .changes import changed_model_groups
 from .descriptions import DescriptionResolver
 from .diffing import (
@@ -55,6 +56,7 @@ def scan_providers(
     descriptions: DescriptionResolver | None = None,
     baseline: BaselineSelection | None = None,
     lifecycle_client: Any | None = None,
+    announcement_client: Any | None = None,
 ) -> dict[str, Any]:
     """Scan each provider, compare it with the requested baseline, and archive it."""
     started = captured_at or now_iso()
@@ -69,6 +71,7 @@ def scan_providers(
             selection=selection,
             reference_at=reference,
             lifecycle_client=lifecycle_client,
+            announcement_client=announcement_client,
         )
         for adapter in adapters
     ]
@@ -89,6 +92,7 @@ def scan_provider(
     descriptions: DescriptionResolver | None = None,
     baseline: BaselineSelection | None = None,
     lifecycle_client: Any | None = None,
+    announcement_client: Any | None = None,
 ) -> dict[str, Any]:
     """Read one provider's catalogue, then report it against the stored baseline.
 
@@ -104,6 +108,7 @@ def scan_provider(
         selection=baseline or parse_baseline_selection(None),
         reference_at=reference,
         lifecycle_client=lifecycle_client,
+        announcement_client=announcement_client,
     )
 
 
@@ -116,15 +121,14 @@ def _scan_provider(
     selection: BaselineSelection,
     reference_at: datetime,
     lifecycle_client: Any | None,
+    announcement_client: Any | None,
 ) -> dict[str, Any]:
     """Run one scan after its shared timestamp and selection are validated."""
     latest = store.read(adapter.provider_id)
     previous = (
         latest
         if selection.is_latest
-        else store.select(
-            adapter.provider_id, selection, reference_at=reference_at
-        )
+        else store.select(adapter.provider_id, selection, reference_at=reference_at)
     )
     records: list[dict[str, Any]] | None = None
     try:
@@ -155,14 +159,28 @@ def _scan_provider(
         report["last_successful_at"] = (latest or {}).get("captured_at")
     if lifecycle_client is not None:
         report["lifecycle"] = scan_lifecycle(
-            adapter, lifecycle_client, records, store, captured_at, selection, reference_at
+            adapter,
+            lifecycle_client,
+            records,
+            store,
+            captured_at,
+            selection,
+            reference_at,
+        )
+    if announcement_client is not None:
+        report["announcements"] = scan_announcements(
+            adapter,
+            announcement_client,
+            records if report["status"] not in (SOURCE_ERROR, EMPTY_SCAN) else None,
+            store,
+            captured_at,
+            selection,
+            reference_at,
         )
     report["catalog_url"] = getattr(adapter, "catalog_url", None) or adapter.source_url
     targets = changed_model_targets(report, records or [])
     if targets:
-        current_ids = {
-            normalize_model(item["model_id"]) for item in records or []
-        }
+        current_ids = {normalize_model(item["model_id"]) for item in records or []}
         retired_ids = {
             normalize_model(name)
             for name in (report.get("lifecycle") or {}).get("retired_model_ids", [])
@@ -173,13 +191,37 @@ def _scan_provider(
         }
         report["model_availability"] = {
             target["model_id"]: listing_state(
-                target["model_id"], current_ids, notice_ids, retired_ids,
+                target["model_id"],
+                current_ids,
+                notice_ids,
+                retired_ids,
                 catalogue_read=records is not None,
             )
             for target in targets
         }
+        removed_ids = {
+            normalize_model(model["model_id"])
+            for model in (report.get("changes") or {}).get("models_removed") or []
+        }
+        for target in targets:
+            item = target.get("announcement")
+            key = normalize_model(target["model_id"])
+            if item and key not in current_ids | notice_ids | retired_ids | removed_ids:
+                report["model_availability"][target["model_id"]] = (
+                    "unknown" if item["catalog_status"] == "unknown" else "announced"
+                )
         if descriptions is not None:
             report["model_descriptions"] = descriptions.resolve_many(targets)
+        else:
+            report["model_descriptions"] = [
+                {
+                    **target["description"],
+                    "model_id": target["model_id"],
+                    "provider": report["provider"],
+                }
+                for target in targets
+                if target.get("description")
+            ]
     return report
 
 
@@ -208,17 +250,26 @@ def changed_model_targets(
     current = {
         normalize_model(record.get("model_id", "")): record for record in records
     }
-    return [
-        {
+    targets = []
+    for model in changed_model_groups(report):
+        announcement = model.get("announcement")
+        target = {
             "model_id": model["model_id"],
             "display_name": model["display_name"],
             "provider_id": report["provider"]["id"],
             "provider_name": report["provider"]["name"],
-            "reference_url": report["catalog_url"],
+            "reference_url": (
+                announcement["source_url"] if announcement else report["catalog_url"]
+            ),
             "record": current.get(normalize_model(model["model_id"])),
         }
-        for model in changed_model_groups(report)
-    ]
+        if announcement:
+            target["announcement"] = announcement
+            target["description"] = announcement.get(
+                "description"
+            ) or announcement_description(announcement)
+        targets.append(target)
+    return targets
 
 
 def failed(
@@ -258,9 +309,21 @@ def summarize(reports: Iterable[dict[str, Any]]) -> dict[str, Any]:
         summary[report["status"]] = summary.get(report["status"], 0) + 1
         for field in CHANGE_FIELDS:
             summary[field] += len((report.get("changes") or {}).get(field, []))
-        if "lifecycle" in report:
-            lifecycle = report["lifecycle"]
-            summary["lifecycle_changes"] = summary.get("lifecycle_changes", 0) + len(lifecycle.get("changes") or [])
-            if lifecycle.get("status") == SOURCE_ERROR:
-                summary["lifecycle_source_errors"] = summary.get("lifecycle_source_errors", 0) + 1
+        for name, prefix in (
+            ("lifecycle", "lifecycle"),
+            ("announcements", "announcement"),
+        ):
+            if name not in report:
+                continue
+            evidence = report[name]
+            count_key, error_key = f"{prefix}_changes", f"{prefix}_source_errors"
+            summary[count_key] = summary.get(count_key, 0) + len(
+                evidence.get("changes") or []
+            )
+            if evidence.get("status") == SOURCE_ERROR:
+                summary[error_key] = summary.get(error_key, 0) + 1
+        if "announcements" in report:
+            summary["announcement_observations"] = summary.get(
+                "announcement_observations", 0
+            ) + len(report["announcements"].get("observations") or [])
     return summary

@@ -11,6 +11,7 @@ Responsibility split:
 - ``models``       model identity, retired-name aliases, family matching
 - ``providers``    one module per vendor
 - ``descriptions`` independent model introductions, from vendors and platforms
+- ``announcements`` official releases and access facts, independent of billing
 - ``caching``      provider-scoped file cache
 - ``updating``     Git self-update before an explicit refresh
 - ``snapshots``    archived baselines, retention, and point-in-time selection

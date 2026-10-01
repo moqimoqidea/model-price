@@ -20,6 +20,7 @@ from uuid import uuid4
 from .core import write_json
 from .models import normalize_model
 from .paths import (
+    ANNOUNCEMENT_SCHEMA_VERSION,
     DEFAULT_SNAPSHOT_DIR,
     LIFECYCLE_SCHEMA_VERSION,
     SNAPSHOT_RETENTION_COUNT,
@@ -474,6 +475,14 @@ def _read_snapshot(path: Path) -> dict[str, Any] | None:
         return None
     if not isinstance(payload, dict):
         return None
+    if path.parent.name.startswith("announcements-") or path.stem.startswith(
+        "announcements-"
+    ):
+        return (
+            payload
+            if payload.get("announcement_schema_version") == ANNOUNCEMENT_SCHEMA_VERSION
+            else None
+        )
     # Notice history has its own compatibility version. A price snapshot bump
     # must not hide yesterday's still-valid retirement announcements.
     if path.parent.name.startswith("lifecycle-") or path.stem.startswith("lifecycle-"):

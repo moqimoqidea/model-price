@@ -37,6 +37,7 @@ Standard library only, Python 3, no install step, no build step.
 │   └── dingtalk.md              DingTalk transport version, routing, and verification contract
 ├── references/
 │   ├── schema.md                the JSON payload, field by field
+│   ├── announcement-audit.md    dated findings and announcement coverage limits
 │   └── source-notes.md          per-vendor source and parser notes
 ├── scripts/
 │   ├── query_model_prices.py    the stable CLI entry point — argument parsing and dispatch only
@@ -60,6 +61,10 @@ Standard library only, Python 3, no install step, no build step.
 │       ├── deepseek_updates.py  DeepSeek's official update log, read once for every date consumer
 │       ├── lifecycle_sources.py official retirement notice readers
 │       ├── lifecycle.py         independent notice history and milestone changes
+│       ├── announcements/       official publication, access, and quoted-rate history
+│       │   ├── core.py          independent archive, identity joins, and change causes
+│       │   ├── parsing.py       feeds, article subjects, and scoped official claims
+│       │   └── sources.py       each channel's own public discovery policy
 │       ├── reporting.py         the shared wording: one value, written once
 │       ├── messages.py          the two plain-text messages those values are laid into
 │       ├── budget.py            how much of a message fits the channel carrying it
@@ -104,6 +109,7 @@ delta
   ├── diffing.compare_snapshots(selected, current)
   ├── lifecycle_sources.read_events()        fresh official notice evidence
   ├── lifecycle.scan_lifecycle()             independent history and date crossings
+  ├── announcements.scan_announcements()     fresh releases, independently archived
   ├── descriptions.resolve_many(changed models only)
   └── messages.scan_message(payload)
 ```
@@ -216,9 +222,12 @@ even when the tests still pass.
    to the hosting provider and literal model ID. Never infer an introduction source
    from the model name, fall back to its creator, or merge introductions across
    channels or retired-name aliases. A channel without a reader reports absence.
-10. **Never synthesize Tencent model text.** Its details sit behind an authenticated
-   console, so the checked-in mirror is the only source. A model absent from it is
-   `not_found` — not a cue to infer capabilities from a name.
+10. **Never synthesize Tencent model text.** TokenHub's detail cards sit behind an
+   authenticated console, so their checked-in mirror is the only source. A model
+   absent from it is `not_found` — not a cue to infer capabilities from a name.
+   The anonymous Hunyuan research index can independently prove a publication;
+   quote its public prose as announcement evidence, never as a captured TokenHub
+   card or proof that the hosted API has opened.
 11. **A failed or empty scan never writes a baseline.** `source_error` and
    `empty_scan` are reported and every prior successful archive is kept, so the
    change survives into the run after the source recovers. A listed model with
@@ -262,11 +271,14 @@ even when the tests still pass.
     Its source line is never optional: an unsourced capability claim is not a
     fact. A scan labels every cause: new listing, catalogue removal, price
     movement, billing-mode addition/removal, replacement revision, notice change,
-    or crossed milestone. Simultaneous causes all remain visible; listing state
+    crossed milestone, official publication, access change, or announcement rate
+    change. Simultaneous causes all remain visible; listing state
     never replaces them. Notice facts and evidence belong with the same channel's
-    model in 模型能力, not a separate section. Prices are shown only for models
-    whose `model_availability` is `listed`. The message omits an `active` lifecycle because a newly listed model is
-    necessarily available; preview, legacy, retired, and unknown remain visible.
+    model in 模型能力, not a separate section. Catalogue prices are shown only for
+    models whose `model_availability` is `listed`. Announcement rates are separate
+    quoted evidence, with complete original scope, never current catalogue offers.
+    The message omits an `active` lifecycle; catalogue listing is not proof of
+    public access, and preview, legacy, retired, and unknown remain visible.
 17. **Statuses are reported, never softened.** `source_error`, `not_found`, and
     `empty_scan` reach the scan reader. `update_skipped` and `check_failed` remain
     in JSON while the scan message omits the Skill update check. A provider that
@@ -294,6 +306,17 @@ even when the tests still pass.
     empty notice read cannot overwrite the prior notice history. The earliest
     possible shutdown date never becomes an asserted actual shutdown. A
     【目录下架】 tag describes that catalogue only.
+23. **Publication, listing, and access are independent facts.** Registered official
+    release sources discover models before they have rates or usable public APIs.
+    Keep the published name rather than guessing an API ID; join only exact
+    normalized literal names or catalogue display names. Never use family or
+    retirement aliases to transfer release facts. Initial discoveries are first
+    observations, not asserted new launches that day. Rolling-index omissions
+    cannot retract retained releases, and failed or empty discovery cannot replace
+    their archive. Access states require quoted official evidence for the model
+    and audience; restrictions on a sibling variant, a feature, or model weights
+    never close an otherwise public API. Third-party hosts need their own release
+    evidence. Announcement archives have a separate compatibility version.
 
 ## Where a change goes
 
@@ -313,6 +336,8 @@ even when the tests still pass.
 | Change which providers a query covers | `registry.py` |
 | Change the cache or snapshot shape | `paths.py` version, then the reader and writer together |
 | Change retirement sources or milestone semantics | `lifecycle_sources.py` or `lifecycle.py`, plus `references/source-notes.md` and `references/schema.md` |
+| Change official model-publication discovery | `announcements/sources.py` and `announcements/parsing.py`, plus `references/source-notes.md` |
+| Change release archives, access comparisons, or literal identity joins | `announcements/core.py`, plus `references/schema.md` and its own version in `paths.py` |
 | Audit current official retirement evidence | `scripts/audit_model_retirements.py`; keep vendor readers in `lifecycle_sources.py` |
 | Change retries, timeouts, request budgets, or HTTP diagnostics | `core.py`, plus the network policy in `references/source-notes.md` |
 | Refresh the Tencent mirror | `scripts/update_tencent_model_mirror.py` |
