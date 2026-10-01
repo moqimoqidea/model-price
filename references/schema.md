@@ -249,6 +249,11 @@ vendor gave the earliest possible shutdown date, so crossing it is not evidence
 that service actually stopped. `end_behavior` is `redirect`, `unavailable`,
 `existing_access_continues`, or `unknown`. Model IDs are scoped to the hosting
 provider: the same model name on two platforms can have different dates.
+Tencent's conditional automatic migrations retain their qualification in `scope`.
+A target described as the latest version at the future migration time keeps
+`replacement: null`; the model that happened to be latest on announcement day
+does not establish that target. Separately published redirect and EOS clocks
+retain their independent dates and seconds.
 `notice_status` is `scheduled`, `legacy`, `retired`, or null. `legacy` identifies
 an old-version bucket without claiming shutdown; `scheduled` needs a due definite
 date before it counts as retired; `retired` is an explicit already-down notice,

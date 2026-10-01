@@ -275,7 +275,7 @@ def summary_label(description: dict[str, Any]) -> str:
     )
 
 
-def format_moment(value: Any) -> str:
+def format_moment(value: Any, *, preserve_seconds: bool = False) -> str:
     """Render a timestamp the way a person reads it, offset included.
 
     The offset is spelled out because one instant is 13:37 in one region and
@@ -294,7 +294,10 @@ def format_moment(value: Any) -> str:
         moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return text
-    stamp = f"{moment:%Y-%m-%d %H:%M}"
+    # Lifecycle clocks can specify 23:59:59. Preserve their published seconds
+    # while ordinary scan/update timestamps keep the existing minute display.
+    seconds = preserve_seconds and re.search(r"[T ]\d{1,2}:\d{2}:\d{2}", text)
+    stamp = moment.strftime("%Y-%m-%d %H:%M:%S" if seconds else "%Y-%m-%d %H:%M")
     offset = moment.utcoffset()
     if offset is None:
         return stamp
@@ -1000,7 +1003,7 @@ def lifecycle_schedule_text(event: dict[str, Any]) -> str:
     if status := event.get("notice_status"):
         parts.append(LIFECYCLE_NOTICE_LABELS.get(status, status))
     parts.extend(
-        f"{LIFECYCLE_MILESTONE_LABELS[field]} {format_moment(event[field])}"
+        f"{LIFECYCLE_MILESTONE_LABELS[field]} {format_moment(event[field], preserve_seconds=True)}"
         for field in LIFECYCLE_MILESTONE_LABELS
         if event.get(field)
     )
@@ -1023,8 +1026,16 @@ def lifecycle_change_text(change: dict[str, Any]) -> str:
         return f"{model}：新增官方生命周期记录；{lifecycle_schedule_text(event)}"
     if kind == "date_revised":
         field = change["milestone"]
-        old = format_moment(change.get("before")) if change.get("before") else "未公布"
-        new = format_moment(change.get("after")) if change.get("after") else "未公布"
+        old = (
+            format_moment(change["before"], preserve_seconds=True)
+            if change.get("before")
+            else "未公布"
+        )
+        new = (
+            format_moment(change["after"], preserve_seconds=True)
+            if change.get("after")
+            else "未公布"
+        )
         return f"{model}：{LIFECYCLE_MILESTONE_LABELS[field]}修订，{old} → {new}"
     if kind == "milestone_reached":
         field = change["milestone"]
@@ -1041,7 +1052,9 @@ def lifecycle_change_text(change: dict[str, Any]) -> str:
             label = "旧 ID 下线/自动切换日期已到"
         else:
             label += "日期已到"
-        return f"{model}：{label}（{format_moment(event[field])}）"
+        return (
+            f"{model}：{label}（{format_moment(event[field], preserve_seconds=True)}）"
+        )
     field = change.get("field", "详情")
     label = LIFECYCLE_DETAIL_LABELS.get(field, field)
     return f"{model}：{label}修订，{lifecycle_detail_value(field, change.get('before'))} → {lifecycle_detail_value(field, change.get('after'))}"

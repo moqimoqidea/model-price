@@ -21,7 +21,12 @@ from .models import normalize_model
 from .providers.azure import AZURE_MODEL_RETIREMENTS_URL
 from .providers.google_cloud import GOOGLE_CLOUD_MODEL_VERSIONS_URL
 from .providers.openrouter import OPENROUTER_MODELS_URL
-from .parsing import date_value, headed_document_tables, markdown_tables
+from .parsing import (
+    NUMERIC_DATE_RE,
+    date_value,
+    headed_document_tables,
+    markdown_tables,
+)
 from .text import clean_text, clean_zero_width_text
 
 LifecycleEvent = dict[str, Any]
@@ -695,46 +700,85 @@ def tencent_events(client: Any, index: str) -> list[LifecycleEvent]:
         for href, title in parser.links
         if "TokenHub" in title and "模型下线" in title and "/announce/detail/" in href
     ]
+    if not notices:
+        raise SourceError(
+            "Tencent retirement index contained no readable model shutdown links "
+            f"(source: {SOURCES['tencent']}; response: {len(index)} characters)"
+        )
     found = []
     # The index is newest first. A bounded read stays inside the shared per-host
     # request budget, while archived events retain older notices on later scans.
-    for url in dict.fromkeys(notices[:18]):
-        page = client.get_text(url)
-        body = clean_zero_width_text(page)
-        match = re.search(r"model\s*参数值[：:]\s*([^）)]+)", body, re.I)
-        end = re.search(
-            r"(北京时间\s*20\d\d\s*年\s*\d+\s*月\s*\d+\s*日\s*\d{1,2}:\d{2})\s*起\s*正式下线",
-            body,
+    # A normal scan also reads the catalogue, prices, and this index on the same
+    # host. Reserve those three requests before following individual notices.
+    selected = list(dict.fromkeys(notices))[:17]
+    for url in selected:
+        found.extend(tencent_notice(client.get_text(url), url))
+    if not found:
+        raise SourceError(
+            "Tencent model shutdown links were readable but their milestones "
+            "could not be parsed; sources: " + ", ".join(selected)
         )
-        if not match or not end:
-            continue
-        eos = date_value(end[1], utc_offset="+08:00")
-        if not eos:
-            continue
-        metadata_at = body.rfind("addTime")
-        announced = (
-            date_value(body[metadata_at : metadata_at + 100])
-            if metadata_at >= 0
-            else None
-        )
-        redirected = "系统将自动为您切换" in body or "自动升级" in body
-        replacement = None
-        replacement_match = re.search(r"系统将自动为您切换至\s*([^。；]+)", body)
-        if replacement_match:
-            replacement = clean_text(replacement_match[1]).removesuffix("模型").strip()
-        for name in model_ids(match[1]):
-            found.append(
-                event(
-                    name,
-                    url,
-                    announced_at=announced,
-                    eos_at=eos,
-                    replacement=replacement,
-                    end_behavior="redirect" if redirected else "unknown",
-                    scope="TokenHub",
-                )
-            )
     return found
+
+
+def tencent_notice(page: str, url: str) -> list[LifecycleEvent]:
+    """Read both prose and labelled shutdown schedules, preserving exact IDs."""
+    body = clean_zero_width_text(page)
+    ids = re.search(r"model\s*参数值[：:]\s*([^）)]+)", body, re.I)
+    if not ids:
+        affected = re.search(r"下线模型[：:]\s*([^。]+)", body)
+        ids = re.search(r"[（(]([^）)]+)[）)]", affected[1]) if affected else None
+    clock = "北京时间\\s*" + NUMERIC_DATE_RE.pattern
+    end = re.search(r"(" + clock + r")\s*起?\s*正式下线", body)
+    if not end:
+        end = re.search(r"下线时间[：:]\s*(" + clock + r")", body)
+    if not ids or not end or not (eos := date_value(end[1], utc_offset="+08:00")):
+        return []
+    metadata_at = body.rfind("addTime")
+    announced = (
+        date_value(body[metadata_at : metadata_at + 100], utc_offset="+08:00")
+        if metadata_at >= 0
+        else None
+    )
+    redirect = re.search(r"自动切换将于(" + clock + r")", body)
+    if not redirect:
+        redirect = re.search(
+            r"自(" + clock + r")\s*起[，,]\s*系统将[^。]*自动切换", body
+        )
+    redirected = bool(redirect) or "系统将自动为您切换" in body or "自动升级" in body
+    replacement_match = re.search(r"系统将自动为您切换至\s*([^。；]+)", body)
+    replacement = (
+        clean_text(replacement_match[1]).removesuffix("模型").strip()
+        if replacement_match
+        else None
+    )
+    # A current/latest model at announcement time is not a fixed redirect target.
+    # Conditional redirects cannot claim every user will be migrated.
+    if replacement and re.search(r"最新|实际切换|届时|latest", replacement, re.I):
+        replacement = None
+    conditional = bool(re.search(r"符合条件的用户|不满足上述条件|不满足.*条件", body))
+    shutdown_statement = re.split(r"[。；;]", body[: end.end()])[-1]
+    earliest = bool(re.search(r"最早|预计|可能|不早于", shutdown_statement))
+    return [
+        event(
+            name,
+            url,
+            announced_at=announced,
+            redirect_at=(
+                date_value(redirect[1], utc_offset="+08:00") if redirect else None
+            ),
+            eos_at=eos,
+            eos_earliest=earliest,
+            replacement=replacement,
+            end_behavior="redirect" if redirected else "unknown",
+            scope=(
+                "TokenHub（自动切换仅适用于公告指定条件）"
+                if conditional
+                else "TokenHub"
+            ),
+        )
+        for name in model_ids(ids[1])
+    ]
 
 
 def xai_events(client: Any, index: str) -> list[LifecycleEvent]:

@@ -83,7 +83,7 @@ source keeps its last successful notice archive.
 | Platform | Official evidence | Meaning and limits |
 | --- | --- | --- |
 | Volcengine Ark | [Model deprecation notice](https://docs.volcengine.com/docs/ark/model-deprecation-notice) | Read the page's official `getDocDetail` `Result.MDContent`, because the rendered HTML sometimes omits its tables. Batch timeline gives announcement/start, EOM, EOS; model rows may override EOS. Some embedding rows state EOM while existing access continues. |
-| Tencent TokenHub | [Product announcement index](https://cloud.tencent.com/document/product/1823/130758) and its linked [individual notices](https://cloud.tencent.com/announce/detail/2469) | A notice gives exact `model` parameters, Beijing shutdown time, and possible automatic replacement. The general announcement feed also contains price notices, so title filtering alone is insufficient evidence of retirement. The index is a rolling list; previous notice records remain archived when a link rolls off. |
+| Tencent TokenHub | [Product announcement index](https://cloud.tencent.com/document/product/1823/130758) and its linked [individual notices](https://cloud.tencent.com/announce/detail/2469) | Read exact `model` parameters or the literal ID in a labelled 下线模型 field, and prose or labelled 下线时间 schedules. Preserve seconds and separately stated redirect dates. Conditional migrations retain their qualification in `scope`; an announcement-time example of the latest model never becomes a fixed redirect target. Price notices alone are insufficient retirement evidence. Follow up to 17 unique notices, reserving the other three document reads within the default host budget; rolling omissions retain archived events. |
 | Baidu Qianfan | [Retirement mechanism and history](https://cloud.baidu.com/doc/qianfan/s/zmh4stou3) | Historical table gives registration and retirement dates per hosted model, plus recommended replacement. Its example row is excluded. |
 | Aliyun Bailian | [Deprecation policy](https://help.aliyun.com/zh/model-studio/model-depreciation) and public [model market](https://www.qianwenai.com/models) | The anonymous market API exposes per-model `OfflineInfo.Inference.OfflineTime`. Read it from the fresh catalogue; convert an explicit UTC instant to Beijing time, and keep an undated or missing value unknown. |
 | DeepSeek | [Official updates](https://api-docs.deepseek.com/zh-cn/updates/) | One dated entry per release, newest first: `h2` carries `时间: YYYY-MM-DD` and each `h3` under it names a model. A route that does not exist answers HTTP 200 with the docs home page, and the site marks only one of the two spellings canonical, so a response counts only when it names the log. Record only explicit old-version withdrawal and continued routing stated in the changelog; there is no complete future retirement timetable. |
@@ -226,7 +226,15 @@ than its API. This is runtime report metadata, not part of snapshot identity.
   endpoint: the "MD" button converts this same Slate data in the browser with
   remark, so reading the Slate is reading the button's own source. The same article
   payload carries `recentReleaseTime`, which is the price page's official update
-  time and is stored with every parsed record.
+  time and is stored with every parsed record. A response without that embedded
+  state reports its document URL and response size rather than silently becoming
+  an empty catalogue. An unreadable retirement index and readable links with
+  unparseable notice milestones have distinct errors; neither advances history.
+  A parse error alone cannot establish whether the returned page was incomplete,
+  an intermediary/challenge response, or a changed document format. Successful
+  fresh reads are needed to separate a temporary response issue from a persistent
+  reader incompatibility; ordinary successful HTTP responses are not retried merely
+  because a parser rejected their content.
 - Tencent model introductions: the model square is authenticated and has no durable
   anonymous description endpoint. The Guangzhou model square was captured through
   the user's signed-in Chrome session on 2026-09-24. Its first page rendered 100

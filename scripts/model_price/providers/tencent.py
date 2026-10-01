@@ -41,25 +41,30 @@ TENCENT_PRICE_URL = "https://cloud.tencent.com/document/product/1823/130055"
 TENCENT_BAND_LABELS = ("原厂直供",)
 
 
-def extract_tencent_article(page: str) -> dict[str, Any]:
+def extract_tencent_article(page: str, *, source_url: str = "") -> dict[str, Any]:
     """Return the official article payload embedded in a Tencent document page."""
     match = re.search(
         r"window\.__staticRouterHydrationData\s*=\s*JSON\.parse\s*\("
         r"(?P<quoted>\"(?:\\.|[^\"\\])*\")\s*\)",
         page,
     )
+    context = f"; source: {source_url}" if source_url else ""
     if not match:
-        raise SourceError("Tencent document state was not found")
+        raise SourceError(
+            "Tencent document state was not found "
+            f"(response: {len(page)} characters{context}; "
+            "expected embedded article data)"
+        )
     try:
         state = json.loads(json.loads(match.group("quoted")))
         article = state["loaderData"]["product-article"]["data"]["article"][
             "content"
         ]
         if not isinstance(article, dict):
-            raise SourceError("Tencent article content was not an object")
+            raise SourceError(f"Tencent article content was not an object{context}")
         return article
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise SourceError("unexpected Tencent document state") from exc
+        raise SourceError(f"unexpected Tencent document state{context}") from exc
 
 
 def article_slate(article: dict[str, Any]) -> list[dict[str, Any]]:
@@ -77,9 +82,9 @@ def article_slate(article: dict[str, Any]) -> list[dict[str, Any]]:
         raise SourceError("unexpected Tencent document state") from exc
 
 
-def extract_tencent_slate(page: str) -> list[dict[str, Any]]:
+def extract_tencent_slate(page: str, *, source_url: str = "") -> list[dict[str, Any]]:
     """Compatibility entry point for callers that only need the Slate nodes."""
-    return article_slate(extract_tencent_article(page))
+    return article_slate(extract_tencent_article(page, source_url=source_url))
 
 
 def object_text(node: Any) -> str:
@@ -236,7 +241,7 @@ class TencentAdapter(PriceSource):
         """Return the price article once, including its official update stamp."""
         if self._article is None:
             self._article = extract_tencent_article(
-                self.document(TENCENT_PRICE_URL)
+                self.document(TENCENT_PRICE_URL), source_url=TENCENT_PRICE_URL
             )
         return self._article
 
@@ -260,7 +265,9 @@ class TencentAdapter(PriceSource):
         return self._band_text
 
     def _catalog(self) -> list[dict[str, str]]:
-        slate = extract_tencent_slate(self.document(TENCENT_LIST_URL))
+        slate = extract_tencent_slate(
+            self.document(TENCENT_LIST_URL), source_url=TENCENT_LIST_URL
+        )
         entries: list[dict[str, str]] = []
         for node in walk_objects(slate):
             if node.get("type") != "table":
