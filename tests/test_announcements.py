@@ -29,6 +29,7 @@ from model_price.announcements.parsing import (
     release_facts,
 )
 from model_price.announcements.sources import (
+    CATALOGUE_ONLY_POLICIES,
     CUSTOM_SOURCES,
     GOOGLE_BLOG_URL,
     INVENTORY_SOURCES,
@@ -507,12 +508,12 @@ class DiscoverySourceTests(unittest.TestCase):
             all(set(p["headers"]) == {"Content-Type"} for p in client.posts)
         )
 
-    def test_all_eighteen_channels_have_an_explicit_discovery_policy(self) -> None:
+    def test_all_registered_channels_have_an_explicit_discovery_policy(self) -> None:
         registered = (
             set(NEWS_SOURCES)
             | set(INVENTORY_SOURCES)
             | set(CUSTOM_SOURCES)
-            | {"openrouter"}
+            | set(CATALOGUE_ONLY_POLICIES)
         )
         self.assertEqual(registered, {p.provider_id for p in ALL_PROVIDERS})
         result = read_publications(

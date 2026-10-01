@@ -57,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--provider", action="append", choices=tuple(PROVIDERS),
-        help="audit one provider; repeat to select several (default: all 13)",
+        help="audit one provider; repeat to select several (default: all registered providers)",
     )
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument(

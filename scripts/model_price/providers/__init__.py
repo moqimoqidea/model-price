@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .aliyun import AliyunAdapter
+from .ant_ling import AntLingAdapter
 from .anthropic import AnthropicAdapter
 from .aws_bedrock import AWSBedrockAdapter
 from .azure import AzureAdapter
@@ -33,6 +34,7 @@ DOMESTIC_PROVIDERS = (
     MiniMaxAdapter,
     XiaomiAdapter,
     KlingAdapter,
+    AntLingAdapter,
 )
 
 # The vendors a model name can be inferred to belong to come first; the aggregator

@@ -467,6 +467,17 @@ class ModelMatchingTests(unittest.TestCase):
 
 
 class OfficialUpdateStampTests(unittest.TestCase):
+    def test_an_english_update_label_keeps_its_visible_date_precision(self):
+        document = (
+            '<div>Last updated on<!-- --> <time datetime="2026-09-23T14:00:53.000Z">'
+            'September 23, 2026</time></div>'
+        )
+        self.assertEqual(document_update_stamp(document), "2026-09-23")
+        self.assertIsNone(document_update_stamp(
+            '<script>Last updated on September 23, 2026</script>'
+        ))
+        self.assertIsNone(document_update_stamp("Published September 23, 2026"))
+
     def test_rendered_html_dates_share_one_parser(self):
         self.assertEqual(
             document_update_stamp(

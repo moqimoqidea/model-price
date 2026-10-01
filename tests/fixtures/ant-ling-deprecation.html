@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN"><body><article>
+<h1>下架</h1>
+<p>为持续提升服务质量，百灵会定期引入性能更强、成本更优的新版本模型，并且下架旧版本模型。本页说明下架政策、已下架模型及迁移建议。</p>
+<h2>下架政策</h2><ul>
+<li><strong>提前通知</strong>：模型正式下架前，我们会通过文档和公告的方式告知。</li>
+<li><strong>服务终止</strong>：到达下架日期后，相关 model ID 的 API 调用将返回错误，不再提供服务。</li>
+<li><strong>平滑迁移</strong>：每个被下架的模型均会提供推荐的替代模型，且替代模型在性能和成本上均不劣于原版本。</li>
+</ul>
+<h2>下架模型</h2>
+<h3>即将下架</h3>
+<p>以下模型将于 <strong>2026-09-30 00:00:00 (UTC+8)</strong> 下线，请尽快将业务迁移至推荐的替代版本，避免届时请求失败。</p>
+<table><tr><th>模型 ID</th><th>系列</th><th>计划下架日期</th><th>推荐替代模型</th></tr>
+<tr><td><code>Ling-2.5-1T</code></td><td>Ling 2.5</td><td>2026-09-30 00:00:00 (UTC+8)</td><td><code>Ling-2.6-1T</code></td></tr>
+<tr><td><code>Ring-2.5-1T</code></td><td>Ring 2.5</td><td>2026-09-30 00:00:00 (UTC+8)</td><td><code>Ring-2.6-1T</code></td></tr></table>
+<h3>已下架</h3>
+<p>以下模型已于 <strong>2026-06-15 00:00:00 (UTC+8)</strong> 下线，请迁移至推荐的替代版本。</p>
+<table><tr><th>模型 ID</th><th>系列</th><th>下架日期</th><th>推荐替代模型</th></tr>
+<tr><td><code>Ling-1T</code></td><td>Ling 2.0</td><td>2026-06-15 00:00:00 (UTC+8)</td><td><code>Ling-2.6-1T</code></td></tr>
+<tr><td><code>Ring-1T</code></td><td>Ring 2.0</td><td>2026-06-15 00:00:00 (UTC+8)</td><td><code>Ring-2.6-1T</code></td></tr></table>
+<h2>当前可用模型</h2>
+<p>以下模型当前处于稳定支持期，可放心用于生产环境。</p>
+<table><tr><th>模型 ID</th><th>系列</th><th>定位</th></tr>
+<tr><td>Ling-3.0-flash</td><td>Ling 3.0</td><td>高性价比混合推理模型，可支撑高频任务</td></tr>
+<tr><td>Ling-2.6-flash</td><td>Ling 2.6</td><td>高性价比模型，适合高并发在线服务</td></tr>
+<tr><td>Ling-2.6-1T</td><td>Ling 2.6</td><td>旗舰通用模型，适合复杂任务与长上下文场景</td></tr>
+<tr><td>Ring-2.6-1T</td><td>Ring 2.6</td><td>旗舰推理模型，适合 Agent 工作流与复杂推理</td></tr></table>
+<h2>迁移指南</h2>
+<h3>Ling</h3><p>将代码中的旧版 model ID 替换为对应新版即可。</p>
+<h3>Ring</h3><p>Ring-2.6-1T 相比旧版引入了可调节推理强度，可根据任务复杂度灵活控制推理深度与 Token 开销。</p>
+<h3>第三方平台</h3><p>通过 Zenmux 接入时，同样需要将 model ID 更新为新版本。</p>
+<div>Last updated on<!-- --> <time datetime="2026-09-23T14:00:53.000Z">September 23, 2026</time></div>
+</article></body></html>

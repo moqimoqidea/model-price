@@ -18,7 +18,7 @@ This file deliberately does not restate the other documents.
 
 A single-skill repository whose root **is** the skill directory. It queries public,
 credential-free model catalogues, introductions, capabilities, specifications, and
-official price documents across 18 providers. Its two output modes are a model and
+official price documents across 19 providers. Its two output modes are a model and
 cross-provider comparison, and a whole-catalogue scan that reports launches,
 withdrawals, billing changes, and price moves since the previous scan or a
 retained historical baseline.
@@ -363,8 +363,8 @@ class XiaomiAdapter(TabularPricingAdapter):
 costs one read rather than one query per model, and it reads whatever unit each
 column bills in. Override only the policy that actually differs: `price_kind`,
 `cell_amount`, `cell_rates`, `price_unit`, `offer_name`, `model_column`,
-`heading_conditions`, `model_conditions`, `model_variants`, `record_extras`, or
-`model_extras`. Subclass `PriceSource` directly only when the vendor's shape is
+`heading_conditions`, `includes_table`, `model_conditions`, `model_variants`,
+`record_extras`, or `model_extras`. Subclass `PriceSource` directly only when the vendor's shape is
 genuinely not a table (`aliyun` reads a JSON API, `tencent` reads the public Slate
 document API, `baidu` reads a Gatsby pre-fetch).
 

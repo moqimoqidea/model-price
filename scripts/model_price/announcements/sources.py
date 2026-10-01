@@ -123,6 +123,10 @@ INVENTORY_SOURCES = {
     "xiaomi": XiaomiDescriptionSource,
     "kling": KlingDescriptionSource,
 }
+CATALOGUE_ONLY_POLICIES = {
+    "openrouter": "该渠道仅监控其公开模型目录；原厂公告不证明该托管渠道已上架。",
+    "ant-ling": "该渠道读取公开价格目录及下架文档；尚未登记独立的官方模型发布来源。",
+}
 
 
 def publication(
@@ -463,7 +467,9 @@ def discovery_policy(provider_id: str) -> dict[str, Any]:
         return {
             "source": None,
             "coverage": "catalogue_only",
-            "note": "该渠道仅监控其公开模型目录；原厂公告不证明该托管渠道已上架。",
+            "note": CATALOGUE_ONLY_POLICIES.get(
+                provider_id, "该渠道尚未登记独立的官方模型发布来源。"
+            ),
         }
     return {
         "source": {"url": url, "kind": "official_model_discovery"},

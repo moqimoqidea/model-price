@@ -142,6 +142,10 @@ class TabularPricingAdapter(PriceSource):
         """
         return {}
 
+    def includes_table(self, headings: list[str]) -> bool:
+        """Whether this section prices this hosting provider's own catalogue."""
+        return True
+
     def model_conditions(self, display_name: str) -> dict[str, Any]:
         return {}
 
@@ -248,7 +252,7 @@ class TabularPricingAdapter(PriceSource):
         """Read every priced row one document publishes."""
         rows: list[dict[str, Any]] = []
         for headings, table in headed_document_tables(text):
-            if len(table) < 2:
+            if len(table) < 2 or not self.includes_table(headings):
                 continue
             raw_headers = table[0]
             headers = [clean_text(cell) for cell in raw_headers]

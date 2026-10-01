@@ -41,6 +41,7 @@ No third-party host inherits its creator's announcement as a hosted listing.
 | AWS Bedrock | [AWS What's New RSS](https://aws.amazon.com/about-aws/whats-new/recent/feed/) | Keep only model-subject entries whose title or summary identifies Bedrock. Original creator announcements are insufficient. |
 | Azure Foundry | [Azure blog RSS](https://azure.microsoft.com/en-us/blog/feed/) | Keep Foundry/Azure model subjects and quoted body scope. A Limited Access Program remains limited even when the headline uses general-availability wording. WordPress's repeated “The post … appeared first on …” trailer is not release evidence. |
 | OpenRouter | Its existing [models API](https://openrouter.ai/api/v1/models?output_modalities=all) | Explicit `catalogue_only` announcement coverage. Free, unpriced, and router listings already participate in catalogue scans; creator blogs never prove OpenRouter hosting. |
+| Ant Ling | Its [first-party price catalogue](https://developer.ant-ling.com/zh-CN/docs/models/price/) | `catalogue_only`: pricing and retirement evidence are registered, but no independent publication reader is registered. A successful price read does not claim announcement coverage. |
 
 News discovery uses a 90-day window; current capability inventories have no age
 cutoff, and undated current-index releases are readable. The scope is independent
@@ -89,6 +90,7 @@ source keeps its last successful notice archive.
 | DeepSeek | [Official updates](https://api-docs.deepseek.com/zh-cn/updates/) | One dated entry per release, newest first: `h2` carries `时间: YYYY-MM-DD` and each `h3` under it names a model. A route that does not exist answers HTTP 200 with the docs home page, and the site marks only one of the two spellings canonical, so a response counts only when it names the log. Record only explicit old-version withdrawal and continued routing stated in the changelog; there is no complete future retirement timetable. |
 | Kimi | [Model list](https://platform.kimi.com/docs/models) | Retired-model section gives series-level dates and literal retired IDs. Match a table ID to the longest published series prefix. |
 | Xiaomi MiMo | [Deprecation log](https://mimo.mi.com/static/docs/updates/deprecate.md) | Separates the earlier automatic replacement time from the final old-ID expiry time where both are printed. |
+| Ant Ling | [Model deprecation](https://developer.ant-ling.com/zh-CN/docs/models/deprecation/) | Read tables headed 模型 ID with 计划下架日期 or 下架日期. 即将下架 is scheduled; 已下架 explicitly confirms retirement. Preserve the published UTC+8 clock to seconds and each literal ID's case. 推荐替代模型 is a manual migration recommendation, not an automatic redirect: the policy says old-ID API calls return errors after shutdown. 当前可用模型 and partner migration examples are not retirement notices. A partially unreadable notice table is a source error. |
 | OpenAI | [API deprecations](https://developers.openai.com/api/docs/deprecations) | Published notification and shutdown tables. A row may name several aliases separated by escaped Markdown pipes; each literal ID gets its own event. |
 | Anthropic | [Model deprecations](https://platform.claude.com/docs/en/about-claude/model-deprecations) | Deprecated and retired table applies to Anthropic-operated API. A row explicitly marked Retired is down even if its retirement date is blank. Partner platform schedules may differ. Active models' “not sooner than” dates are not shutdown promises. |
 | Google Gemini | [Gemini API deprecations](https://ai.google.dev/gemini-api/docs/deprecations) | Shutdown dates are the *earliest possible* dates. The page separately marks already-shutdown models with `row-gray` table rows, including one with no published shutdown date. Only that explicit row state confirms retirement; reaching an unshaded row's date does not. |
@@ -101,7 +103,7 @@ source keeps its last successful notice archive.
 | AWS Bedrock | none readable here | AWS files its dates on `docs.aws.amazon.com`, a host that does not resolve on every network this skill runs from; a reader would report a failed source on each scan instead of the truth that no schedule was read. Reported as `no_public_schedule`. |
 | MiniMax | [Official model overview](https://platform.minimax.io/docs/guides/models-intro.md) | `Legacy Models` accordions identify old versions but provide no shutdown date and do not prove service cessation. A separate music notice explicitly discontinues three free music API IDs on 2026-08-20; the paid API restriction applies only to new users and does not retire those models. |
 
-Run `python3 scripts/audit_model_retirements.py` to read all 13 vendor-specific
+Run `python3 scripts/audit_model_retirements.py` to read registered vendor-specific
 sources fresh and print exact model IDs, milestones, status-only claims, source
 URLs, and whether the evidence confirms retirement as of the chosen calendar
 timezone. `--provider` can select one vendor; `--timezone` defaults to
@@ -126,7 +128,7 @@ model's family, falls back to its creator, or merges introductions across channe
 or retired-name aliases. Query failures are isolated from prices; `delta` resolves
 only models present in an actual catalogue, notice, or publication change. The same model on two
 platforms keeps each platform's own prose and evidence. Baidu, Vertex AI, AWS
-Bedrock, and Azure currently have no registered catalogue-introduction reader: they report
+Bedrock, Azure, and Ant Ling currently have no registered catalogue-introduction reader: they report
 `not_found` with their channel reference page, rather than borrowing a first-party
 introduction. Retirement evidence is independent and never substituted for prose. Verified
 announcement prose is passed directly from that channel's registered release
@@ -309,6 +311,20 @@ than its API. This is runtime report metadata, not part of snapshot identity.
   and only the CNY tables are read. The ASR table (billed per audio hour) and
   plugin pricing are not token pricing. The labelled 更新时间 is the official
   catalogue update date.
+- Ant Ling: `https://developer.ant-ling.com/zh-CN/docs/models/price/`. The public
+  Nextra page renders complete tables and publishes no Markdown/JSON download
+  link. Read its first-party CNY tables once; exclude the entire 第三方平台 heading
+  path so OpenRouter/ZenMux rates or partner-only models cannot become Ant offers,
+  even if a partner later quotes CNY. The 模型 column identifies rows; 定位 stays
+  a condition. Input, output, and cache reads are quoted per million tokens.
+  HTML `<del>` amounts survive as list prices, and the adjacent amount is what
+  is billed. Model-scoped promotion sentences retain the published discount and
+  gradual-return wording in `pricing_notes`; no exact expiry or price-level
+  multiplier is inferred from that prose. Hydration scripts are not quoted as
+  prose. The labelled `Last updated on` date supplies `source_updated_at` at its
+  visible day precision, without adding the hidden metadata's time of day. Both
+  pricing and retirement use the shared browser identity, pacing, retry policy,
+  and source-error diagnostics, with no extra transport or credentials.
 - OpenAI: `https://developers.openai.com/api/docs/pricing`; no public pricing JSON is exposed, so use its official `.md` representation.
 - Anthropic: `https://platform.claude.com/docs/en/about-claude/pricing`; no public pricing JSON is exposed, so use its official `.md` representation.
 - Google Gemini: `https://ai.google.dev/gemini-api/docs/pricing.md.txt`. The page
@@ -352,6 +368,9 @@ Read, because the vendor states them as data beside the amount:
   arithmetic between two printed numbers rather than a figure the vendor states
   separately, and deriving one would put a number in the report the row itself does
   not print for that price. The badge is kept verbatim in the row's `context_tier`.
+- **Ant Ling** — struck-through HTML list prices and adjacent billed amounts use
+  the same shared rule. Promotion sentences remain model-scoped `pricing_notes`,
+  including their discount and unspecified end period; see its source entry above.
 
 Published, but only in a sentence beside the table — the sentence is kept verbatim as
 the record's `pricing_notes` and the price stays the rate billed today. A sentence is
@@ -579,6 +598,8 @@ priced per token. The tables that carry those units:
   neither is a model.
 - **Xiaomi** — ASR 系列（`输入音频时长`, 元/小时 in the cell). The TTS models are priced
   in a sentence rather than a table (`…限时免费`) and are not read.
+- **Ant Ling** — 输入、输出与缓存读取（人民币/每百万 token）. Third-party platform
+  tables do not supply this first-party channel's offers.
 - **Tencent** — the whole page is walked in order, so every product line is read:
   图片生成（元/张）、视频生成（元/秒、元/张）、3D（元/个）、语音（元/万字符、元/秒、元/首、
   元/音色）、积分计价的视频与 3D（积分/次、积分/秒）. A credit price keeps the credit
@@ -673,6 +694,10 @@ Conventions that come with the document readers:
 - Vendor Markdown is escaped (`deepseek\-v4\-flash正式版`, `输入长度 \[0, 32K)`). The reader removes those escapes before a cell is named, matched, or compared, and a row keeps its empty leading cells so a table with a carried model name stays column-aligned.
 - A table is read with the whole heading path that precedes it, so a `h2` model (`Gemini 3.8 Flash`) and the `h3` tier under it (`Standard`) stay distinguishable.
 - A cell break (`<br>`) survives both readers as written, so the values a vendor stacks in one cell stay separable: the first is the model, the rest are variants the same price covers (`ERNIE-5.0<br>ERNIE-5.0-Thinking-Preview`). A note stacked under a model name (`调整前价格，2026-08-21 起不适用`) is preserved as a `model_note` condition instead of being dropped, because the price on that row no longer applies.
+- HTML deletion markup (`del`, `s`, `strike`) survives as Markdown `~~` markers.
+  A struck amount is a list price beside the billed rate, never a second charge;
+  both amounts must retain their own currency. Hydration scripts and styles do
+  not supply quoted promotion prose or labelled update stamps.
 - Cells are laid onto a real grid, repeating a value across every row a *row span* covers — a vendor writes such a cell once, and without the repeat the columns below it shift left and a price lands under the wrong heading. A *column span* is deliberately not repeated: it is how a vendor lays a row heading across the columns beside it, and expanding it would fill the header row — the row that says which columns are prices — with copies of the heading. A cell arriving with no open row starts one, because Baidu's own table drops one `<tr>` and those cells belong to that row, not to the one above.
 - A vendor that quotes a rate per thousand or per ten thousand tokens is restated per million (`tokens_per_price_unit` / `per_million_tokens`), so one report compares one unit. The figure the vendor published stays in the price's `display` text. A label that does not price tokens at all (`元/页`, `元/次`) keeps its own unit and is never rescaled: a page rate restated per million tokens would quote a number nobody charges.
 - A price is read with the unit the vendor billed in, and every reading of unit wording lives in `pricing.UNIT_MEASURES` (see `references/schema.md` for the codes). A unit this tool cannot read is not a reason to drop the model: the model stays in the catalogue and the vendor's own wording is kept, either as the price's unit or, where the vendor stated no unit, as `provider_defined` rendered as the amount alone.

@@ -254,6 +254,13 @@ A target described as the latest version at the future migration time keeps
 `replacement: null`; the model that happened to be latest on announcement day
 does not establish that target. Separately published redirect and EOS clocks
 retain their independent dates and seconds.
+Ant Ling's `计划下架日期` and `下架日期` are definite EOS clocks in the published
+UTC+8 zone. Its `已下架` section additionally supplies `notice_status: retired`;
+future notices use `scheduled`. A recommended replacement keeps its literal ID,
+with `end_behavior: unavailable` and no `redirect_at`: the official policy says
+old-ID API calls fail and asks developers to migrate manually. The current-model
+table supplies no retirement events. Unreadable notice rows preserve the prior
+notice archive independently of a successful price scan.
 `notice_status` is `scheduled`, `legacy`, `retired`, or null. `legacy` identifies
 an old-version bucket without claiming shutdown; `scheduled` needs a due definite
 date before it counts as retired; `retired` is an explicit already-down notice,

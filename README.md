@@ -17,7 +17,11 @@
 
 | 默认查询（国内） | 仅在明确提到时查询（海外） |
 | --- | --- |
-| 阿里云百炼、火山引擎方舟、腾讯云 TokenHub、百度智能云千帆、DeepSeek 原厂、月之暗面 Kimi、智谱 BigModel、MiniMax 原厂、小米 MiMo、快手可灵 | OpenAI、Anthropic、Google Gemini、xAI、OpenRouter、Google Cloud Vertex AI、AWS Bedrock、Microsoft Azure Foundry |
+| 阿里云百炼、火山引擎方舟、腾讯云 TokenHub、百度智能云千帆、DeepSeek 原厂、月之暗面 Kimi、智谱 BigModel、MiniMax 原厂、小米 MiMo、快手可灵、蚂蚁大模型 | OpenAI、Anthropic、Google Gemini、xAI、OpenRouter、Google Cloud Vertex AI、AWS Bedrock、Microsoft Azure Foundry |
+
+蚂蚁大模型的渠道 id 为 `ant-ling`，读取官方人民币价目与下架文档，保留限时优惠价、
+原价和优惠原文。同页的第三方平台报价归属各自渠道。当前未登记蚂蚁模型介绍与独立
+发布来源，分别如实标记 `not_found` 和 `catalogue_only`。
 
 海外渠道又分两类：**模型原厂**（OpenAI、Anthropic、Google Gemini、xAI）按模型名推断，
 **聚合与云渠道**（OpenRouter、Google Cloud Vertex AI、AWS Bedrock、Microsoft Azure Foundry）
@@ -91,9 +95,10 @@ python3 scripts/query_model_prices.py compare MODEL --provider aliyun   # 限定
 python3 scripts/query_model_prices.py compare MODEL --exact             # 只认官方精确 id
 python3 scripts/query_model_prices.py compare MODEL --include-overseas  # 含海外渠道
 python3 scripts/query_model_prices.py provider PROVIDER MODEL           # 单渠道查询
+python3 scripts/query_model_prices.py provider ant-ling Ling-3.0-flash  # 蚂蚁大模型
 python3 scripts/query_model_prices.py list PROVIDER --prefix PREFIX     # 列模型 id
 python3 scripts/query_model_prices.py delta --format message            # 全量扫描并与上次对比
-python3 scripts/query_model_prices.py delta --include-overseas          # 全部 18 渠道，含 Google 官方博客
+python3 scripts/query_model_prices.py delta --include-overseas          # 全部 19 渠道，含 Google 官方博客
 python3 scripts/query_model_prices.py delta --since yesterday           # 与昨天最后一份基线对比
 python3 scripts/query_model_prices.py delta --since yesterday-first --timezone Asia/Shanghai --include-overseas  # 北京时间昨天最早一份，含海外
 python3 scripts/query_model_prices.py delta --since last-month          # 与上个月最后一份基线对比

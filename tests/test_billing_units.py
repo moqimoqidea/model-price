@@ -20,6 +20,7 @@ if str(SCRIPTS) not in sys.path:
 from model_price.parsing import (
     cell_rates,
     describes_request,
+    headed_document_tables,
     header_unit_phrase,
     monetary_amount,
     price_column_kinds,
@@ -266,6 +267,32 @@ class CellRateTests(unittest.TestCase):
             self.rates("~~4.20~~ 2.10", "输入价格 元/百万 tokens"),
             [("2.10", "", "4.20", None)],
         )
+
+    def test_struck_currency_amounts_keep_only_the_billed_rate_in_each_scope(self):
+        self.assertEqual(
+            self.rates("音频：~~¥4.20~~ ¥2.10；视频：~~¥6.00~~ ¥3.00"),
+            [("2.10", "音频", "4.20", None), ("3.00", "视频", "6.00", None)],
+        )
+        self.assertEqual(
+            self.rates("~~$0.50~~ $0.14", currency="USD"),
+            [("0.14", "", "0.50", None)],
+        )
+
+    def test_html_deletion_tags_preserve_the_same_list_price_semantics(self):
+        for tag in ("del", "s", "strike"):
+            with self.subTest(tag=tag):
+                document = f"<table><tr><td><{tag}>¥0.50</{tag}> ¥0.14</td></tr></table>"
+                cell = headed_document_tables(document)[0][1][0][0]
+                self.assertEqual(self.rates(cell), [("0.14", "", "0.50", None)])
+
+    def test_a_struck_amount_in_another_currency_is_never_relabelled(self):
+        self.assertEqual(self.rates("~~$0.50~~ $0.14", "输入价格 元/百万 tokens"), [])
+        self.assertEqual(self.rates("~~¥0.50~~ $0.14"), [])
+        self.assertEqual(self.rates("~~$0.50~~ ¥0.14"), [("0.14", "", None, None)])
+
+    def test_a_deleted_price_without_a_new_rate_is_not_a_current_price(self):
+        self.assertEqual(self.rates("~~¥0.50~~"), [])
+        self.assertEqual(self.rates("~~0.50~~", "输入价格 元/百万 tokens"), [])
 
     def test_labels_on_one_line_each_price_their_own_rate(self):
         self.assertEqual(

@@ -30,6 +30,9 @@ from .text import (
 )
 
 HEADING_TAGS = ("h1", "h2", "h3", "h4")
+# Hydration can repeat official prose inside JavaScript. Only the rendered words
+# supply quoted promotion notes and labelled document dates.
+HTML_NON_TEXT_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1\s*>", re.I | re.S)
 
 # Chinese vendor pages use either an ISO-like date or a spaced Chinese date after
 # the same label. The markup between the label and digits varies, so callers hand
@@ -68,10 +71,13 @@ def normalize_update_stamp(value: str, *, utc_offset: str = "") -> str | None:
 
 def document_update_stamp(document: str, *, utc_offset: str = "") -> str | None:
     """Read a labelled update date from an official HTML or Markdown document."""
-    match = UPDATE_STAMP_RE.search(clean_text(document))
-    if not match:
-        return None
-    return normalize_update_stamp(match.group(0), utc_offset=utc_offset)
+    text = clean_text(HTML_NON_TEXT_RE.sub("", document))
+    if match := UPDATE_STAMP_RE.search(text):
+        return normalize_update_stamp(match.group(0), utc_offset=utc_offset)
+    match = re.search(
+        r"\bLast updated(?: on)?\s*[:：]?\s*" + ENGLISH_DATE.pattern, text, re.I
+    )
+    return date_value(match.group()) if match else None
 
 
 # A vendor writes a date either as digits the locale orders or as an English month
@@ -238,6 +244,10 @@ class TextTableParser(HTMLParser):
             # is kept rather than flattened so the values stay separable: the
             # first is the model, the rest are variants the same price covers.
             self.cell.append("<br>")
+        elif self.cell is not None and tag in ("del", "s", "strike"):
+            # A deleted amount is the list price beside a promotion, so retain
+            # the same marker the Markdown rate reader already understands.
+            self.cell.append("~~")
 
     def handle_data(self, data: str) -> None:
         if self.heading_level is not None:
@@ -246,6 +256,8 @@ class TextTableParser(HTMLParser):
             self.cell.append(data)
 
     def handle_endtag(self, tag: str) -> None:
+        if tag in ("del", "s", "strike") and self.cell is not None:
+            self.cell.append("~~")
         if tag == "br" and self.cell is not None:
             # A vendor writes the break as ``</br>`` often enough that the closing
             # form has to carry the same meaning as the opening one: read as
@@ -640,14 +652,29 @@ def amount_spans(value: str, currency: str) -> list[tuple[int, int, str, bool]]:
 # numbers are the vendor's and both are kept: the struck one is what the charge
 # goes back to when the promotion ends.
 STRUCK_RATE_RE = re.compile(
-    r"~~\s*[^\d~]*(\d+(?:\.\d+)?)\s*~~\s*[^\d]*(\d+(?:\.\d+)?)"
+    r"~~\s*(?P<listed>[^\d~]*\d+(?:\.\d+)?)\s*~~"
+    r"\s*(?P<billed>[^\d~]*\d+(?:\.\d+)?)"
 )
+STRUCK_TEXT_RE = re.compile(r"~~([^~]+)~~")
+PRECEDING_LIST_PRICE_RE = re.compile(r"~~([^~]+)~~\s*$")
 
 
-def _struck_rate(value: str) -> tuple[str, str] | None:
+def _published_figure(value: str, header: str, currency: str) -> str | None:
+    """Read one figure in its own currency, or in the header's named currency."""
+    spans = money_spans(value, currency)
+    if len(spans) == 1:
+        return spans[0][2]
+    return _bare_figure(value) if names_currency(header, currency) else None
+
+
+def _struck_rate(value: str, header: str, currency: str) -> tuple[str, str] | None:
     """Read a struck-through list price and the rate billed beside it."""
     match = STRUCK_RATE_RE.search(value)
-    return (match.group(2), match.group(1)) if match else None
+    if not match:
+        return None
+    listed = _published_figure(match["listed"], header, currency)
+    billed = _published_figure(match["billed"], header, currency)
+    return (billed, listed) if billed is not None and listed is not None else None
 
 
 def _bare_figure(value: str) -> str | None:
@@ -738,14 +765,20 @@ def cell_rates(cell: str, *, header: str = "", currency: str = "CNY") -> list[Ce
         if stripped.startswith((">", "|")):
             continue
         body = _strip_list_marker(stripped)
-        spans = amount_spans(body, currency)
+        strikes = list(STRUCK_TEXT_RE.finditer(body))
+        spans = [
+            span
+            for span in amount_spans(body, currency)
+            if not any(match.start() <= span[0] < match.end() for match in strikes)
+        ]
         value_at = max(body.rfind("："), body.rfind(":"))
         label, value = (
             (body[:value_at], body[value_at + 1 :]) if value_at >= 0 else ("", body)
         )
         if not spans:
             priced = (
-                _struck_rate(value) or _narrow(_bare_figure(value))
+                _struck_rate(value, header, currency)
+                or _narrow(_bare_figure(STRUCK_TEXT_RE.sub("", value)))
                 if names_currency(header, currency)
                 else None
             )
@@ -770,12 +803,14 @@ def cell_rates(cell: str, *, header: str = "", currency: str = "CNY") -> list[Ce
         scoped = (*scope, head) if head else scope
         for index, (start, end, amount, credit) in enumerate(spans):
             next_start = spans[index + 1][0] if index + 1 < len(spans) else len(body)
-            following = body[end:next_start]
+            following = STRUCK_TEXT_RE.sub("", body[end:next_start])
             bracket = _leading_parenthetical(following)
             unit_tail, in_unit, carry = _tail_parts(following[len(bracket) :])
             # Only the first rate of a clause carries its lead-in label; the rates
             # after it are labelled by the words the vendor put between them.
-            own = _scope_words(body[:start]) if index == 0 else ""
+            own = (
+                _scope_words(STRUCK_TEXT_RE.sub("", body[:start])) if index == 0 else ""
+            )
             conditions = tuple(
                 dict.fromkeys(
                     part
@@ -789,6 +824,10 @@ def cell_rates(cell: str, *, header: str = "", currency: str = "CNY") -> list[Ce
                 )
             )
             billed, terms = _promoted(amount, body)
+            if match := PRECEDING_LIST_PRICE_RE.search(body[:start]):
+                listed = _published_figure(match[1], header, currency)
+                if listed is not None:
+                    terms.setdefault("list_amount", listed)
             rates.append(
                 CellRate(
                     billed,
@@ -1234,9 +1273,10 @@ def promotion_notes(document: str, *, names: Iterable[str]) -> dict[str, list[st
 
 def _sentences(document: str) -> list[str]:
     """The document's own sentences, in the order it published them."""
+    visible = HTML_NON_TEXT_RE.sub("", document)
     return [
         stripped
-        for line in HTML_TEXT_BREAK_RE.sub("\n", document).splitlines()
+        for line in HTML_TEXT_BREAK_RE.sub("\n", visible).splitlines()
         for part in SENTENCE_SPLIT_RE.split(clean_text(line))
         if (stripped := _strip_list_marker((part or "").strip()))
     ]

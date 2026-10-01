@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 from .deepseek_updates import DEEPSEEK_UPDATES_URL, UpdateEntry, read_updates
 from .errors import SourceError
 from .models import normalize_model
+from .providers.ant_ling import ANT_LING_DEPRECATION_URL
 from .providers.azure import AZURE_MODEL_RETIREMENTS_URL
 from .providers.google_cloud import GOOGLE_CLOUD_MODEL_VERSIONS_URL
 from .providers.openrouter import OPENROUTER_MODELS_URL
@@ -39,6 +40,7 @@ SOURCES = {
     "deepseek": DEEPSEEK_UPDATES_URL,
     "kimi": "https://platform.kimi.com/docs/models.md",
     "xiaomi": "https://mimo.mi.com/static/docs/updates/deprecate.md",
+    "ant-ling": ANT_LING_DEPRECATION_URL,
     "openai": "https://developers.openai.com/api/docs/deprecations.md",
     "anthropic": "https://platform.claude.com/docs/en/about-claude/model-deprecations.md",
     "google": "https://ai.google.dev/gemini-api/docs/deprecations",
@@ -585,6 +587,55 @@ def xiaomi_events(document: str) -> list[LifecycleEvent]:
     return found
 
 
+def ant_ling_events(document: str) -> list[LifecycleEvent]:
+    """Read planned and confirmed API shutdowns, without treating migration as redirect."""
+    found = []
+    for headings, rows in headed_document_tables(document):
+        if not rows or "第三方平台" in headings:
+            continue
+        headers = [clean_text(cell) for cell in rows[0]]
+        if "模型 ID" not in headers:
+            continue
+        date_col = next(
+            (headers.index(label) for label in ("计划下架日期", "下架日期") if label in headers),
+            None,
+        )
+        if date_col is None:
+            continue
+        model_col = headers.index("模型 ID")
+        replacement_col = (
+            headers.index("推荐替代模型") if "推荐替代模型" in headers else None
+        )
+        retired = "已下架" in headings
+        for row in rows[1:]:
+            if max(model_col, date_col) >= len(row) or not clean_text(row[model_col]):
+                raise SourceError("Ant Ling retirement table contains an incomplete row")
+            model_id = clean_text(row[model_col])
+            raw_date = clean_text(row[date_col])
+            eos = date_value(raw_date, utc_offset="+08:00")
+            if eos is None and (not retired or raw_date not in ("", "-", "—")):
+                raise SourceError(f"Ant Ling retirement date could not be read for {model_id}")
+            replacement = (
+                clean_text(row[replacement_col])
+                if replacement_col is not None and replacement_col < len(row)
+                else None
+            )
+            found.append(
+                event(
+                    model_id,
+                    ANT_LING_DEPRECATION_URL,
+                    eos_at=eos,
+                    replacement=(
+                        replacement if replacement not in ("", "-", "—") else None
+                    ),
+                    end_behavior="unavailable",
+                    notice_status="retired" if retired else "scheduled",
+                    scope="蚂蚁百灵 API",
+                )
+            )
+    return found
+
+
 def zhipu_events(pages: dict[str, str]) -> list[LifecycleEvent]:
     """Read explicit status sentences on model pages, without assuming a timetable."""
     found: dict[str, LifecycleEvent] = {}
@@ -875,6 +926,7 @@ PARSERS: dict[str, Callable[[str], list[LifecycleEvent]]] = {
     "baidu": baidu_events,
     "kimi": kimi_events,
     "xiaomi": xiaomi_events,
+    "ant-ling": ant_ling_events,
     "openai": openai_events,
     "anthropic": anthropic_events,
     "google": gemini_events,
