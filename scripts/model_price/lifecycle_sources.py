@@ -21,6 +21,7 @@ from .models import normalize_model
 from .providers.azure import AZURE_MODEL_RETIREMENTS_URL
 from .providers.google_cloud import GOOGLE_CLOUD_MODEL_VERSIONS_URL
 from .providers.openrouter import OPENROUTER_MODELS_URL
+from .providers.tencent import read_tencent_article
 from .parsing import (
     NUMERIC_DATE_RE,
     date_value,
@@ -919,9 +920,14 @@ def read_events(
                 "DeepSeek update log published no readable withdrawal notice"
             )
         return url, found
-    document = client.get_text(
-        VOLCENGINE_NOTICE_API if provider_id == "volcengine" else url
-    )
+    if provider_id == "tencent":
+        document = read_tencent_article(client, url).get("body")
+        if not isinstance(document, str) or not document.strip():
+            raise SourceError(f"Tencent retirement document published no HTML; source: {url}")
+    else:
+        document = client.get_text(
+            VOLCENGINE_NOTICE_API if provider_id == "volcengine" else url
+        )
     if provider_id == "volcengine":
         try:
             document = json.loads(document)["Result"]["MDContent"]

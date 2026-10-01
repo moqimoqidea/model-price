@@ -328,8 +328,12 @@ def _model_mentions(text: str, name: str) -> list[tuple[int, int]]:
         for candidate in candidates
         for match in re.finditer(
             r"(?<![\w.])"
-            + r"[-_\s]+".join(re.escape(part) for part in candidate.split("-"))
-            + r"(?![\w.]|[-_]\w)",
+            # A typeset hyphen and its nonbreaking spelling identify the same
+            # literal model, but a suffixed variant still owns its own evidence.
+            + r"[-_\s\u2010\u2011]+".join(
+                re.escape(part) for part in re.split(r"[-\u2010\u2011]", candidate)
+            )
+            + r"(?![\w.]|[-_\u2010\u2011]\w)",
             text,
             re.I,
         )

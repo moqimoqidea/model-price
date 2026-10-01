@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Callable
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from ..deepseek_updates import DEEPSEEK_UPDATES_URL, entry_model_label, read_updates
 from ..descriptions.sources import (
@@ -61,6 +61,7 @@ class NewsSource:
     transport: str = "rss"
     required_context: str = ""
     article_path: str = ""
+    article_trailing_slash: bool = False
 
 
 NEWS_SOURCES = {
@@ -71,6 +72,7 @@ NEWS_SOURCES = {
         "https://openai.com/news/",
         "https://openai.com/news/rss.xml",
         r"GPT|gpt|Sora|sora|o(?=\d)",
+        article_trailing_slash=True,
     ),
     "baidu": NewsSource(
         "https://ernie.baidu.com/blog/",
@@ -158,7 +160,15 @@ def _recent(value: str | None, reference: datetime) -> bool:
 def _news_entries(spec: NewsSource, client: Any) -> list[dict[str, Any]]:
     text = client.get_text(spec.index_url)
     if spec.transport in ("rss", "atom"):
-        return feed_entries(text, spec.url)
+        entries = feed_entries(text, spec.url)
+        if spec.article_trailing_slash:
+            # OpenAI's feed omits the slash its article server redirects to.
+            # Request the canonical path directly instead of spending a second
+            # host-budget attempt on every article.
+            for entry in entries:
+                parts = urlsplit(entry["url"])
+                entry["url"] = urlunsplit(parts._replace(path=parts.path.rstrip("/") + "/"))
+        return entries
     page = page_data(text, exclude_navigation=False)
     if not page.links:
         raise SourceError("official news index published no readable links")

@@ -1,10 +1,10 @@
-"""Tencent Cloud TokenHub pricing, read from the document's slate payload."""
+"""Read TokenHub's public Slate API without depending on HTML hydration scripts."""
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 from ..core import PriceSource, now_iso
 from ..errors import SourceError
@@ -34,6 +34,7 @@ from ..text import clean_text
 
 TENCENT_LIST_URL = "https://cloud.tencent.com/document/product/1823/130051"
 TENCENT_PRICE_URL = "https://cloud.tencent.com/document/product/1823/130055"
+TENCENT_ARTICLE_API = "https://cloud.tencent.com/document/cgi/document/getDocPageDetail"
 # Two generations on this page are billed on different calendars: the 原厂直供
 # series follows the first party (weekends are off-peak), while the 0731/0813
 # builds it hosts itself stay on peak at weekends. The delivery label is what
@@ -42,29 +43,50 @@ TENCENT_BAND_LABELS = ("原厂直供",)
 
 
 def extract_tencent_article(page: str, *, source_url: str = "") -> dict[str, Any]:
-    """Return the official article payload embedded in a Tencent document page."""
-    match = re.search(
-        r"window\.__staticRouterHydrationData\s*=\s*JSON\.parse\s*\("
-        r"(?P<quoted>\"(?:\\.|[^\"\\])*\")\s*\)",
-        page,
+    """Validate the anonymous document API before trusting its article content."""
+    context = (
+        f" (response: {len(page)} characters; API: {TENCENT_ARTICLE_API}"
+        + (f"; source: {source_url}" if source_url else "") + ")"
     )
-    context = f"; source: {source_url}" if source_url else ""
-    if not match:
-        raise SourceError(
-            "Tencent document state was not found "
-            f"(response: {len(page)} characters{context}; "
-            "expected embedded article data)"
-        )
     try:
-        state = json.loads(json.loads(match.group("quoted")))
-        article = state["loaderData"]["product-article"]["data"]["article"][
-            "content"
-        ]
-        if not isinstance(article, dict):
-            raise SourceError(f"Tencent article content was not an object{context}")
-        return article
-    except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise SourceError(f"unexpected Tencent document state{context}") from exc
+        payload = json.loads(page)
+    except json.JSONDecodeError as exc:
+        raise SourceError(f"Tencent document API did not return JSON{context}") from exc
+    if not isinstance(payload, dict) or payload.get("code") != 0:
+        code = payload.get("code") if isinstance(payload, dict) else None
+        raise SourceError(f"Tencent document API rejected the read (code: {code}){context}")
+    data = payload.get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("content"), dict):
+        raise SourceError(f"Tencent document API returned no article object{context}")
+    if source_url and str(data.get("categoryId")) != source_url.split("/")[-2]:
+        raise SourceError(f"Tencent document API returned a different product{context}")
+    return data["content"]
+
+
+def read_tencent_article(client: Any, source_url: str) -> dict[str, Any]:
+    """Use the same unauthenticated, read-only POST as the official document UI."""
+    try:
+        page = client.request(
+            TENCENT_ARTICLE_API,
+            method="POST",
+            data=json.dumps(
+                {
+                    "action": "getDocPageDetail",
+                    "payload": {
+                        "id": source_url.rsplit("/", 1)[-1],
+                        "lang": "zh",
+                        "isPreview": False,
+                        "isFromClient": True,
+                    },
+                },
+                separators=(",", ":"),
+            ).encode(),
+            headers={"Content-Type": "application/json", "Referer": source_url},
+            idempotent=True,
+        )
+    except SourceError as exc:
+        raise SourceError(f"{exc}; document: {source_url}") from exc
+    return extract_tencent_article(page, source_url=source_url)
 
 
 def article_slate(article: dict[str, Any]) -> list[dict[str, Any]]:
@@ -79,12 +101,7 @@ def article_slate(article: dict[str, Any]) -> list[dict[str, Any]]:
             raise SourceError("Tencent slate is not a node list")
         return slate
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise SourceError("unexpected Tencent document state") from exc
-
-
-def extract_tencent_slate(page: str, *, source_url: str = "") -> list[dict[str, Any]]:
-    """Compatibility entry point for callers that only need the Slate nodes."""
-    return article_slate(extract_tencent_article(page, source_url=source_url))
+        raise SourceError("unexpected Tencent article Slate payload") from exc
 
 
 def object_text(node: Any) -> str:
@@ -144,7 +161,7 @@ def tencent_delivery_mode(display_name: str) -> str:
 
 def slate_price_tables(
     slate: list[dict[str, Any]],
-) -> Iterator[tuple[tuple[str, ...], str, list[list[str]]]]:
+) -> Iterator[tuple[tuple[str, ...], str, str, list[list[str]]]]:
     """Walk the document in order, giving each table the headings above it.
 
     A table belongs to the section it sits in, and the region variants sit one
@@ -233,28 +250,34 @@ class TencentAdapter(PriceSource):
 
     def __init__(self, client: Any) -> None:
         super().__init__(client)
-        self._article: dict[str, Any] | None = None
-        self._slate: list[dict[str, Any]] | None = None
+        self._articles: dict[str, dict[str, Any]] = {}
+        self._slates: dict[str, list[dict[str, Any]]] = {}
         self._band_text: str | None = None
 
-    def _price_article(self) -> dict[str, Any]:
-        """Return the price article once, including its official update stamp."""
-        if self._article is None:
-            self._article = extract_tencent_article(
-                self.document(TENCENT_PRICE_URL), source_url=TENCENT_PRICE_URL
-            )
-        return self._article
+    def _article(self, source_url: str) -> dict[str, Any]:
+        """Read each document once, keeping catalogue and price responses separate."""
+        if source_url not in self._articles:
+            self._articles[source_url] = read_tencent_article(self.client, source_url)
+        return self._articles[source_url]
 
     def _price_slate(self) -> list[dict[str, Any]]:
         """Return the price page's slate once, for both tables and prose."""
-        if self._slate is None:
-            self._slate = article_slate(self._price_article())
-        return self._slate
+        return self._document_slate(TENCENT_PRICE_URL)
+
+    def _document_slate(self, source_url: str) -> list[dict[str, Any]]:
+        """Decode each document once and identify the source of malformed Slate."""
+        if source_url not in self._slates:
+            article = self._article(source_url)
+            try:
+                self._slates[source_url] = article_slate(article)
+            except SourceError as exc:
+                raise SourceError(f"{exc}; document: {source_url}") from exc
+        return self._slates[source_url]
 
     def source_updated_at(self) -> str | None:
         """Return the price article's labelled recent-release moment."""
         return normalize_update_stamp(
-            str(self._price_article().get("recentReleaseTime") or ""),
+            str(self._article(TENCENT_PRICE_URL).get("recentReleaseTime") or ""),
             utc_offset="+08:00",
         )
 
@@ -265,9 +288,7 @@ class TencentAdapter(PriceSource):
         return self._band_text
 
     def _catalog(self) -> list[dict[str, str]]:
-        slate = extract_tencent_slate(
-            self.document(TENCENT_LIST_URL), source_url=TENCENT_LIST_URL
-        )
+        slate = self._document_slate(TENCENT_LIST_URL)
         entries: list[dict[str, str]] = []
         for node in walk_objects(slate):
             if node.get("type") != "table":

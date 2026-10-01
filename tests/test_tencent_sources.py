@@ -7,25 +7,31 @@ and literal ID must survive without guessing a fixed replacement or redirect.
 from __future__ import annotations
 
 import io
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 SCRIPTS = Path(__file__).parents[1] / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from model_price.core import HttpClient
+from model_price.delta import scan_provider
 from model_price.errors import SourceError
-from model_price.lifecycle_sources import SOURCES, tencent_events, tencent_notice
+from model_price.lifecycle_sources import SOURCES, read_events, tencent_events, tencent_notice
 from model_price.providers.tencent import (
+    TENCENT_ARTICLE_API,
     TENCENT_LIST_URL,
     TENCENT_PRICE_URL,
     TencentAdapter,
     extract_tencent_article,
 )
 from model_price.reporting import lifecycle_schedule_text
+from model_price.snapshots import SnapshotStore
 
 
 NOTICE_URL = "https://cloud.tencent.com/announce/detail/2496"
@@ -37,18 +43,128 @@ LABELLED_NOTICE = """下线时间：北京时间 2026 年 10 月 31 日 00:00:00
 """
 
 
+def article_response(slate: list[dict[str, Any]], **content: Any) -> str:
+    return json.dumps({
+        "code": 0,
+        "data": {"categoryId": 1823, "content": {"slate": json.dumps(slate), **content}},
+    })
+
+
+def slate_table(rows: list[list[str]]) -> dict[str, Any]:
+    return {
+        "type": "table",
+        "children": [
+            {"type": "row", "children": [
+                {"type": "cell", "children": [{"type": "p", "children": [{"text": cell}]}]}
+                for cell in row
+            ]}
+            for row in rows
+        ],
+    }
+
+
+CATALOGUE = article_response([slate_table([
+    ["模型名称", "model（调用参数）"], ["Example Model", "example-model"],
+    ["Future Preview", "future-preview"],
+])])
+PRICES = article_response([slate_table([
+    ["模型名称", "输入价格（元/百万Token）", "输出价格（元/百万Token）"],
+    ["Example Model", "1元/百万Token", "2元/百万Token"],
+])], recentReleaseTime="2026-09-30 10:53:01")
+
+
+class DocumentClient:
+    """Expose the official read-only POST without allowing an HTML document request."""
+
+    def __init__(self, responses: dict[str, str | Exception]) -> None:
+        self.responses = responses
+        self.calls = []
+
+    def request(self, url: str, **arguments: Any) -> str:
+        self.calls.append((url, arguments))
+        response = self.responses[json.loads(arguments["data"])["payload"]["id"]]
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
 class TencentSourceTests(unittest.TestCase):
-    def test_a_missing_document_payload_names_the_failed_url_and_response_size(self):
+    def test_catalogue_and_prices_use_separate_anonymous_api_reads_once(self):
+        client = DocumentClient({"130051": CATALOGUE, "130055": PRICES})
+        adapter = TencentAdapter(client)
+        self.assertEqual(adapter.list_models(), ["example-model", "future-preview"])
+        records = adapter.catalog_records()
+        self.assertEqual(records, adapter.catalog_records())
+        self.assertEqual(len(client.calls), 2)
+        priced, unpriced = records
+        self.assertEqual(priced["model_id"], "example-model")
+        self.assertEqual([price["amount"] for price in priced["offers"][0]["prices"]], ["1", "2"])
+        self.assertEqual(priced["source_updated_at"], "2026-09-30T10:53:01+08:00")
+        self.assertEqual(priced["source"]["url"], TENCENT_PRICE_URL)
+        self.assertEqual(unpriced["offers"], [])
+        for url, arguments in client.calls:
+            self.assertEqual(url, TENCENT_ARTICLE_API)
+            self.assertEqual(arguments["method"], "POST")
+            self.assertTrue(arguments["idempotent"])
+            self.assertNotIn("Cookie", arguments["headers"])
+            self.assertNotIn("Authorization", arguments["headers"])
+
+    def test_rejected_missing_and_mismatched_api_articles_are_source_errors(self):
+        for payload in (
+            {"code": 403, "data": {}}, {"code": 0, "data": None},
+            {"code": 0, "data": {"content": []}},
+            {"code": 0, "data": {"categoryId": 1, "content": {"slate": "[]"}}},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(SourceError) as caught:
+                extract_tencent_article(json.dumps(payload), source_url=TENCENT_LIST_URL)
+            self.assertIn(TENCENT_LIST_URL, str(caught.exception))
+
+    def test_a_document_api_failure_preserves_the_previous_successful_baseline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            adapter = TencentAdapter(DocumentClient({
+                "130051": CATALOGUE, "130055": PRICES,
+            }))
+            scan_provider(adapter, store, "2026-09-30T10:53:00+08:00")
+            previous = store.read("tencent")
+            failing = TencentAdapter(DocumentClient({
+                "130051": '<html><title>Unexpected response</title></html>',
+            }))
+            result = scan_provider(failing, store, "2026-10-01T10:53:00+08:00")
+            self.assertEqual(result["status"], "source_error")
+            self.assertEqual(store.read("tencent"), previous)
+
+    def test_the_retirement_index_uses_the_same_document_api(self):
+        client = DocumentClient({
+            "130758": article_response(
+                [], body=f'<a href="{NOTICE_URL}">TokenHub 模型下线通知</a>'
+            ),
+        })
+        client.get_text = lambda url: LABELLED_NOTICE
+        url, events = read_events("tencent", client, None)
+        self.assertEqual(url, SOURCES["tencent"])
+        self.assertEqual(events[0]["model_id"], "deepseek-v4-flash-0731")
+        self.assertEqual(len(client.calls), 1)
+
+    def test_a_transport_failure_still_names_the_requested_article(self):
+        client = DocumentClient({"130051": SourceError("HTTP 403")})
+        with self.assertRaises(SourceError) as caught:
+            TencentAdapter(client).catalog_records()
+        self.assertIn(TENCENT_LIST_URL, str(caught.exception))
+        self.assertIn("HTTP 403", str(caught.exception))
+
+    def test_a_non_json_document_names_the_failed_url_and_response_size(self):
         page = "<html><body>Temporarily unavailable</body></html>"
         with self.assertRaises(SourceError) as caught:
             extract_tencent_article(page, source_url=TENCENT_PRICE_URL)
         diagnostic = str(caught.exception)
         self.assertIn(TENCENT_PRICE_URL, diagnostic)
         self.assertIn(f"{len(page)} characters", diagnostic)
-        self.assertIn("expected embedded article data", diagnostic)
+        self.assertIn("did not return JSON", diagnostic)
+        self.assertIn(TENCENT_ARTICLE_API, diagnostic)
 
     def test_catalogue_failure_diagnostics_name_the_catalogue_instead_of_prices(self):
-        adapter = TencentAdapter(SimpleNamespace(get_text=lambda url: ""))
+        adapter = TencentAdapter(SimpleNamespace(request=lambda url, **arguments: ""))
         with self.assertRaises(SourceError) as caught:
             adapter.catalog_records()
         self.assertIn(TENCENT_LIST_URL, str(caught.exception))
@@ -119,7 +235,7 @@ class TencentSourceTests(unittest.TestCase):
             requests.append(request.full_url)
             return io.BytesIO(LABELLED_NOTICE.encode())
 
-        client = HttpClient(opener=opener, attempts=1, max_requests_per_host=20)
+        client = HttpClient(opener=opener, attempts=1, max_requests_per_host=20, min_request_interval=0)
         for url in (TENCENT_LIST_URL, TENCENT_PRICE_URL, SOURCES["tencent"]):
             client.get_text(url)
         links = [

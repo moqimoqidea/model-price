@@ -24,7 +24,7 @@ No third-party host inherits its creator's announcement as a hosted listing.
 | Channel | Discovery evidence | Reader and boundary |
 | --- | --- | --- |
 | Google Gemini | [Gemini blog](https://blog.google/innovation-and-ai/models-and-research/gemini-models/) and its [RSS](https://blog.google/innovation-and-ai/models-and-research/gemini-models/rss/) | Read release subjects from RSS, then official article JSON-LD and paragraphs. The feed can link related official Google sections; only the same HTTPS host is accepted. |
-| OpenAI | [News RSS](https://openai.com/news/rss.xml) | Model subjects in release titles, then official articles. An inaccessible body retains verified feed evidence and reports partial `source_error`; customer stories without model-title subjects and bug-bounty campaigns do not discover models. |
+| OpenAI | [News RSS](https://openai.com/news/rss.xml) | Model subjects in release titles, then official articles at their canonical trailing-slash paths, avoiding one redirect per article. Typeset and nonbreaking hyphens are accepted when verifying a literal model mention; suffixed variants remain distinct. An inaccessible body retains verified feed evidence and reports partial `source_error`; customer stories without model-title subjects and bug-bounty campaigns do not discover models. |
 | Anthropic | [News](https://www.anthropic.com/news) | Follow indexed official model-release links, including article paths outside `/news`. Scope Fable and Mythos facts separately within their shared article. |
 | xAI | [News](https://x.ai/news) | Read card dates before following recent model subjects, so old indexed releases do not exhaust the request budget. |
 | Aliyun Bailian | [Qwen blog](https://qwen.ai/) | Anonymous `GET /api/v2/article/retrieval?type=qwen_ai&language=en-US` returns `data.articles`: `title`, `path`, `content`, and `extra.date/description/introduction`. Public `blog?id=<path>` uses the published path, not the internal UUID. The old GitHub Pages blog announces its migration and is not a current substitute. Qwen research/open weights do not themselves prove Bailian hosting. |
@@ -221,20 +221,26 @@ than its API. This is runtime report metadata, not part of snapshot identity.
   excluded from the token catalogue. Older local baselines that mislabeled such
   rows as token prices are filtered on read without rewriting the archive, so
   correcting the parser does not report image products as newly removed models.
-- Tencent Cloud TokenHub: embedded Slate JSON from the official catalog and pricing
-  documents; preserve self-deployed and “原厂直供” rows. There is no Markdown
-  endpoint: the "MD" button converts this same Slate data in the browser with
-  remark, so reading the Slate is reading the button's own source. The same article
-  payload carries `recentReleaseTime`, which is the price page's official update
-  time and is stored with every parsed record. A response without that embedded
-  state reports its document URL and response size rather than silently becoming
-  an empty catalogue. An unreadable retirement index and readable links with
-  unparseable notice milestones have distinct errors; neither advances history.
-  A parse error alone cannot establish whether the returned page was incomplete,
-  an intermediary/challenge response, or a changed document format. Successful
-  fresh reads are needed to separate a temporary response issue from a persistent
-  reader incompatibility; ordinary successful HTTP responses are not retried merely
-  because a parser rejected their content.
+- Tencent Cloud TokenHub: the document UI's anonymous, read-only JSON API at
+  `https://cloud.tencent.com/document/cgi/document/getDocPageDetail`. POST a JSON
+  object with `action: getDocPageDetail` and `payload: {id, lang: zh,
+  isPreview: false, isFromClient: true}`; no account, cookies, or CSRF code is
+  supplied. The catalogue and prices use their own article IDs, `130051` and
+  `130055`, while the retirement-link index uses `130758`. Validate `code: 0`,
+  `data.categoryId`, and `data.content`; prices read `content.slate`, and the
+  retirement index reads the published HTML in `content.body`. Both come from
+  the same article object the UI renders. Preserve self-deployed and “原厂直供”
+  rows, the canonical document source URLs, and `content.recentReleaseTime` as the
+  official price update time. Each article is fetched and decoded once per run.
+  There is no Markdown endpoint: the "MD" button converts this same Slate data
+  in the browser with remark.
+  On 2026-10-01, the anonymous API's catalogue content equalled the HTML's embedded
+  article exactly. The older hydration reader's “document state was not found”
+  message alone cannot distinguish a partial page, intermediary/challenge, or
+  changed markup. Reading the UI's JSON removes that HTML dependency. Invalid
+  responses retain the API URL, document URL, and response size; unreadable notice
+  indexes and unparseable milestones remain distinct failures, never empty
+  successful scans. Ordinary responses are not retried solely for parser errors.
 - Tencent model introductions: the model square is authenticated and has no durable
   anonymous description endpoint. The Guangzhou model square was captured through
   the user's signed-in Chrome session on 2026-09-24. Its first page rendered 100
@@ -307,6 +313,12 @@ than its API. This is runtime report metadata, not part of snapshot identity.
 - Anthropic: `https://platform.claude.com/docs/en/about-claude/pricing`; no public pricing JSON is exposed, so use its official `.md` representation.
 - Google Gemini: `https://ai.google.dev/gemini-api/docs/pricing.md.txt`. The page
   publishes a Markdown copy, so its `pricing-table` HTML classes are no longer read.
+  DevSite can redirect a browser UA into OAuth even for this public download.
+  The shared client retains only the run's anonymous server-issued cookies,
+  stops before OAuth/sign-in, and retries the public URL once with the same
+  browser identity. Those status cookies let DevSite serve the public document
+  without starting another automatic sign-in attempt. The retirement page shares
+  that anonymous session; no browser cookies, account, or persisted session is used.
   A model section is an `h2`, its service tiers are `h3`, and the section's API ids
   are published on an italic link line (`*[`gemini-3.8-flash`](url)*`), which is a
   better model id than the heading slug the HTML carried. Sections that price tools,
@@ -374,18 +386,54 @@ geography multiplier is a term of service rather than a published price).
 
 Provider caches live under `cache/<provider>/`. A cache entry records its provider, operation, arguments, fetch time, schema version, and data. Entries older than 3 hours are not used as fallback when refresh fails, and `CACHE_SCHEMA_VERSION` is bumped whenever a source or parser changes so entries written by an older version are ignored.
 
-All live reads pass through the standard-library `HttpClient`. GET and HEAD use at
-most three attempts for connection failures and HTTP 408, 425, 429, 500, 502, 503,
-and 504, with full-jitter exponential backoff capped at 8 seconds. A Cloudflare
-challenge-shaped 403 is retried once; other 4xx responses fail immediately.
-`Retry-After` is honored for 429 and 503 when its delay is at most 30 seconds, and
-longer waits end the provider early with the requested delay in the error. POST is
-one attempt unless the caller explicitly marks its read-only operation idempotent;
-the Bailian catalogue POST is such a read. Each host has a 20-attempt budget per
-run, including retries. The same GET URL and the same cached operation are held in
-memory for the run, while every registered provider builds a whole catalogue from
-one parsed source pass. Errors distinguish timeout, connection failure, rejected
-4xx, and server 5xx responses and always retain a non-empty diagnostic.
+All source reads pass through the standard-library `HttpClient`. The shared
+browser identity is the user's Chrome 154/macOS profile: its exact UA, Chromium/
+Google Chrome client hints, desktop/macOS flags, English/Chinese language weights,
+DNT, no-cache fields, and storage-access hint. There is no alternate-UA negotiation
+or project suffix. Accept defaults to `*/*`; gzip/deflate are the advertised
+encodings this standard-library reader can decode. Source reads use their own
+origin as Referer with `empty`/`cors`/`same-origin` fetch context; an API can supply
+its actual referring document and Content-Type. Redirect context follows the
+destination. The example Google Tag Manager script's Referer and script/no-cors
+context do not describe these document/API reads. Header overrides are
+case-insensitive.
+
+Only anonymous cookies issued during this run are held in memory. No browser
+cookie store is read and no session is persisted. Redirects into authentication
+hosts or sign-in paths stop before following them and omit the destination's query
+state from errors. A safe public read can retry its original URL once with the
+unchanged identity and its anonymous status cookies, then fails if authentication
+is still requested. Unsafe POSTs never receive this retry.
+
+Each host's request starts are at least one second apart, including retries and
+redirects, and each host has a 20-attempt budget per run. GET/HEAD and explicitly
+idempotent POST reads use at most three attempts for connection failures,
+incomplete reads, damaged compressed responses, and HTTP 408, 425, 429, 500, 502,
+503, and 504. Equal-jitter exponential backoff has a two-second base and a
+30-second cap: the first waits are 1–2 seconds and 2–4 seconds. A valid Retry-After
+on an error response is a minimum delay, never a replacement that shortens this
+backoff. A requested wait above 30 seconds stops that host for the run; exhausted
+429 retries do the same. Persistent verification pages, including those served
+with HTTP 200, get at most one retry before that host stops. Ordinary permanent
+4xx errors fail immediately and do not close other public documents on that host.
+Other hosts continue normally.
+
+POST is one attempt unless its caller declares a read-only operation idempotent;
+the Bailian catalogue, Tencent document API, and Tencent research index do so.
+Safe responses and failures are held only in run-local memory, keyed by method,
+URL, body, and caller headers. Failures remain errors, never stale successes;
+the next run tries the source afresh. Parser failures alone do not trigger new
+requests. Every registered provider builds its catalogue in one source pass.
+Diagnostics retain the source URL and distinguish timeout, connection failure,
+rejected requests, verification pages, and server errors.
+
+The self-updater's idempotent Git fetch uses the same UA and browser identity
+headers while Git owns its protocol's Accept/content headers. It inherits system
+proxies as process-local defaults, preserving explicit environment/repository
+proxy preferences and existing process configuration without editing Git settings.
+It retries transient transport failures, timeouts, and retryable HTTP statuses up
+to three times with the same exponential backoff. Authentication/configuration
+errors and local Git mutations are not retried.
 
 The baselines `delta` compares against live beside the cache as timestamped files
 under `snapshots/<provider>/`. Every successful scan is archived, even when its

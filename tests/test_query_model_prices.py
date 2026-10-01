@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import sys
 import tempfile
@@ -116,6 +117,7 @@ from model_price.providers.openrouter import (
     openrouter_entries,
 )
 from model_price.providers.tencent import (
+    TENCENT_ARTICLE_API,
     TENCENT_PRICE_URL,
     TencentAdapter,
     article_slate,
@@ -163,7 +165,7 @@ from model_price.snapshots import (
     parse_baseline_selection,
 )
 from model_price.text import clean_zero_width_text
-from model_price.updating import GitSkillUpdater
+from model_price.updating import GitSkillUpdater, git_network_environment
 
 import query_model_prices
 import model_price.snapshots as snapshots_module
@@ -227,6 +229,9 @@ class MappingClient:
         if isinstance(value, Exception):
             raise value
         return value
+
+    def request(self, url, **arguments):
+        return self.get_text(url)
 
 
 class CountingSource(PriceSource):
@@ -487,32 +492,23 @@ class OfficialUpdateStampTests(unittest.TestCase):
 
     def test_tencent_article_keeps_its_recent_release_time(self):
         slate = [{"type": "paragraph", "children": [{"text": "价格"}]}]
-        state = {
-            "loaderData": {
-                "product-article": {
-                    "data": {
-                        "article": {
-                            "content": {
-                                "slate": json.dumps(slate),
-                                "recentReleaseTime": "2026-09-18 22:04:00",
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        quoted = json.dumps(json.dumps(state))
-        article = extract_tencent_article(
-            f"window.__staticRouterHydrationData = JSON.parse({quoted})"
-        )
+        response = json.dumps({
+            "code": 0,
+            "data": {
+                "categoryId": 1823,
+                "content": {
+                    "slate": json.dumps(slate),
+                    "recentReleaseTime": "2026-09-18 22:04:00",
+                },
+            },
+        })
+        article = extract_tencent_article(response)
         self.assertEqual(article["recentReleaseTime"], "2026-09-18 22:04:00")
         self.assertEqual(article_slate(article), slate)
         adapter = TencentAdapter(
             MappingClient(
                 {
-                    TENCENT_PRICE_URL: (
-                        f"window.__staticRouterHydrationData = JSON.parse({quoted})"
-                    )
+                    TENCENT_ARTICLE_API: response
                 }
             )
         )
@@ -696,6 +692,43 @@ class CacheTests(unittest.TestCase):
 
 
 class SkillUpdateTests(unittest.TestCase):
+    def test_git_inherits_system_proxies_and_browser_identity_without_persisting_settings(self):
+        from model_price.core import DEFAULT_USER_AGENT
+
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
+            "model_price.updating.getproxies",
+            return_value={"https": "http://127.0.0.1:6152", "no": "localhost"},
+        ):
+            environment = git_network_environment()
+            self.assertEqual(environment["GIT_HTTP_USER_AGENT"], DEFAULT_USER_AGENT)
+            self.assertEqual(environment["https_proxy"], "http://127.0.0.1:6152")
+            self.assertEqual(environment["no_proxy"], "localhost")
+            values = {
+                environment[f"GIT_CONFIG_VALUE_{index}"]
+                for index in range(int(environment["GIT_CONFIG_COUNT"]))
+            }
+            self.assertIn('sec-ch-ua-platform: "macOS"', values)
+            self.assertIn("accept-language: en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7", values)
+            self.assertEqual(dict(os.environ), {})
+
+    def test_git_preserves_explicit_proxy_preferences_and_existing_process_config(self):
+        existing = {
+            "HTTPS_PROXY": "http://explicit.test:8000",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.lowSpeedTime",
+            "GIT_CONFIG_VALUE_0": "15",
+        }
+        with mock.patch.dict(os.environ, existing, clear=True), mock.patch(
+            "model_price.updating.getproxies",
+            return_value={"https": "http://system.test:8000"},
+        ):
+            environment = git_network_environment()
+        self.assertNotIn("https_proxy", environment)
+        self.assertEqual(environment["HTTPS_PROXY"], existing["HTTPS_PROXY"])
+        self.assertEqual(environment["GIT_CONFIG_KEY_0"], "http.lowSpeedTime")
+        self.assertEqual(environment["GIT_CONFIG_VALUE_0"], "15")
+        self.assertGreater(int(environment["GIT_CONFIG_COUNT"]), 1)
+
     def test_remote_skill_change_is_fetched_then_fast_forwarded(self):
         runner = FakeGitRunner(git_update_responses())
 
@@ -720,11 +753,44 @@ class SkillUpdateTests(unittest.TestCase):
         responses[("fetch", "--quiet")] = (1, "", "network unavailable")
         runner = FakeGitRunner(responses)
 
-        result = GitSkillUpdater(SKILL_ROOT, runner=runner).update()
+        delays = []
+        result = GitSkillUpdater(
+            SKILL_ROOT, runner=runner, sleeper=delays.append, uniform=lambda low, high: high
+        ).update()
 
+        self.assertEqual(delays, [2.0, 4.0])
+        self.assertEqual(runner.commands.count(("fetch", "--quiet")), 3)
         self.assertEqual(result["status"], "check_failed")
         self.assertIn("network unavailable", result["reason"])
         self.assertNotIn(("merge", "--ff-only", "origin/main"), runner.commands)
+
+    def test_transient_fetch_recovers_before_a_single_fast_forward(self):
+        runner = FakeGitRunner(git_update_responses())
+
+        def flaky(command, **options):
+            result = runner(command, **options)
+            if command[1] == "fetch" and runner.commands.count(("fetch", "--quiet")) < 3:
+                result.returncode = 1
+                result.stderr = "The requested URL returned error: 503"
+            return result
+
+        delays = []
+        result = GitSkillUpdater(
+            SKILL_ROOT, runner=flaky, sleeper=delays.append, uniform=lambda low, high: high
+        ).update()
+        self.assertEqual(result["status"], "updated")
+        self.assertEqual(delays, [2.0, 4.0])
+        self.assertEqual(runner.commands.count(("merge", "--ff-only", "origin/main")), 1)
+
+    def test_a_permanent_fetch_failure_is_not_retried(self):
+        responses = git_update_responses()
+        responses[("fetch", "--quiet")] = (1, "", "authentication failed")
+        runner = FakeGitRunner(responses)
+        delays = []
+        result = GitSkillUpdater(SKILL_ROOT, runner=runner, sleeper=delays.append).update()
+        self.assertEqual(result["status"], "check_failed")
+        self.assertEqual(runner.commands.count(("fetch", "--quiet")), 1)
+        self.assertEqual(delays, [])
 
 
 class OverseasRoutingTests(unittest.TestCase):

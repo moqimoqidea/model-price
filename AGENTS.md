@@ -297,7 +297,8 @@ even when the tests still pass.
     explain why that contract exists, but must link to it instead of copying it.
 21. **One document is one request per run.** Every registered provider owns a
     one-pass `catalog_records()` implementation, and adapters read stable pages
-    through `PriceSource.document()`. `HttpClient` retries only safe requests,
+    through `PriceSource.document()` and their documented read-only JSON APIs
+    through `HttpClient`. `HttpClient` retries only safe requests,
     respects short `Retry-After` values, and enforces a per-host request budget.
     POST is never retried unless its caller marks the operation idempotent.
 22. **Retirement evidence is independent of catalogue disappearance.** A missing
@@ -364,8 +365,8 @@ column bills in. Override only the policy that actually differs: `price_kind`,
 `cell_amount`, `cell_rates`, `price_unit`, `offer_name`, `model_column`,
 `heading_conditions`, `model_conditions`, `model_variants`, `record_extras`, or
 `model_extras`. Subclass `PriceSource` directly only when the vendor's shape is
-genuinely not a table (`aliyun` reads a JSON API, `tencent` reads embedded Slate
-JSON, `baidu` reads a Gatsby pre-fetch).
+genuinely not a table (`aliyun` reads a JSON API, `tencent` reads the public Slate
+document API, `baidu` reads a Gatsby pre-fetch).
 
 Three declarations deserve care: `carry_forward_model` for vendors that leave a
 continuation row's model cell empty, `publishes_time_bands` for vendors that
@@ -423,10 +424,10 @@ python3 scripts/update_tencent_model_mirror.py CAPTURE.json
 python3 scripts/audit_model_retirements.py --provider zhipu
 ```
 
-Tests never touch the network. An adapter accepts any object with `get_text`, so
-the suite passes a `MappingClient` that maps a URL to a fixture document (or to an
-exception, to exercise a failure path). Add a vendor by adding its fixture and a
-test that parses it, not by adding a live request.
+Tests never touch the network. GET readers accept an object with `get_text`; JSON
+POST readers use `request` or `post_form`. The suite passes fixture clients mapping
+a URL and, when needed, a request body to a document or an exception. Add a vendor
+by adding its fixture and a test that parses it, not by adding a live request.
 
 ## Runtime state
 

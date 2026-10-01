@@ -24,6 +24,7 @@ from model_price.announcements.parsing import (
     article_details,
     feed_entries,
     model_names,
+    mentions_model,
     publication_names,
     release_facts,
 )
@@ -608,6 +609,20 @@ class AdditionalEvidenceTests(unittest.TestCase):
             "GPT-6 Astra", ["GPT-6 Astra"], article_details(page)["paragraphs"]
         )
         self.assertEqual(facts["access"]["status"], "limited")
+
+    def test_openai_uses_canonical_article_paths_with_typeset_model_names(self) -> None:
+        spec = NEWS_SOURCES["openai"]
+        url = "https://openai.com/index/model-release"
+        feed = rss([("Introducing GPT-9.1", url, "Introducing GPT-9.1, available now.")])
+        page = '<h1>Introducing GPT‑9.1</h1><p>GPT‑9.1 is available today.</p>'
+        client = MappingClient({spec.index_url: feed, url + "/": page})
+        result = read_publications(
+            "openai", client, datetime.fromisoformat("2026-10-01T12:00:00+08:00")
+        )
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(client.calls, [spec.index_url, url + "/"])
+        self.assertEqual(result["models"][0]["access"]["status"], "public")
+        self.assertFalse(mentions_model("GPT‑9.1‑Mini is available.", "GPT-9.1"))
 
     def test_an_unversioned_customer_story_does_not_release_its_compared_models(
         self,
