@@ -25,6 +25,7 @@ from ..core import PriceSource, now_iso
 from ..errors import SourceError
 from ..models import model_family, normalize_model
 from ..pricing import is_free_amount, make_record, per_million_tokens, price_item, unit_code
+from .openrouter_attribution import enrich_openrouter_snapshot
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models?output_modalities=all"
 OPENROUTER_VIDEOS_URL = "https://openrouter.ai/api/v1/videos/models"
@@ -367,6 +368,7 @@ class OpenRouterAdapter(PriceSource):
     currency = "USD"
     region = "全球"
     delivery_mode = "third_party_hosted"
+    aggregated_pricing = True
 
     def __init__(self, client: Any) -> None:
         super().__init__(client)
@@ -485,6 +487,7 @@ class OpenRouterAdapter(PriceSource):
             delivery_mode=self.delivery_mode,
             model_family=model_family(model_id),
             output_modalities=list(architecture.get("output_modalities") or []),
+            aggregated_pricing=self.aggregated_pricing,
             **self._record_extras(head, offers),
         )
 
@@ -543,3 +546,12 @@ class OpenRouterAdapter(PriceSource):
         """Build every record from the two documents already read, in one pass."""
         grouped = self._entries_by_model()
         return [self._record_for(grouped[key]) for key in sorted(grouped)]
+
+    def enrich_snapshot(
+        self,
+        current: dict[str, Any],
+        previous: dict[str, Any] | None,
+        latest: dict[str, Any] | None,
+    ) -> None:
+        """Attribute movements to endpoints without changing the catalogue rates."""
+        enrich_openrouter_snapshot(self, current, previous, latest, openrouter_rates)

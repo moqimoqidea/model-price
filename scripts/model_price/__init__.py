@@ -9,6 +9,7 @@ Responsibility split:
 - ``text``         normalisation of text scraped out of vendor documents
 - ``pricing``      price and record shapes
 - ``models``       model identity, retired-name aliases, family matching
+- ``mistral_catalogue`` shared official model identities, prose, and notice metadata
 - ``providers``    one module per vendor
 - ``descriptions`` independent model introductions, from vendors and platforms
 - ``announcements`` official releases and access facts, independent of billing
@@ -16,6 +17,7 @@ Responsibility split:
 - ``updating``     Git self-update before an explicit refresh
 - ``snapshots``    archived baselines, retention, and point-in-time selection
 - ``diffing``      what moved between two baselines
+- ``price_attribution`` optional endpoint evidence explaining a billed movement
 - ``changes``      all change causes grouped by a channel's literal model ID
 - ``delta``        the scan-every-catalogue-and-compare run
 - ``reporting``    the shared wording and single-value formatters

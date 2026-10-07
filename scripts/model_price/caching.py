@@ -99,6 +99,7 @@ class CachedPriceSource(PriceSource):
         self.source_url = source.source_url
         self.source_kind = source.source_kind
         self.catalog_url = source.catalog_url
+        self.aggregated_pricing = source.aggregated_pricing
         self.cache_status = "unused"
         self.cached_at: str | None = None
         self._memory: dict[str, tuple[Any, str | None]] = {}
@@ -140,6 +141,15 @@ class CachedPriceSource(PriceSource):
 
     def query(self, model: str) -> list[dict[str, Any]]:
         return self._cached("query", {"model": model}, lambda: self.source.query(model))
+
+    def enrich_snapshot(
+        self,
+        current: dict[str, Any],
+        previous: dict[str, Any] | None,
+        latest: dict[str, Any] | None,
+    ) -> None:
+        """Keep scan attribution fresh rather than storing it in the TTL cache."""
+        self.source.enrich_snapshot(current, previous, latest)
 
     def search(self, model: str, *, exact: bool = False) -> list[dict[str, Any]]:
         return self._cached(

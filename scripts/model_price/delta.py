@@ -8,6 +8,7 @@ of scanning so the same fresh catalogue can answer latest or point-in-time delta
 
 from __future__ import annotations
 
+import copy
 from datetime import datetime
 from typing import Any, Iterable
 
@@ -148,6 +149,16 @@ def _scan_provider(
             status=EMPTY_SCAN,
         )
     if report is None:
+        enrich = getattr(adapter, "enrich_snapshot", None)
+        attribution_error = None
+        if enrich is not None and getattr(adapter, "aggregated_pricing", False):
+            enriched = copy.deepcopy(snapshot)
+            try:
+                enrich(enriched, previous, latest)
+            except Exception as exc:
+                attribution_error = str(exc)
+            else:
+                snapshot = enriched
         store.write(adapter.provider_id, snapshot)
         report = compare_snapshots(
             previous,
@@ -157,6 +168,10 @@ def _scan_provider(
             ),
         )
         report["last_successful_at"] = (latest or {}).get("captured_at")
+        if attribution_error is not None:
+            report["pricing_attribution"] = {
+                "status": SOURCE_ERROR, "error": attribution_error,
+            }
     if lifecycle_client is not None:
         report["lifecycle"] = scan_lifecycle(
             adapter,
@@ -178,6 +193,8 @@ def _scan_provider(
             reference_at,
         )
     report["catalog_url"] = getattr(adapter, "catalog_url", None) or adapter.source_url
+    if getattr(adapter, "aggregated_pricing", False):
+        report["aggregated_pricing"] = True
     targets = changed_model_targets(report, records or [])
     if targets:
         current_ids = {normalize_model(item["model_id"]) for item in records or []}

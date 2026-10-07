@@ -27,6 +27,7 @@ No third-party host inherits its creator's announcement as a hosted listing.
 | OpenAI | [News RSS](https://openai.com/news/rss.xml) | Model subjects in release titles, then official articles at their canonical trailing-slash paths, avoiding one redirect per article. Typeset and nonbreaking hyphens are accepted when verifying a literal model mention; suffixed variants remain distinct. An inaccessible body retains verified feed evidence and reports partial `source_error`; customer stories without model-title subjects and bug-bounty campaigns do not discover models. |
 | Anthropic | [News](https://www.anthropic.com/news) | Follow indexed official model-release links, including article paths outside `/news`. Scope Fable and Mythos facts separately within their shared article. |
 | xAI | [News](https://x.ai/news) | Read card dates before following recent model subjects, so old indexed releases do not exhaust the request budget. |
+| Mistral AI | [News](https://mistral.ai/news/) | Read recent official release cards, then article dates and model-scoped paragraphs. Versioned subjects use family grammar; unversioned subjects such as Voxtral TTS must be literal names in the independently read public model inventory. Funding amounts never stand for abbreviated model names. The articles' SEO description is site-wide, so introductions use the model's release paragraph. A public preview API, later weights, and vetted red-team access retain their separate quoted scopes. |
 | Aliyun Bailian | [Qwen blog](https://qwen.ai/) | Anonymous `GET /api/v2/article/retrieval?type=qwen_ai&language=en-US` returns `data.articles`: `title`, `path`, `content`, and `extra.date/description/introduction`. Public `blog?id=<path>` uses the published path, not the internal UUID. The old GitHub Pages blog announces its migration and is not a current substitute. Qwen research/open weights do not themselves prove Bailian hosting. |
 | Volcengine Ark | [Seed models](https://seed.bytedance.com/en/blog) | Read `window._ROUTER_DATA.loaderData.layout.footer_config`, the group titled `Models`, and its `labelEn/linkEn`. This is operator research inventory evidence, not guessed Ark IDs. A name-only entry has an unavailable capability summary rather than invented prose. |
 | Tencent TokenHub | [Hunyuan research](https://hunyuan.tencent.com/) | Anonymous read-only `POST https://api.hunyuan.tencent.com/api/blog/publicList`, paged by `pageNum/pageSize`; `needFilter=true`. Read the published `title/desc/content/customUrl`, and only official dates when present. This idempotent read is retryable. Public research evidence does not replace the authenticated TokenHub description mirror or prove a TokenHub listing. |
@@ -95,6 +96,7 @@ source keeps its last successful notice archive.
 | Anthropic | [Model deprecations](https://platform.claude.com/docs/en/about-claude/model-deprecations) | Deprecated and retired table applies to Anthropic-operated API. A row explicitly marked Retired is down even if its retirement date is blank. Partner platform schedules may differ. Active models' “not sooner than” dates are not shutdown promises. |
 | Google Gemini | [Gemini API deprecations](https://ai.google.dev/gemini-api/docs/deprecations) | Shutdown dates are the *earliest possible* dates. The page separately marks already-shutdown models with `row-gray` table rows, including one with no published shutdown date. Only that explicit row state confirms retirement; reaching an unshaded row's date does not. |
 | xAI | [Official migration guides](https://docs.x.ai/developers/migration/may-15-retirement) | Old slugs can continue to resolve through automatic redirection, with billing at replacement-model prices. Read the effective PT clock where given; a date-only notice remains date-only. |
+| Mistral AI | [Model directory](https://docs.mistral.ai/models) and [lifecycle policy](https://docs.mistral.ai/inference/model-lifecycle) | The explicit deprecated/retired table's API column selects the literal IDs; its header and body are rendered as separate tables. The same public model data publishes `status`, `metadata.deprecationDate`, `metadata.retirementDate`, and a recommended replacement. Dates are not expanded to aliases absent from that schedule. Deprecation is an announcement, not EOM. The policy explicitly states retired identifiers return 404, so replacements are manual recommendations, not redirects. A currently reassigned alias does not inherit an old revision's EOS. Date-only values and explicit undated Retired statuses remain distinct. |
 | Zhipu BigModel | [GLM-4.5-Flash](https://docs.bigmodel.cn/cn/guide/models/free/glm-4.5-flash.md), [GLM-Z1](https://docs.bigmodel.cn/cn/guide/models/text/glm-z1.md), and [GLM-4.5](https://docs.bigmodel.cn/cn/guide/models/text/glm-4.5.md) model pages | No central retirement feed. Read explicit banner text on these known official pages: a dated shutdown with automatic routing, an undated “已下线” series notice, and undated “即将下线” plans. Only literal named IDs are recorded; a series notice is not expanded into guessed variants. These pages are a maintained source list, not a complete vendor-wide schedule. |
 | OpenRouter | The models API entry itself | Each catalogue entry publishes its own `expiration_date` while the model is still served, so the date is an announced withdrawal rather than the catalogue going quiet. Read from the price records, like Aliyun's offline times. |
 | Google Cloud Vertex | [Model versions and lifecycle](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions) | One table per modality: the literal model ID, its release date, its retirement date and what replaces it. A date the page qualifies ("July 21, 2027 or later", "No sooner than May 20, 2028") is a floor and is recorded as `eos_earliest`; "No retirement date announced" yields no event. |
@@ -146,6 +148,12 @@ source, without guessing a per-model API documentation URL.
 - Kimi, MiniMax, and Zhipu use the official overview Markdown tables. Section
   headings contribute category/lifecycle information, including Kimi's explicit
   已下线 section.
+- Mistral shares one read of its public model-data bundle across API identity,
+  introductions, and retirement readers. Exact `identifiers.apiNames` select the
+  hosting channel's own `description`, `capabilities`, context/output limits,
+  release date, and lifecycle state. Display names and detail-page slugs are never
+  guessed into API IDs. Third-party models use Mistral's own description. Missing
+  prose leaves an introduction absent while readable prices remain available.
 - OpenRouter describes every entry it lists from its own catalogue: the paragraph
   the API publishes, plus the modalities, the parameters it accepts and the limits
   it states. An entry the vendor charges nothing for says so among those
@@ -349,6 +357,47 @@ than its API. This is runtime report metadata, not part of snapshot identity.
   a reading of the pairs is checked against. The cell's sentence stays in `display`.
 - xAI Grok: `https://docs.x.ai/developers/pricing.md`. The rendered HTML page splits the text-pricing header across two rows with merged cells, which the shared table reader cannot align; the official Markdown keeps a single header row. Long-context billing tiers live in a trailing parenthetical in the model cell (`grok-4.6 (≥ 200k prompt tokens)`), so they are preserved as a `context_tier` condition rather than dropped with the model id.
 
+### Mistral's public documentation data
+
+`https://docs.mistral.ai/inference/pricing` and `https://docs.mistral.ai/models`
+are dynamic documentation pages without Markdown variants; the lifecycle policy
+does publish `https://docs.mistral.ai/inference/model-lifecycle.md`. Pricing uses
+the shared HTML table reader. The index's own model-data asset declares API names,
+aliases, introductions, capabilities, and retirement metadata. Resolve the current
+hashed `/_next/static/chunks/2894-*.js` asset from that index, then parse only its
+data literals and English translation strings. Never evaluate JavaScript, fetch
+every application bundle, or call the authenticated `/v1/models` endpoint.
+`mistral_catalogue` reuses this capture within one HTTP client/run. An absent
+asset, changed data layout, ambiguous literal API identity, or inconsistent price
+link is a source error; it cannot overwrite a successful baseline.
+
+Price rows join their explicitly linked detail-page slugs to that data and retain
+every published API identifier separately. Current API listings missing from the
+price table remain unpriced; old detail-page figures are not current catalogue
+offers. Models with no API identifiers, such as a weights-only research model,
+do not become invented API listings. Explicitly hosted third-party rows remain
+on `mistral` with `third_party_hosted` delivery.
+
+The price page's own hashed `/inference/pricing/page-*.js` asset publishes its
+controls: standard, batch, priority, and a regional-inference multiplier. Parse
+those declared factors rather than hard-coding them or deriving a promotion from
+two rates. Preserve every mode/scope as a separate offer, applying the same
+five-decimal rounding the UI publishes to billed and list amounts independently.
+Regional inference names a service scope, not a guessed country or region.
+If the control layout changes, fail the price read rather than reporting those
+offers as removed. Standard prices come directly from the rendered table.
+
+The accessibility labels inside `del`/`ins` elements say Original/Sale price;
+they describe terms rather than separate scopes. Normalize those UI prefixes
+before delegating to the shared cell reader. Keep Large 4's struck-through list
+amounts, current sale amounts, and cached-input rates, with no guessed discount
+or expiry. `/1000 Pages`, `/Min`, and `/M Chars` preserve thousand-page, minute,
+and million-character charges. Free moderation and published zero TTS input
+remain zero prices; free moderation's unstated meter is `provider_defined`.
+An absent rate remains unknown. Release dates never become
+price-page update times. Reduced captures and integration checks live in
+`tests/test_mistral.py` and `tests/fixtures/mistral-*`.
+
 ### Special prices, and where each vendor states them
 
 A price is not always one number. A vendor may publish the rate it reduces, a
@@ -506,6 +555,52 @@ Two catalogue-level traps:
   converted to dollars, `video_tokens` keeps its own measure. Negative figures are
   the vendor's marker for a charge that depends on the routed model and are never
   amounts.
+- **OpenRouter endpoint attribution** — only a model with a price movement against
+  the selected or latest successful archive is read at
+  `GET /api/v1/models/{author}/{slug}/endpoints`. Initial scans, unchanged models,
+  and `compare`/`provider`/`list` never enumerate endpoint pages. Default endpoint
+  evidence does not annotate batch, context, time-window, or video SKU offers.
+  Every changed model costs at most one document read, shared by all its charges;
+  the existing host request budget and retries still apply. Budget exhaustion or
+  a failed endpoint read is a visible attribution failure, not a failed catalogue.
+
+  [The official endpoint schema](https://openrouter.ai/openapi.json) defines
+  `pricing.discount` as a fractional reduction of that endpoint's own rate:
+  multiply by `1 - discount`, with zero meaning no reduction and one meaning free.
+  The endpoint rates match the discounted catalogue figures. The shared price
+  schema stores the paid multiplier instead, so API `0.55` becomes price
+  `discount: "0.45"`. `list_amount` is reconstructed as `amount / (1 - discount)`
+  only for a valid, explicitly published reduction below one. Its
+  `list_amount_basis: endpoint_discount` names this calculation; it is not an
+  independently quoted list price or the model creator's rate. Missing, invalid,
+  and full reductions establish no reconstructed base price. Raw API fields
+  remain in the snapshot beside the normalized rates.
+
+  Selection requires the whole catalogue rate vector to match one available
+  endpoint (`status: 0`), never the minimum input rate or just one matching charge.
+  Catalogue zero placeholders absent from endpoint pricing supply no endpoint
+  terms. Multiple matching endpoints leave the selected host ambiguous; identical
+  rates never prove a route. The first uniquely matched endpoint with a published
+  provider name and tag becomes the pinned reference. This is a stable monitoring
+  choice, not a claim that OpenRouter designates it primary or that it is the model
+  creator. Literal tag identity preserves serving variants independently of display
+  name changes. A price match identifies a quoted rate, not proof of a request's
+  actual serving route. Subsequent scans keep that reference even when the catalogue
+  selects another host; a disappeared or
+  unavailable reference is retained rather than replaced by a cheaper endpoint.
+
+  Only observations of that same reference can establish an un-discounted rate
+  adjustment. Promotions and selected-provider switches have separate causes;
+  simultaneous causes remain visible. An older baseline without endpoint evidence
+  cannot be backfilled from today's endpoint list. Unchanged catalogue offers keep
+  their last dated observation; failures keep the reference without claiming a new
+  verified price. These optional fields remain outside offer identity and price
+  comparison, so snapshot version 4 remains compatible and other providers keep
+  their existing baselines. No global list-price comparison or debounce is enabled.
+  Reference changes compare endpoint observation times, which can predate the
+  selected catalogue baseline; they do not assert an exact repricing day. A primary
+  endpoint change while the model-level catalogue price holds still is not guaranteed
+  to be detected, because unchanged models incur no new endpoint reads.
 - **AWS Bedrock** — one region per model, read from the two public offer files
   (`AmazonBedrock` and `AmazonBedrockFoundationModels`), read together because
   neither is complete: the first prices the models under AWS's own offer code, the

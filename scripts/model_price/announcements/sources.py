@@ -22,7 +22,8 @@ from ..descriptions.sources import (
 )
 from ..descriptions.parsing import markdown_summary, prose_paragraphs
 from ..errors import SourceError
-from ..parsing import date_value
+from ..mistral_catalogue import MISTRAL_NEWS_URL, read_catalogue as read_mistral_catalogue
+from ..parsing import date_value, models_named_in
 from .parsing import (
     RELEASE_WORDS,
     article_details,
@@ -62,6 +63,13 @@ class NewsSource:
     required_context: str = ""
     article_path: str = ""
     article_trailing_slash: bool = False
+    summary_from_body: bool = False
+    subject_inventory: Callable[[Any], list[str]] | None = None
+
+
+def mistral_subject_inventory(client: Any) -> list[str]:
+    """Unversioned release subjects come from official data, never a name list."""
+    return [entry["name"] for entry in read_mistral_catalogue(client).entries]
 
 
 NEWS_SOURCES = {
@@ -86,6 +94,12 @@ NEWS_SOURCES = {
         "html",
     ),
     "xai": NewsSource("https://x.ai/news", "https://x.ai/news", r"Grok|grok", "html"),
+    "mistral": NewsSource(
+        MISTRAL_NEWS_URL, MISTRAL_NEWS_URL,
+        r"Mistral|Ministral|Mixtral|Magistral|Pixtral|Codestral|Devstral|Voxtral|Leanstral|Shieldstral|OCR",
+        "html", article_path=r"/news/[^/]+/$", summary_from_body=True,
+        subject_inventory=mistral_subject_inventory,
+    ),
     "kimi": NewsSource(
         "https://www.kimi.com/blog",
         "https://www.kimi.com/blog",
@@ -161,7 +175,19 @@ def _recent(value: str | None, reference: datetime) -> bool:
     return reference - timedelta(days=NEWS_WINDOW_DAYS) <= moment <= reference
 
 
-def _news_entries(spec: NewsSource, client: Any) -> list[dict[str, Any]]:
+def _news_subjects(
+    spec: NewsSource, title: str, summary: str, inventory: list[str]
+) -> list[str]:
+    names = publication_names(title, summary, spec.brands)
+    # The inventory admits a title such as Introducing Voxtral TTS. Longest
+    # literal names own their mentions; benchmark subjects in the body never do.
+    named = models_named_in(title, inventory)
+    return list(dict.fromkeys([*names, *(name for name in inventory if name in named)]))
+
+
+def _news_entries(
+    spec: NewsSource, client: Any, inventory: list[str] | None = None
+) -> list[dict[str, Any]]:
     text = client.get_text(spec.index_url)
     if spec.transport in ("rss", "atom"):
         entries = feed_entries(text, spec.url)
@@ -183,7 +209,7 @@ def _news_entries(spec: NewsSource, client: Any) -> list[dict[str, Any]]:
             continue
         if spec.article_path and not re.search(spec.article_path, url):
             continue
-        if not model_names(title, spec.brands):
+        if not _news_subjects(spec, title, "", inventory or []):
             continue
         # Index cards sometimes repeat their heading and synopsis in one link.
         # The first entry is the featured heading rather than its repeated card.
@@ -208,13 +234,22 @@ def _read_news(
 ) -> tuple[list[dict[str, Any]], list[str]]:
     found = []
     errors = []
-    for entry in _news_entries(spec, client):
+    inventory: list[str] = []
+    if spec.subject_inventory:
+        try:
+            inventory = spec.subject_inventory(client)
+        except Exception as exc:
+            # A missing catalogue cannot suppress independently readable news.
+            # Versioned subjects still parse; incomplete unversioned coverage
+            # remains a partial source error and cannot replace an archive.
+            errors.append(f"official release subject inventory: {exc}")
+    for entry in _news_entries(spec, client, inventory):
         if not _recent(entry["published_at"], reference):
             continue
         title = entry["title"]
         if re.search(r"bug bounty|customer story|case study", title, re.I):
             continue
-        names = publication_names(title, entry["summary"], spec.brands)
+        names = _news_subjects(spec, title, entry["summary"], inventory)
         if not names and spec.transport == "atom":
             # Atom release notes name their models in the dated entry body.
             names = model_names(entry["summary"], spec.brands)
@@ -261,6 +296,14 @@ def _read_news(
             continue
         summary = details.get("summary") or entry["summary"] or ""
         paragraphs = details.get("paragraphs") or [entry["summary"]]
+        if spec.summary_from_body:
+            # Mistral articles carry a site-wide SEO description. The model's
+            # own release paragraph is the authoritative capability summary.
+            summary = next((
+                paragraph for paragraph in paragraphs
+                if RELEASE_WORDS.search(paragraph)
+                and any(mentions_model(paragraph, name) for name in names)
+            ), "")
         for name in names:
             item = publication(
                 name,

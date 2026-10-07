@@ -27,7 +27,9 @@ from .paths import (
     SNAPSHOT_RETENTION_MONTHS,
     SNAPSHOT_SCHEMA_VERSION,
 )
-from .pricing import PRICE_TERM_FIELDS, offer_priority, price_sort_key
+from .pricing import (
+    PRICE_ATTRIBUTION_FIELDS, PRICE_TERM_FIELDS, offer_priority, price_sort_key,
+)
 
 LATEST = "latest"
 YESTERDAY = "yesterday"
@@ -106,7 +108,9 @@ NON_IDENTITY_CONDITIONS = frozenset({"source_section"})
 # field the reader cannot print. A field added here needs no baseline bump, because
 # the diff compares amounts rather than this tuple and an older baseline reads as
 # ``None`` where the key is absent.
-PRICE_FIELDS = ("type", "label", "amount", "unit", *PRICE_TERM_FIELDS)
+PRICE_FIELDS = (
+    "type", "label", "amount", "unit", *PRICE_TERM_FIELDS, *PRICE_ATTRIBUTION_FIELDS,
+)
 
 
 def offer_identity(offer: dict[str, Any]) -> tuple[Any, ...]:
@@ -188,7 +192,7 @@ def build_snapshot(
         entry["offers"] = sorted(unique.values(), key=offer_priority)
         if entry["offers"]:
             entry["price_status"] = "published"
-    return {
+    snapshot = {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "provider": {"id": provider.provider_id, "name": provider.provider_name},
         "captured_at": captured_at,
@@ -199,6 +203,9 @@ def build_snapshot(
         },
         "models": {key: models[key] for key in sorted(models)},
     }
+    if getattr(provider, "aggregated_pricing", False):
+        snapshot["aggregated_pricing"] = True
+    return snapshot
 
 
 def latest_update(models: Iterable[dict[str, Any]]) -> str | None:
@@ -219,7 +226,7 @@ def latest_update(models: Iterable[dict[str, Any]]) -> str | None:
 
 
 def _offer_payload(offer: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "name": offer.get("name", ""),
         "conditions": dict(offer.get("conditions") or {}),
         "prices": sorted(
@@ -230,6 +237,9 @@ def _offer_payload(offer: dict[str, Any]) -> dict[str, Any]:
             key=price_sort_key,
         ),
     }
+    if attribution := offer.get("pricing_attribution"):
+        payload["pricing_attribution"] = attribution
+    return payload
 
 
 SnapshotRef = tuple[datetime, Path]

@@ -76,6 +76,10 @@ CONDITION_LABELS = {
     "deployment_scope": "部署范围",
     "deployment_name": "部署名称",
     "hosting": "托管方式",
+    "inference_scope": "推理范围",
+}
+CONDITION_VALUE_LABELS = {
+    "inference_scope": {"default": "默认推理", "regional": "区域推理"},
 }
 
 # What a price is billed against, written once per measure rather than once per
@@ -106,6 +110,7 @@ UNIT_MEASURE_LABELS = {
     "item": "个",
     "song": "首",
     "page": "页",
+    "thousand_pages": "千页",
 }
 
 
@@ -217,6 +222,17 @@ MODEL_CHANGE_LABELS = {
     "announced_price_changed": "公告报价更新",
     "announcement_listing_changed": "公布模型目录状态更新",
 }
+
+PRICE_CAUSE_LABELS = {
+    "price_adjustment": "价格调整",
+    "promotion_change": "促销/折扣变动",
+    "provider_switch": "路由/托管方切换",
+    "catalog_price_fluctuation": "目录价波动",
+}
+AGGREGATED_PRICE_NOTE = (
+    "该渠道为聚合渠道，目录价随上游第三方托管方的可用性与促销变动，"
+    "不据此认定原厂标准价调整"
+)
 
 ACCESS_STATUS_LABELS = {
     "unknown": "官方未明确说明",
@@ -392,8 +408,15 @@ def price_terms_text(item: dict[str, Any]) -> str:
     it is stated it belongs to the amount rather than to these terms.
     """
     parts = []
-    if item.get("list_amount") is not None:
-        parts.append(f"原价 {item['list_amount']}")
+    calculated = item.get("list_amount_basis") == "endpoint_discount"
+    if item.get("list_amount") is not None and (
+        not calculated or item["list_amount"] != item.get("amount")
+    ):
+        label = (
+            "端点未折价（按折扣还原）"
+            if calculated else "原价"
+        )
+        parts.append(f"{label} {item['list_amount']}")
     if (folds := discount_folds(item.get("discount"))) is not None:
         parts.append(f"{folds} 折")
     return "，".join(parts)
@@ -462,7 +485,8 @@ def conditions_text(conditions: dict[str, Any]) -> str:
     see ``CONDITION_LABELS``.
     """
     return "；".join(
-        f"{CONDITION_LABELS.get(key, key)}={value}"
+        f"{CONDITION_LABELS.get(key, key)}="
+        f"{CONDITION_VALUE_LABELS.get(key, {}).get(str(value), value)}"
         for key, value in (conditions or {}).items()
         if key not in UNPRINTED_CONDITIONS
     )
@@ -601,12 +625,20 @@ def model_title(model: dict[str, Any]) -> str:
 
 def model_change_title(model: dict[str, Any]) -> str:
     """Show all causes of a model's change rather than its listing state."""
-    labels = "".join(
-        f"【{label}】"
-        for kind, label in MODEL_CHANGE_LABELS.items()
-        if kind in model["change_kinds"]
-    )
-    return f"{labels}{model_title(model)}"
+    labels = []
+    for kind, label in MODEL_CHANGE_LABELS.items():
+        if kind not in model["change_kinds"]:
+            continue
+        if kind == PRICE_CHANGE_FIELD and model.get("aggregated_pricing"):
+            causes = dict.fromkeys(
+                cause
+                for move in model["changes"].get(PRICE_CHANGE_FIELD) or []
+                for cause in move.get("causes") or [move.get("cause", "catalog_price_fluctuation")]
+            )
+            labels.extend(PRICE_CAUSE_LABELS.get(cause, cause) for cause in causes)
+        else:
+            labels.append(label)
+    return f"{''.join(f'【{label}】' for label in dict.fromkeys(labels))}{model_title(model)}"
 
 
 def model_offer_changes_text(model: dict[str, Any]) -> str:
@@ -695,15 +727,107 @@ def price_change_batch(report: dict[str, Any]) -> dict[str, Any] | None:
     url = report.get("catalog_url") or (report.get("source") or {}).get("url") or ""
     if len(models) < 2 or not url.startswith("https://"):
         return None
-    return {"model_ids": list(models.values()), "change_count": len(moves), "url": url}
+    return {
+        "model_ids": list(models.values()), "change_count": len(moves), "url": url,
+        "aggregated_pricing": bool(report.get("aggregated_pricing")),
+        "moves": moves,
+    }
 
 
 def price_batch_text(batch: dict[str, Any]) -> str:
     """Name every affected model and leave the official details URL at line end."""
+    if batch.get("aggregated_pricing"):
+        facts: dict[str, set[str]] = {}
+        for move in batch["moves"]:
+            facts.setdefault(price_change_attribution_text(move), set()).add(
+                normalize_model(move["model_id"])
+            )
+        attributions = "、".join(
+            f"{fact}（涉及 {len(models)} 个模型）" for fact, models in facts.items()
+        )
+        adjustments = [
+            move for move in batch["moves"]
+            if "price_adjustment" in (move.get("causes") or [move.get("cause")])
+        ]
+        adjusted_ids = list(dict.fromkeys(move["model_id"] for move in adjustments))
+        verified = (
+            f"其中【价格调整】（已核实同一主供应商的 {len(adjustments)} 项未折价变化）："
+            f"{'、'.join(adjusted_ids)}；"
+            if adjustments else ""
+        )
+        return (
+            f"【目录价波动】（{len(batch['model_ids'])} 个模型，{batch['change_count']} 项目录价变化）："
+            f"{'、'.join(batch['model_ids'])}；{verified}归因：{attributions}；"
+            f"{AGGREGATED_PRICE_NOTE}；详情查看该渠道官方页面：{batch['url']}"
+        )
     return (
         f"【价格调整】（{len(batch['model_ids'])} 个模型，{batch['change_count']} 项标准价格变化）："
         f"{'、'.join(batch['model_ids'])}；详情查看该渠道官方页面：{batch['url']}"
     )
+
+
+def price_change_field_label(report: dict[str, Any]) -> str:
+    """Catalogue fluctuations are a distinct measure from standing price moves."""
+    return (
+        "目录价变化" if report.get("aggregated_pricing")
+        else CHANGE_FIELD_LABELS[PRICE_CHANGE_FIELD]
+    )
+
+
+def aggregated_price_note(report: dict[str, Any]) -> str:
+    """State the scope once even when one model's rates remain detailed."""
+    return AGGREGATED_PRICE_NOTE if report.get("aggregated_pricing") else ""
+
+
+def price_change_attribution_text(
+    change: dict[str, Any], *, detailed: bool = False
+) -> str:
+    """Read endpoint evidence without calling a reseller's rate an author's price."""
+    if not change.get("cause"):
+        return ""
+    causes = change.get("causes") or [change["cause"]]
+    parts = ["/".join(PRICE_CAUSE_LABELS.get(cause, cause) for cause in causes)]
+    if provider := change.get("provider_name"):
+        parts.append(f"托管方 {provider}")
+    discount = change.get("endpoint_discount")
+    if discount is not None:
+        try:
+            reduction = Decimal(str(discount))
+        except (InvalidOperation, ValueError):
+            reduction = None
+        if reduction is not None and reduction.is_finite() and 0 <= reduction <= 1:
+            parts.append(f"减价 {format((reduction * 100).normalize(), 'f')}%")
+    evidence = change.get("pricing_attribution") or {}
+    reference = evidence.get("reference_provider_name")
+    if evidence.get("reference_unchanged") is True:
+        parts.append(f"主供应商 {reference} 的未折价未变")
+    elif evidence.get("reference_unchanged") is False:
+        text = f"主供应商 {reference} 的未折价变动（相对上次端点观察）"
+        if detailed:
+            before, after = evidence["reference_from"], evidence["reference_to"]
+            text += (
+                f"：{amount_with_unit(before['list_amount'], before['unit'])}"
+                f" → {amount_with_unit(after['list_amount'], after['unit'])}（按折扣还原）"
+            )
+        parts.append(text)
+    elif evidence.get("reference_status") == "unavailable":
+        parts.append(f"主供应商 {reference} 当前不可用，保留参照")
+    elif reference and evidence.get("reference_status") == "not_found":
+        parts.append(f"主供应商 {reference} 本次未找到，保留参照")
+    elif evidence.get("reference_from") is None:
+        parts.append("主供应商参照尚无可比的历史证据")
+    elif reference:
+        parts.append(f"主供应商 {reference} 的未折价未能核实")
+    status = evidence.get("status")
+    if status == "source_error":
+        parts.append("托管方归因读取失败（详细错误见 JSON）")
+    elif status == "ambiguous":
+        parts.append("多条端点同价，未认定所选托管方")
+    elif status == "not_found":
+        parts.append("未找到完整费率匹配的可用端点")
+    elif status == "not_checked":
+        parts.append("本计费档未作端点归因")
+    return "；".join(parts)
 
 
 def model_availability(report: dict[str, Any], model_id: str) -> str:
@@ -842,7 +966,7 @@ def change_digest(report: dict[str, Any]) -> str:
     if status == CHANGED:
         changes = report.get("changes") or {}
         counts = [
-            f"{CHANGE_FIELD_LABELS[field]} {len(changes.get(field) or [])}"
+            f"{price_change_field_label(report) if field == PRICE_CHANGE_FIELD else CHANGE_FIELD_LABELS[field]} {len(changes.get(field) or [])}"
             for field in CHANGE_FIELDS
             if changes.get(field)
         ]
@@ -888,7 +1012,10 @@ def channel_status(report: dict[str, Any]) -> str:
     """Count partial failures honestly and include notice-only changes."""
     if report["status"] in (EMPTY_SCAN, SOURCE_ERROR):
         return report["status"]
-    independent = [report.get(key) or {} for key in ("lifecycle", "announcements")]
+    independent = [
+        report.get(key) or {}
+        for key in ("lifecycle", "announcements", "pricing_attribution")
+    ]
     if any(item.get("status") == SOURCE_ERROR for item in independent):
         return SOURCE_ERROR
     if any(item.get("changes") or item.get("observations") for item in independent):
@@ -909,6 +1036,7 @@ def all_unchanged(payload: dict[str, Any]) -> bool:
         in (UNCHANGED, "no_public_schedule")
         and (report.get("announcements") or {}).get("status", UNCHANGED)
         in (UNCHANGED, "catalogue_only", "no_announcements")
+        and (report.get("pricing_attribution") or {}).get("status") != SOURCE_ERROR
         for report in reports
     )
 

@@ -18,6 +18,7 @@ from ..deepseek_updates import (
 )
 from ..errors import SourceError
 from ..models import normalize_model
+from ..mistral_catalogue import MISTRAL_MODELS_URL, model_url, read_catalogue
 from ..parsing import headed_document_tables, markdown_tables
 from ..providers.aliyun import (
     ALIYUN_MODELS_URL,
@@ -290,6 +291,54 @@ class XAIDescriptionSource(MarkdownDetailSource):
     url_for = staticmethod(
         lambda model: f"https://docs.x.ai/developers/models/{normalize_model(model)}.md"
     )
+
+
+class MistralDescriptionSource(DescriptionSource):
+    """Use this host's own literal API identifiers and publicly published prose."""
+
+    source_id = "mistral"
+    source_name = "Mistral AI"
+    source_url = MISTRAL_MODELS_URL
+    source_kind = "official_html"
+
+    def describe(
+        self,
+        model_id: str,
+        display_name: str = "",
+        *,
+        record: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        entry = read_catalogue(self.client).for_api(model_id)
+        if entry is None or not entry.get("description"):
+            return None
+        if set(entry.get("field_errors") or {}) & {
+            "capabilities", "contextLength", "outputTokenLimit", "releaseDate",
+        }:
+            raise SourceError("Mistral's model introduction published unreadable properties")
+        capabilities = entry.get("capabilities") or {}
+        specifications = {
+            target: entry[key]
+            for key, target in (
+                ("contextLength", "context_window"),
+                ("outputTokenLimit", "output_token_limit"),
+                ("releaseDate", "released_at"),
+            )
+            if entry.get(key)
+        }
+        for direction in ("input", "output"):
+            modalities = capabilities.get(direction) or []
+            if modalities:
+                specifications[f"{direction}_modalities"] = ", ".join(modalities)
+        return description_record(
+            model_id, entry["name"], entry["description"], model_url(entry),
+            self.source_kind, source_name=self.source_name,
+            capabilities=capabilities.get("features") or [],
+            lifecycle={
+                "GA": ACTIVE, "PublicPreview": "preview", "Labs": "preview",
+                "Deprecated": LEGACY, "Retired": "retired",
+            }.get(entry.get("status"), UNKNOWN),
+            specifications=specifications,
+        )
 
 
 class MarkdownTableDescriptionSource(DescriptionSource):
@@ -923,6 +972,7 @@ DESCRIPTION_SOURCE_CLASSES = (
     AnthropicDescriptionSource,
     GeminiDescriptionSource,
     XAIDescriptionSource,
+    MistralDescriptionSource,
     DeepSeekDescriptionSource,
     KimiDescriptionSource,
     ZhipuDescriptionSource,

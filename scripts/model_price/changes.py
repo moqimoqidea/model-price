@@ -44,6 +44,7 @@ def changed_model_groups(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "changes": {},
                 "lifecycle_changes": [],
                 "announcement_changes": [],
+                "aggregated_pricing": bool(report.get("aggregated_pricing")),
             },
         )
         if kind not in model["change_kinds"]:

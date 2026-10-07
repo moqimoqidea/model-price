@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .pricing import PRICE_TERM_FIELDS
+from .price_attribution import price_attribution
+from .pricing import billed_amount, price_amount_line
 from .snapshots import offer_identity, price_identity
 
 # What one scan can conclude about one provider.
@@ -41,7 +42,8 @@ def compare_snapshots(
         empty_changes()
         if previous is None
         else model_changes(
-            previous.get("models", {}), current.get("models", {})
+            previous.get("models", {}), current.get("models", {}),
+            aggregated_pricing=bool(current.get("aggregated_pricing")),
         )
     )
     status = UNCHANGED
@@ -49,7 +51,7 @@ def compare_snapshots(
         status = no_baseline_status
     elif changes["total"]:
         status = CHANGED
-    return {
+    report = {
         "provider": current["provider"],
         "status": status,
         "baseline_at": previous.get("captured_at") if previous else None,
@@ -58,6 +60,9 @@ def compare_snapshots(
         "model_count": len(current.get("models", {})),
         "changes": changes,
     }
+    if current.get("aggregated_pricing"):
+        report["aggregated_pricing"] = True
+    return report
 
 
 def empty_changes() -> dict[str, Any]:
@@ -65,7 +70,7 @@ def empty_changes() -> dict[str, Any]:
 
 
 def model_changes(
-    before: dict[str, Any], after: dict[str, Any]
+    before: dict[str, Any], after: dict[str, Any], *, aggregated_pricing: bool = False
 ) -> dict[str, Any]:
     """Diff two snapshots' model tables.
 
@@ -79,13 +84,16 @@ def model_changes(
     for key in sorted(set(before) - set(after)):
         changes["models_removed"].append(before[key])
     for key in sorted(set(before) & set(after)):
-        offer_changes(before[key], after[key], changes)
+        offer_changes(
+            before[key], after[key], changes, aggregated_pricing=aggregated_pricing,
+        )
     changes["total"] = sum(len(changes[field]) for field in CHANGE_FIELDS)
     return changes
 
 
 def offer_changes(
-    before: dict[str, Any], after: dict[str, Any], changes: dict[str, Any]
+    before: dict[str, Any], after: dict[str, Any], changes: dict[str, Any],
+    *, aggregated_pricing: bool = False,
 ) -> None:
     """Diff one model's offers, then the prices inside the offers both scans have."""
     model = _model_brief(after)
@@ -101,7 +109,8 @@ def offer_changes(
         )
     for key in sorted(set(before_offers) & set(after_offers)):
         price_changes(
-            model, before_offers[key], after_offers[key], changes["price_changes"]
+            model, before_offers[key], after_offers[key], changes["price_changes"],
+            aggregated_pricing=aggregated_pricing,
         )
 
 
@@ -110,6 +119,7 @@ def price_changes(
     before: dict[str, Any],
     after: dict[str, Any],
     changes: list[dict[str, Any]],
+    *, aggregated_pricing: bool = False,
 ) -> None:
     """Record a price's appearance, disappearance, or new amount.
 
@@ -134,7 +144,8 @@ def price_changes(
                 **shared,
                 **_price_brief(after_prices[key]),
                 "from": None,
-                "to": _amount_line(after_prices[key]),
+                "to": price_amount_line(after_prices[key]),
+                **price_attribution(before, after, key, aggregated_pricing),
             }
         )
     for key in sorted(set(before_prices) - set(after_prices)):
@@ -142,35 +153,23 @@ def price_changes(
             {
                 **shared,
                 **_price_brief(before_prices[key]),
-                "from": _amount_line(before_prices[key]),
+                "from": price_amount_line(before_prices[key]),
                 "to": None,
+                **price_attribution(before, after, key, aggregated_pricing),
             }
         )
     for key in sorted(set(before_prices) & set(after_prices)):
         was, now = before_prices[key], after_prices[key]
-        if _amount(was) != _amount(now):
+        if billed_amount(was) != billed_amount(now):
             changes.append(
                 {
                     **shared,
                     **_price_brief(now),
-                    "from": _amount_line(was),
-                    "to": _amount_line(now),
+                    "from": price_amount_line(was),
+                    "to": price_amount_line(now),
+                    **price_attribution(before, after, key, aggregated_pricing),
                 }
             )
-
-
-def _amount(price: dict[str, Any]) -> dict[str, Any]:
-    """The billed number, which is what a price is compared by."""
-    return {"amount": price.get("amount"), "unit": price.get("unit")}
-
-
-def _amount_line(price: dict[str, Any]) -> dict[str, Any]:
-    """The billed number plus the terms it is published under, as the reader sees it."""
-    line = _amount(price)
-    line.update(
-        {field: price[field] for field in PRICE_TERM_FIELDS if price.get(field) is not None}
-    )
-    return line
 
 
 def _price_brief(price: dict[str, Any]) -> dict[str, Any]:
@@ -192,8 +191,11 @@ def _model_brief(model: dict[str, Any]) -> dict[str, Any]:
 
 
 def _offer_brief(offer: dict[str, Any]) -> dict[str, Any]:
-    return {
+    brief = {
         "name": offer.get("name", ""),
         "conditions": dict(offer.get("conditions") or {}),
         "prices": list(offer.get("prices") or []),
     }
+    if attribution := offer.get("pricing_attribution"):
+        brief["pricing_attribution"] = attribution
+    return brief

@@ -27,7 +27,8 @@ RELEASE_WORDS = re.compile(
     re.I,
 )
 ACCESS_WORDS = re.compile(
-    r"availab|access|rolling out|rollout|开源|开放|公测|内测|灰度|体验|即可使用",
+    r"availab|access|rolling out|rollout|public preview|"
+    r"\byou can try (?:the )?(?:preview )?API\b|开源|开放|公测|内测|灰度|体验|即可使用",
     re.I,
 )
 PENDING_WORDS = re.compile(
@@ -47,6 +48,7 @@ PUBLIC_WORDS = re.compile(
     r"generally available|publicly available|available (?:today|now|to all|via|on)|now available|"
     r"(?:is|are) (?:now |currently )?available(?:\s|[,.])|"
     r"available to [^.!?]*\b(?:users|developers|subscribers)\b|"
+    r"\byou can try (?:the )?(?:preview )?API\b|"
     r"public preview|公开(?:开放|公测)|正式上线|上线公测|即可使用",
     re.I,
 )
@@ -333,7 +335,7 @@ def _model_mentions(text: str, name: str) -> list[tuple[int, int]]:
             + r"[-_\s\u2010\u2011]+".join(
                 re.escape(part) for part in re.split(r"[-\u2010\u2011]", candidate)
             )
-            + r"(?![\w.]|[-_\u2010\u2011]\w)",
+            + r"(?!\w|\.\w|[-_\u2010\u2011]\w)",
             text,
             re.I,
         )

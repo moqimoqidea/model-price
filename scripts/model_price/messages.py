@@ -53,6 +53,7 @@ from .reporting import (
     announcement_catalogue_text,
     announcement_digest,
     announcement_price_text,
+    aggregated_price_note,
     baseline_selection_text,
     channel_status,
     change_digest,
@@ -77,6 +78,8 @@ from .reporting import (
     price_movement,
     price_batch_text,
     price_change_batch,
+    price_change_field_label,
+    price_change_attribution_text,
     pricing_state_text,
     provider_name,
     scan_conclusion,
@@ -467,6 +470,14 @@ def channel_conclusion(payload: dict[str, Any]) -> list[str]:
         and report["status"] not in (EMPTY_SCAN, SOURCE_ERROR)
     )
     for report in reports:
+        attribution = report.get("pricing_attribution") or {}
+        if attribution.get("status") == SOURCE_ERROR:
+            lines.append(
+                sentence_text(
+                    f"{report['provider']['name']} 价格归因：读取失败；"
+                    f"{attribution.get('error') or UNSTATED}；目录价格已保留"
+                )
+            )
         lifecycle = report.get("lifecycle") or {}
         status = lifecycle.get("status")
         if status == SOURCE_ERROR:
@@ -683,7 +694,7 @@ def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
     displayed[PRICE_CHANGE_FIELD] = [] if batch else moves
     details.extend(
         group(
-            f"{CHANGE_FIELD_LABELS[PRICE_CHANGE_FIELD]}（{len(moves)}）",
+            f"{price_change_field_label(report)}（{len(moves)}）",
             (
                 [bullet(price_batch_text(batch), ITEM)]
                 if batch
@@ -691,6 +702,8 @@ def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
             ),
         )
     )
+    if moves and not batch and (note_text := aggregated_price_note(report)):
+        details.extend(price_note_lines({"pricing_notes": [note_text]}))
     details.extend(price_note_lines({"pricing_notes": changed_notes(displayed)}))
     return entry(position, report["provider"]["name"], details) if details else []
 
@@ -711,7 +724,9 @@ def price_change_text(change: dict[str, Any]) -> str:
     model = model_title(change)
     condition = offering_text(change.get("offer", ""), change.get("conditions", {}))
     label = change.get("label") or change.get("type", "")
-    return sentence_text(f"{model}：{condition}；{label} {price_movement(change)}")
+    attribution = price_change_attribution_text(change, detailed=True)
+    detail = f"；{attribution}" if attribution else ""
+    return sentence_text(f"{model}：{condition}；{label} {price_movement(change)}{detail}")
 
 
 def failed_text(report: dict[str, Any]) -> str:

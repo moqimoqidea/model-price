@@ -22,6 +22,7 @@ OVERSEAS_NAME_PATTERNS = (
     ("anthropic", r"(?:^|-)(?:anthropic|claude)(?:-|$)"),
     ("google", r"(?:^|-)(?:google|gemini|gemma|veo|lyria|imagen)(?:-|$)"),
     ("xai", r"(?:^|-)(?:xai|grok)(?:-|$)"),
+    ("mistral", r"(?:^|-)(?:mistral|ministral|mixtral|magistral|pixtral|codestral|devstral|voxtral|leanstral|shieldstral)(?:-|$)"),
 )
 
 

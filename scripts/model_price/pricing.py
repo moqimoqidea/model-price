@@ -128,7 +128,7 @@ UNIT_MEASURES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "million_characters",
-        ("百万字符", "1mcharacter", "1mcharacters", "1mchar", "1mchars"),
+        ("百万字符", "1mcharacter", "1mcharacters", "1mchar", "1mchars", "/mchar", "/mchars"),
     ),
     ("10k_characters", ("万字符", "10kcharacter", "10kcharacters")),
     ("thousand_characters", ("千字符", "1kcharacter", "1kcharacters")),
@@ -176,6 +176,7 @@ UNIT_MEASURES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("video", ("/视频", "/video", "/videos")),
     ("item", ("/个", "/item", "/items")),
     ("song", ("/首", "/song", "/songs")),
+    ("thousand_pages", ("/1000页", "/千页", "/1000page", "/1000pages", "/1kpage", "/1kpages")),
     ("page", ("/页", "/page", "/pages")),
 )
 
@@ -305,6 +306,25 @@ def price_sort_key(price: dict[str, Any]) -> tuple[int, int, str, str]:
 # They sit apart from an offer's ``conditions``, which say how a charge is billed
 # rather than what one amount is against another.
 PRICE_TERM_FIELDS = ("list_amount", "discount", "effective_until")
+PRICE_ATTRIBUTION_FIELDS = ("provider_name", "provider_tag", "list_amount_basis")
+
+
+def billed_amount(price: dict[str, Any]) -> tuple[Any, Any]:
+    """Only a billed amount and its unit establish a catalogue price movement."""
+    return price.get("amount"), price.get("unit")
+
+
+def price_amount_line(price: dict[str, Any]) -> dict[str, Any]:
+    """Keep one billed amount and its evidence together on both sides of a delta."""
+    return {
+        "amount": price.get("amount"), "unit": price.get("unit"),
+        **{
+            field: price[field]
+            for field in (*PRICE_TERM_FIELDS, *PRICE_ATTRIBUTION_FIELDS)
+            if price.get(field) is not None
+        },
+    }
+
 
 # What a vendor writes when it prints a reduction as a 折 rather than as a rate.
 # Chinese counts these in tenths and writes a decimal one either way: 7.5折 and

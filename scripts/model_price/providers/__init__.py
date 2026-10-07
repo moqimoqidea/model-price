@@ -14,6 +14,7 @@ from .google_cloud import GoogleCloudAdapter
 from .kimi import KimiAdapter
 from .kling import KlingAdapter
 from .minimax import MiniMaxAdapter
+from .mistral import MistralAdapter
 from .openai import OpenAIAdapter
 from .openrouter import OpenRouterAdapter
 from .tencent import TencentAdapter
@@ -46,6 +47,7 @@ OVERSEAS_PROVIDERS = (
     AnthropicAdapter,
     GeminiAdapter,
     XAIAdapter,
+    MistralAdapter,
     OpenRouterAdapter,
     GoogleCloudAdapter,
     AWSBedrockAdapter,

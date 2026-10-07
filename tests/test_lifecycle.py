@@ -738,9 +738,10 @@ class AuditScriptTests(unittest.TestCase):
     # Aliyun and OpenRouter each publish a model's retirement date inside the record
     # that prices it, Zhipu reads several pages, DeepSeek reads the dated update log
     # the price stamp and the introductions also read, and Tencent and xAI need a
-    # follow-up fetch before their document can be parsed.
+    # follow-up fetch before their document can be parsed. Mistral shares the
+    # documentation's model-data bundle and reads its independent lifecycle policy.
     ROUTED_BY_READ_EVENTS = frozenset(
-        {"aliyun", "openrouter", "deepseek", "tencent", "xai", "zhipu"}
+        {"aliyun", "openrouter", "deepseek", "tencent", "xai", "zhipu", "mistral"}
     )
 
     def test_every_price_provider_has_a_retirement_reader(self):

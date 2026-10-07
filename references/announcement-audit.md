@@ -63,6 +63,26 @@
 | AWS Bedrock | [AWS What's New](https://aws.amazon.com/about-aws/whats-new/recent/feed/) 有 Bedrock 自己的模型引入公告，托管时间可不同于原厂。 | 按 Bedrock 上下文筛选模型发布；原厂公告不继承为 AWS 上架，区域价格与公告证据保持独立。 |
 | Microsoft Azure Foundry | [GPT-6 Astra 的 Azure 公告](https://azure.microsoft.com/en-us/blog/gpt-6-astra-frontier-intelligence-for-work-now-generally-available-in-microsoft-foundry/) 的正文写 Limited Access Program，即使标题用了 generally available。 | 接入 Azure 自己的新闻 RSS，按正文的实际开放范围报告；WordPress 的重复标题尾注不覆盖正文限制，原厂开放也不代表 Azure 同时开放。 |
 
+## Mistral 接入核查（2026-10-07）
+
+[Mistral 官方新闻](https://mistral.ai/news/mistral-large-4/)于 2026-10-06 发布 Large 4。
+正文分别说明公开预览 API 可在 Studio 尝试、权重将在月底发布，以及限定对象的红队测试；
+公开 API 的状态不因后两项而变成未开放或受限。发布日期读取文章自身的结构化时间。
+网站通用 SEO 文案不充当模型介绍；官方发布段落和模型文档的介绍各保留自己的来源。
+
+[模型目录](https://docs.mistral.ai/models)公布 API ID 与别名，独立于
+[价格页](https://docs.mistral.ai/inference/pricing)的模型展示名称。本次真实扫描收录
+37 个 API 标识；目录中未报价的条目仍然保留，权重研究条目不生成 API ID。
+Large 4 的标准输入、缓存输入、输出当前分别为 $0.68、$0.07、$2.09 / 百万 tokens，
+原价分别为 $1.36、$0.14、$4.18。标准、Batch、Priority 与区域推理保留各自的报价，
+OCR、转录、TTS 保留按千页、分钟、百万字符的单位。新闻里的报价证据不替代当前价目。
+
+[生命周期政策](https://docs.mistral.ai/inference/model-lifecycle)规定退役 ID 的调用返回
+404；具体的弃用、退役日期和替代建议由官方模型数据逐项公布，按退役表 API 列中的
+字面标识限定通知，不把日期扩散到未在退役表中列出的别名。
+不把弃用当成 EOM，不把替代建议当成自动跳转，不把旧代日期转给当前仍使用的别名。
+新闻、价格与退役历史分别归档；一处失败保留其他可读证据和既有成功基线。
+
 ## 代码行为与验证
 
 实现放在独立的 `announcements` 子系统：公开来源负责发现和读取，解析层负责模型主体、

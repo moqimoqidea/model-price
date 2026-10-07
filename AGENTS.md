@@ -18,7 +18,7 @@ This file deliberately does not restate the other documents.
 
 A single-skill repository whose root **is** the skill directory. It queries public,
 credential-free model catalogues, introductions, capabilities, specifications, and
-official price documents across 19 providers. Its two output modes are a model and
+official price documents across 20 providers. Its two output modes are a model and
 cross-provider comparison, and a whole-catalogue scan that reports launches,
 withdrawals, billing changes, and price moves since the previous scan or a
 retained historical baseline.
@@ -56,9 +56,11 @@ Standard library only, Python 3, no install step, no build step.
 │       ├── updating.py          Git fast-forward before an explicit refresh
 │       ├── snapshots.py         archived baselines, retention, and point-in-time selection
 │       ├── diffing.py           what moved between two baselines
+│       ├── price_attribution.py optional evidence of supplier rates, discounts, and routes
 │       ├── changes.py           every change cause grouped by channel and literal model ID
 │       ├── delta.py             the scan-every-catalogue run
 │       ├── deepseek_updates.py  DeepSeek's official update log, read once for every date consumer
+│       ├── mistral_catalogue.py Mistral's public model data, shared by identity, introductions, and notices
 │       ├── lifecycle_sources.py official retirement notice readers
 │       ├── lifecycle.py         independent notice history and milestone changes
 │       ├── announcements/       official publication, access, and quoted-rate history
@@ -142,6 +144,12 @@ facts. Single-model movements, new listings, and new/removed standard offers sta
 detailed. Full introductions remain in JSON; full prices remain in JSON and
 snapshots. These presentation choices are made before measuring length, never
 to meet a budget.
+
+An adapter's `aggregated_pricing` policy changes those items to catalogue-price
+fluctuations with endpoint attribution, without changing the batch threshold.
+Optional supplier evidence lives outside offer conditions and price identity. It
+can explain a movement, but only a billed amount/unit change creates one. A pinned
+endpoint reference never becomes a different provider merely because a route moved.
 
 - **The introduction limit** (300 characters) lives at `descriptions.core`: a
   vendor summary longer than that is kept whole and marked
@@ -329,6 +337,7 @@ even when the tests still pass.
 | A cell that publishes several rates reads wrongly | `parsing.cell_rates` and the rules it is built from |
 | Add a model-introduction source | `descriptions/sources.py` and `DESCRIPTION_SOURCE_CLASSES`; routing in `descriptions/resolver.py` |
 | Change how one value reads | `reporting.py` |
+| Change price-movement attribution | `price_attribution.py`; vendor endpoint reads stay in `providers/` |
 | Change how catalogue and notice changes are grouped by model | `changes.py`; keep labels in `reporting.py` |
 | Change how a message is laid out | `messages.py` |
 | Change which blocks a density keeps, or what opens a message | the section list in `messages.py` (`comparison_sections` / `scan_sections`) |

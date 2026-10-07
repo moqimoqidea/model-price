@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 from .deepseek_updates import DEEPSEEK_UPDATES_URL, UpdateEntry, read_updates
 from .errors import SourceError
 from .models import normalize_model
+from .mistral_catalogue import MISTRAL_LIFECYCLE_URL, MISTRAL_MODELS_URL, model_url, read_catalogue
 from .providers.ant_ling import ANT_LING_DEPRECATION_URL
 from .providers.azure import AZURE_MODEL_RETIREMENTS_URL
 from .providers.google_cloud import GOOGLE_CLOUD_MODEL_VERSIONS_URL
@@ -45,6 +46,7 @@ SOURCES = {
     "anthropic": "https://platform.claude.com/docs/en/about-claude/model-deprecations.md",
     "google": "https://ai.google.dev/gemini-api/docs/deprecations",
     "xai": "https://docs.x.ai/llms.txt",
+    "mistral": MISTRAL_MODELS_URL,
     "zhipu": "https://docs.bigmodel.cn/cn/guide/models/free/glm-4.5-flash.md",
     "minimax": "https://platform.minimax.io/docs/guides/models-intro.md",
     "google-cloud": GOOGLE_CLOUD_MODEL_VERSIONS_URL,
@@ -921,6 +923,60 @@ def deepseek_events(entries: list[UpdateEntry]) -> list[LifecycleEvent]:
     return []
 
 
+def mistral_events(client: Any) -> list[LifecycleEvent]:
+    """Read per-model dates, while the policy alone defines old-ID behavior."""
+    policy = client.get_text(MISTRAL_LIFECYCLE_URL)
+    if not re.search(r"retired[^.]*requests[^.]*404", clean_text(policy), re.I):
+        raise SourceError("Mistral lifecycle policy did not establish retired API behavior")
+    catalogue = read_catalogue(client)
+    if not catalogue.retirement_ids:
+        raise SourceError("Mistral's retirement schedule published no readable API identifiers")
+    all_ids = {
+        normalize_model(name)
+        for entry in catalogue.entries
+        for name in entry["identifiers"]["apiNames"]
+    }
+    if catalogue.retirement_ids - all_ids:
+        raise SourceError("Mistral's retirement schedule and model data have inconsistent API identifiers")
+    current_ids = {
+        normalize_model(name)
+        for entry in catalogue.current_entries()
+        for name in entry["identifiers"]["apiNames"]
+    }
+    found = []
+    for entry in catalogue.entries:
+        if entry.get("status") not in ("Deprecated", "Retired"):
+            continue
+        notice_ids = [
+            name for name in entry["identifiers"]["apiNames"]
+            if normalize_model(name) in catalogue.retirement_ids
+        ]
+        if not notice_ids:
+            continue
+        if "metadata" in (entry.get("field_errors") or {}):
+            raise SourceError("Mistral retirement metadata could not be decoded: " + entry["name"])
+        metadata = entry.get("metadata") or {}
+        dates: dict[str, str | None] = {}
+        for key, field in (("deprecationDate", "announced_at"), ("retirementDate", "eos_at")):
+            value = metadata.get(key)
+            dates[field] = date_value(value) if isinstance(value, str) else None
+            if value and dates[field] is None:
+                raise SourceError("Mistral model published an unreadable lifecycle date: " + entry["name"])
+        for model_id in notice_ids:
+            # The same public alias can now point at a current generation. An
+            # older revision's dates do not retire that currently assigned ID.
+            if normalize_model(model_id) in current_ids:
+                continue
+            found.append(event(
+                model_id, model_url(entry), **dates,
+                replacement=metadata.get("replacement") or None,
+                end_behavior="unavailable",
+                notice_status="retired" if entry["status"] == "Retired" else "scheduled",
+                scope="Mistral Serverless API",
+            ))
+    return found
+
+
 PARSERS: dict[str, Callable[[str], list[LifecycleEvent]]] = {
     "volcengine": volcengine_events,
     "baidu": baidu_events,
@@ -954,6 +1010,11 @@ def read_events(
                 "OpenRouter catalogue published no dated deprecation"
             )
         return OPENROUTER_MODELS_URL, found
+    if provider_id == "mistral":
+        found = mistral_events(client)
+        if not found:
+            raise SourceError("Mistral model directory published no retirement notices")
+        return MISTRAL_MODELS_URL, found
     url = SOURCES.get(provider_id)
     if not url:
         return None, []

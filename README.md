@@ -17,16 +17,22 @@
 
 | 默认查询（国内） | 仅在明确提到时查询（海外） |
 | --- | --- |
-| 阿里云百炼、火山引擎方舟、腾讯云 TokenHub、百度智能云千帆、DeepSeek 原厂、月之暗面 Kimi、智谱 BigModel、MiniMax 原厂、小米 MiMo、快手可灵、蚂蚁大模型 | OpenAI、Anthropic、Google Gemini、xAI、OpenRouter、Google Cloud Vertex AI、AWS Bedrock、Microsoft Azure Foundry |
+| 阿里云百炼、火山引擎方舟、腾讯云 TokenHub、百度智能云千帆、DeepSeek 原厂、月之暗面 Kimi、智谱 BigModel、MiniMax 原厂、小米 MiMo、快手可灵、蚂蚁大模型 | OpenAI、Anthropic、Google Gemini、xAI、Mistral AI、OpenRouter、Google Cloud Vertex AI、AWS Bedrock、Microsoft Azure Foundry |
 
 蚂蚁大模型的渠道 id 为 `ant-ling`，读取官方人民币价目与下架文档，保留限时优惠价、
 原价和优惠原文。同页的第三方平台报价归属各自渠道。当前未登记蚂蚁模型介绍与独立
 发布来源，分别如实标记 `not_found` 和 `catalogue_only`。
 
-海外渠道又分两类：**模型原厂**（OpenAI、Anthropic、Google Gemini、xAI）按模型名推断，
+海外渠道又分两类：**模型原厂**（OpenAI、Anthropic、Google Gemini、xAI、Mistral AI）按模型名推断，
 **聚合与云渠道**（OpenRouter、Google Cloud Vertex AI、AWS Bedrock、Microsoft Azure Foundry）
 转售别家的模型，模型名说明不了它由谁承载，所以只在 `--include-overseas` 或显式 `--provider`
 时查询——AWS 一次扫描要读两份公开价目（约 25 MB），无人指名时不该发生。
+
+Mistral 的渠道 id 为 `mistral`，接入官方模型目录、价格、模型介绍、退役日期与新闻。
+保留官方公布的 API ID 和别名，以及标准、Batch、Priority 和区域推理各档报价；促销价
+与原价分别记录。OCR 按千页、转录按分钟、TTS 按百万字符收费，目录中未报价的 API
+保持未定价。Mistral 托管的第三方模型使用该渠道自己的价格和介绍。新闻中的公开预览
+API、将来发布的权重和受限测试对象分别按原文判断。
 
 AWS 与 Azure 按区域定价，一个模型能有三十到四十个区的报价，而其中多数的金额完全相同。
 这两家默认只读**美国第一个区**（AWS `us-east-1`、Azure `us-east`），并在记录里写明读的是
@@ -96,9 +102,11 @@ python3 scripts/query_model_prices.py compare MODEL --exact             # 只认
 python3 scripts/query_model_prices.py compare MODEL --include-overseas  # 含海外渠道
 python3 scripts/query_model_prices.py provider PROVIDER MODEL           # 单渠道查询
 python3 scripts/query_model_prices.py provider ant-ling Ling-3.0-flash  # 蚂蚁大模型
+python3 scripts/query_model_prices.py provider mistral mistral-large-4 # Mistral 官方 API
 python3 scripts/query_model_prices.py list PROVIDER --prefix PREFIX     # 列模型 id
 python3 scripts/query_model_prices.py delta --format message            # 全量扫描并与上次对比
-python3 scripts/query_model_prices.py delta --include-overseas          # 全部 19 渠道，含 Google 官方博客
+python3 scripts/query_model_prices.py delta --include-overseas          # 全部 20 渠道，含海外官方新闻
+python3 scripts/query_model_prices.py delta --provider mistral         # Mistral 目录、价格、退役与新闻变化
 python3 scripts/query_model_prices.py delta --since yesterday           # 与昨天最后一份基线对比
 python3 scripts/query_model_prices.py delta --since yesterday-first --timezone Asia/Shanghai --include-overseas  # 北京时间昨天最早一份，含海外
 python3 scripts/query_model_prices.py delta --since last-month          # 与上个月最后一份基线对比
@@ -226,10 +234,26 @@ dry-run 判断标准、收件人核对和字符上限，其他文档不再复制
 **多个模型调价时，两栏都合并成一条。** 同一渠道至少两个不同在架模型的标准价格发生变化，
 「模型能力」和「模型价格」各写一条【价格调整】，列出完整模型 ID、模型数、标准价格变化项数，
 以及该渠道的官方 HTTPS 目录页面；逐项金额和条件请读者到该页面查看。
-这适用于 OpenRouter 等所有渠道，且不取决于消息是否超长。只有价格变化的模型不重复介绍；
+聚合渠道保留同样的合并规则，但写为【目录价波动】和“目录价变化”，不当作原厂标准价调整；
+条目附托管方、折扣和归因；其中经核实的同一主供应商未折价变化仍明确标【价格调整】。
+合并不取决于消息是否超长。只有价格变化的模型不重复介绍；
 同时发生模式增删、替代模型更新或公告变化的模型仍单独说明这些事实。
 新上架模型、标准模式增删的价格以及单模型多档调价继续详细展示。
 JSON 和历史基线仍保留完整金额与条件，不能为了简短修改原始数据。
+
+**OpenRouter 用固定托管端点判定调价。** 模型目录价仍完整记录；只有价格发生变化的模型
+才额外读一次匿名端点接口，不会逐个读取整个目录。首次能唯一匹配全部目录费率的可用端点
+被固定为主供应商参照，后续不因其他托管方更便宜而换参照。对同一参照的未折价变化才标
+【价格调整】；折扣变化和所选托管方切换分别标【促销/折扣变动】、【路由/托管方切换】。
+这仍是 OpenRouter 托管方的报价，不能据此认定模型原厂调价。
+
+OpenRouter 的 `discount=0.55` 表示减价 55%，记录到共享价格字段时转换为付款比例 `0.45`
+（4.5 折）；端点未折价按其官方折扣公式还原，并明确标注计算来源。JSON 和快照同时保留
+原始端点价格、折扣、托管方、状态及观察时间。相同价格匹配多个端点、未找到可用端点、
+端点读取失败或旧基线没有端点证据时，变化保持为目录价波动，不猜测原因或重写历史。
+主供应商消失或不可用时保留原参照。未变化的扫描保留上次观察时间，不声称重新核实过端点。
+主供应商的变化相对上次端点观察判断，不推定精确调价日；目录价未动时不会额外监测端点调价。
+详细边界见 [source-notes.md](references/source-notes.md#vendors-whose-prices-are-not-in-a-table)。
 
 **官方公布与 API 上架分开监控。** 模型可能先在博客、研究公告或能力文档公布，过一段时间
 才进入价格目录。`delta` 现在独立读取这些来源；即使价格目录没有变化，新公布的模型也会

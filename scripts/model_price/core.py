@@ -482,6 +482,7 @@ class PriceSource(ABC):
     source_url: str
     source_kind: str
     catalog_url: str | None = None
+    aggregated_pricing: bool = False
 
     def __init__(self, client: HttpClient) -> None:
         self.client = client
@@ -514,6 +515,18 @@ class PriceSource(ABC):
             for record in self.query(model):
                 records.setdefault(normalize_model(record["model_id"]), record)
         return [records[key] for key in sorted(records)]
+
+    def enrich_snapshot(
+        self,
+        current: dict[str, Any],
+        previous: dict[str, Any] | None,
+        latest: dict[str, Any] | None,
+    ) -> None:
+        """Attach optional price evidence after a fresh catalogue was compared.
+
+        Ordinary catalogues need no extra reads. Aggregators can inspect only
+        changed models here, preserving billed amounts and offer identities.
+        """
 
     def search(self, model: str, *, exact: bool = False) -> list[dict[str, Any]]:
         """Return records for a model, expanding to its family unless ``exact``."""
