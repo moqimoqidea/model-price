@@ -954,7 +954,7 @@ class TencentMirrorDescriptionSource(DescriptionSource):
         )
         if not item:
             return None
-        return description_record(
+        result = description_record(
             model_id,
             item.get("display_name") or display_name or model_id,
             item.get("summary", ""),
@@ -965,6 +965,9 @@ class TencentMirrorDescriptionSource(DescriptionSource):
             lifecycle=item.get("lifecycle") or UNKNOWN,
             specifications=item.get("specifications") or {},
         )
+        if "console_metadata" in item:
+            result["console_metadata"] = item["console_metadata"]
+        return result
 
 
 DESCRIPTION_SOURCE_CLASSES = (

@@ -19,12 +19,12 @@ from model_price.providers.tencent import TencentAdapter
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="validate and normalize a TokenHub model-square JSON capture"
+        description="validate and normalize a TokenHub card or console-metadata JSON capture"
     )
     parser.add_argument(
         "capture",
         type=Path,
-        help="JSON capture produced from the authenticated model square",
+        help="card or complete model-metadata JSON captured from the authenticated model square",
     )
     parser.add_argument("--output", type=Path, default=DEFAULT_TENCENT_MIRROR)
     parser.add_argument(

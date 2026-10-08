@@ -1814,6 +1814,16 @@ class BaiduAdapterTests(unittest.TestCase):
 
 
 class BaiduPromotionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # The fixture's dated promotion must be observed during its own window;
+        # the expiry test overrides this clock with its explicit later date.
+        clock = mock.patch(
+            "model_price.providers.baidu.now_iso",
+            return_value="2026-09-29T00:00:00+08:00",
+        )
+        clock.start()
+        self.addCleanup(clock.stop)
+
     def adapter(self, body=BAIDU_PROMOTED_HTML):
         payload = json.dumps({"result": {"data": {"markdownRemark": {"html": body}}}})
         return BaiduAdapter(

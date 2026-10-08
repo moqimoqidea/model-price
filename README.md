@@ -332,8 +332,13 @@ OpenRouter 说明，同名模型在不同渠道分别保留介绍；不再优先
 
 更新腾讯镜像时，先从已登录的模型广场导出卡片 JSON，再执行
 `python3 scripts/update_tencent_model_mirror.py CAPTURE.json`。脚本会校验必填字段与
-生命周期、合并同一模型的“自部署/原厂直供”重复卡片，并从公开模型目录补齐 API id
-别名；无效或相互冲突的镜像不会被运行时读取。
+生命周期，并从公开模型目录补齐 API id 别名；无效或相互冲突的镜像不会被运行时读取。
+也支持完整的控制台元数据采集：保存 `model_cards`、`catalogue_total`、逐模型的
+`capability_sets` 和可读取的 `generation_configs`，仅包含官方模型资料，不导出账号、
+个人额度或 API key。脚本检查卡片总数和能力采集完整性，按实际 API id 分别保存规格、
+输入输出模态、能力、协议及 API 示例；同名但 id 不同的自部署和原厂直供模型各自保留。
+完整元数据保留在 JSON 的 `console_metadata`，消息只显示规格与能力，不打印示例代码。
+旧格式仍可导入。字段说明见 [JSON schema](references/schema.md#tencent-console-mirror)。
 
 ## 网络读取
 

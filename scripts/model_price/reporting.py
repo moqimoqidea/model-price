@@ -177,6 +177,13 @@ SPECIFICATION_LABELS = {
     "sunset_note": "下线提示",
     "official_direct_available": "提供原厂直供",
     "badge": "标记",
+    "tokens_per_minute": "目录 TPM",
+    "requests_per_minute": "目录 RPM",
+    "concurrency": "默认并发数",
+    "input_constraints": "输入限制",
+    "api_protocols": "调用协议",
+    "offline_at": "官方下线时间",
+    "discontinued_at": "官方停止新增时间",
 }
 
 SKILL_UPDATE_LABELS = {

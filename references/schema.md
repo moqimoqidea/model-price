@@ -26,6 +26,52 @@ or failed introduction never falls back to another channel or the model creator.
 When no price record matches the query, `model_descriptions` still contains an
 honest status entry for the requested name on each queried channel.
 
+## Tencent console mirror
+
+The checked-in Tencent mirror uses `schema_version: 2`; schema-1 mirrors remain
+readable. Every new console record keeps its literal `ModelId`, even when another
+hosting mode has the same `DisplayName`. Explicit compatibility IDs and public
+catalogue aliases may resolve that record; ambiguous names do not transfer its
+specifications to another ID.
+
+Tencent descriptions may additionally contain `console_metadata`:
+
+- `captured_at`: the authenticated mirror capture time, distinct from the current
+  read's `source.retrieved_at`
+- `short_summary`, `model_type`, `model_series`, `provider`, `status`: original
+  console metadata, with null for fields the model does not publish
+- `release_at`, `updated_at`: original official timestamps, including their offsets
+- `model_spec`: the original `ModelSpec` fields and values; readable specifications
+  also expose context/input/output token limits, catalogue TPM/RPM, concurrency,
+  input constraints, modalities, and supported protocols
+- `capabilities[]`: original `CapabilityName`, `DisplayName`, `Description`, and
+  `CapabilityValue`; explicit false values stay here, while only supported
+  capabilities enter the description's positive capability list
+- `api_info`: official API documentation references
+- `charging_info[]`: original console billing evidence, retaining its own units
+  and variants; this is captured evidence, never a replacement for current
+  catalogue `offers[]`
+- `generation_configs[]`: original parameter configurations, with `kind` equal to
+  `image`, `video`, or `console_options`, and the literal `ModelID`. Published
+  fields include `PromptMaxLength`, `ResolutionList`, `ResolutionSpecList`,
+  `SupportInputImageNum`, `SupportOutputImageNum`, and `GenTypeList` with video
+  duration/resolution options. Absence means no configuration was captured for
+  that ID, not that a parameter is unsupported
+
+Readable `specifications.discontinued_at` and `offline_at` preserve separately
+published EOM and EOS timestamps. `discontinued` alone remains legacy; only an
+explicit EOS date crossing marks retirement. Console status is not evidence of
+public access. API examples and nested configurations remain in JSON and are not
+rendered as message specifications.
+
+The maintenance importer accepts legacy `models[]` captures or a complete console
+capture with `model_cards[]`, `catalogue_total`, `capability_sets` keyed by literal
+ID, and optional `generation_configs[]`. Empty/incomplete card or capability
+captures, conflicting IDs/aliases, and credentials/account fields are rejected
+before replacing the mirror.
+
+## Price records
+
 Each result contains:
 
 - `provider`, `model_id`, `display_name`, `model_family`

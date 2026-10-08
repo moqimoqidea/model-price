@@ -253,12 +253,25 @@ than its API. This is runtime report metadata, not part of snapshot identity.
   successful scans. Ordinary responses are not retried solely for parser errors.
 - Tencent model introductions: the model square is authenticated and has no durable
   anonymous description endpoint. The Guangzhou model square was captured through
-  the user's signed-in Chrome session on 2026-09-24. Its first page rendered 100
-  cards; author filters exposed all 114 cards, which collapse into 112 model-level
-  introductions in `descriptions/data/tencent-models.json`. API ids from
-  the public catalogue are retained as aliases. `update_tencent_model_mirror.py`
-  validates captures and rejects empty, duplicate, or conflicting entries before
-  replacement.
+  the user's signed-in Chrome session on 2026-10-08. The first page returns 100
+  cards; author filters exposed all 118 literal API IDs. The console's read-only
+  `DescribeModelList` supplies descriptions, `ModelSpec`, published dates, status,
+  `OfflineAt`/`DiscontinuedAt`, API references, and quoted billing information.
+  `DescribeModelCapabilityList` was read for every literal ID, preserving explicit
+  supported/unsupported values and original API examples with placeholder keys.
+  The visual experience page's `DescribeAIGCModelList`,
+  `DescribeAIGCImageModelConfigList`, and `DescribeAIGCVideoModelConfigList` publish
+  62 configuration records across 31 models, including resolutions, aspect ratios,
+  image counts, and video durations. Only model configuration is retained; trial
+  status, account details, personal quotas, keys, and session parameters are excluded.
+  These authenticated reads are offline mirror maintenance, never runtime readers.
+  Mirror schema 2 keeps each literal ID's own introduction and specifications,
+  including separately hosted cards with the same display name. Public catalogue
+  aliases join by literal ID first, then by an unambiguous display name and its
+  published delivery scope. `update_tencent_model_mirror.py` checks catalogue counts,
+  complete per-model capabilities, and conflicts before atomic replacement; legacy
+  card captures and schema-1 mirrors remain readable. Full console evidence is kept
+  under `console_metadata`, separately from live catalogue prices.
 - Baidu Qianfan: the pricing page is a Gatsby document. Its own HTML is the whole
   portal, and the Markdown behind its "查看 MD" button is assembled in the browser
   (it opens as a `blob:` URL) rather than published as a file — so the article body
