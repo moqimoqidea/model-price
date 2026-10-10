@@ -30,8 +30,7 @@ def audit_provider(provider_id: str, client: Any, as_of: datetime) -> dict[str, 
     """Trace one vendor through its own source reader and preserve failures."""
     provider = PROVIDERS[provider_id]
     try:
-        records = provider(client).catalog_records() if provider_id == "aliyun" else []
-        source_url, events = read_events(provider_id, client, records)
+        source_url, events = read_events(provider_id, client, [])
         if source_url is None:
             raise ValueError("provider has no official retirement reader")
         return {

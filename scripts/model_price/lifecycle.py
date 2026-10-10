@@ -48,10 +48,6 @@ def scan_lifecycle(
         and previous.get("lifecycle_schema_version") != LIFECYCLE_SCHEMA_VERSION
     ):
         previous = None
-    if provider_id == "aliyun" and records is None:
-        return _failed(
-            archived, "price catalogue unavailable; no independent model-market list", reference_at
-        )
     try:
         source_url, fresh = read_events(provider_id, client, records or [])
         if source_url is None:

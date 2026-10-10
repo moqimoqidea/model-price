@@ -19,7 +19,6 @@ from model_price.deepseek_updates import update_entries
 from audit_model_retirements import PROVIDERS, audit_provider
 from model_price.lifecycle import retired_model_ids, scan_lifecycle
 from model_price.lifecycle_sources import (
-    aliyun_events,
     anthropic_events,
     baidu_events,
     deepseek_events,
@@ -260,20 +259,6 @@ Starting August 20, 2026, paid APIs remain for existing users. The free music ge
         found = openai_events(page)
         self.assertEqual({item["model_id"] for item in found}, {"o1", "o1-2024-12-17"})
         self.assertTrue(all(item["source_url"].endswith(".md") for item in found))
-
-    def test_aliyun_utc_offline_time_keeps_the_beijing_instant(self):
-        found = aliyun_events(
-            [
-                {
-                    "model_id": "qwen-example",
-                    "source": {"url": "https://www.qianwenai.com/models/qwen-example"},
-                    "model_metadata": {
-                        "specifications": {"sunset_note": "2026-10-09T16:00:00Z 下线"}
-                    },
-                }
-            ]
-        )
-        self.assertEqual(found[0]["eos_at"], "2026-10-10T00:00:00+08:00")
 
     def test_kimi_series_dates_follow_the_published_family_not_a_name_list(self):
         page = """## 已下线模型
@@ -735,8 +720,8 @@ class LifecycleScanTests(unittest.TestCase):
 
 class AuditScriptTests(unittest.TestCase):
     # Providers whose evidence is not one document handed to one string parser:
-    # Aliyun and OpenRouter each publish a model's retirement date inside the record
-    # that prices it, Zhipu reads several pages, DeepSeek reads the dated update log
+    # OpenRouter publishes retirement dates in its price records; Aliyun follows
+    # the official bulletin index, Zhipu reads several pages, DeepSeek reads the dated update log
     # the price stamp and the introductions also read, and Tencent and xAI need a
     # follow-up fetch before their document can be parsed. Mistral shares the
     # documentation's model-data bundle and reads its independent lifecycle policy.
@@ -752,7 +737,7 @@ class AuditScriptTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            set(PROVIDERS), set(SOURCES) | {"aliyun"} | NO_PUBLIC_SCHEDULE
+            set(PROVIDERS), set(SOURCES) | NO_PUBLIC_SCHEDULE
         )
         self.assertEqual(
             set(PROVIDERS) - self.ROUTED_BY_READ_EVENTS - NO_PUBLIC_SCHEDULE,

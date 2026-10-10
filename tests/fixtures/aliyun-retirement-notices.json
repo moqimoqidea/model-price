@@ -1,0 +1,128 @@
+{
+  "118177": {
+    "success": true,
+    "code": "200",
+    "data": {
+      "success": true,
+      "info": {
+        "id": 118177,
+        "website": "cn",
+        "detailList": [
+          {
+            "language": "zh",
+            "title": "【大模型服务平台百炼】部分历史主线模型下线通知",
+            "publishTime": 1776070194000,
+            "impactTime": "[{\"timeZone\":\"Asia/Shanghai\",\"startTime\":\"2026-10-10 00:00:00\",\"endTime\":\"\",\"timeRemark\":\"【以实际变更时间为准】\"}]",
+            "contentHtml": "<h3><strong>变更内容</strong></h3><p>为了不断提升模型性能和服务体验，同时优化底层资源管理，大模型服务平台百炼将于 2026 年 10 月 10 日对下表中的主线模型进行下线处理。具体下线清单及推荐替换方案如下：</p><p><strong>具体下线清单如下：</strong></p><ul><li>qwen-turbo</li><li>qwen-turbo-realtime</li></ul><p> </p><p><strong>推荐替换方案：</strong></p><p>我们推荐将即将下线的模型替换为 Qwen3.6/Qwen3.7 系列最新模型。</p><p>❗️重要提示：考虑到公告到模型实际下线期间，阿里云百炼平台将持续快速迭代并发布性能更优的新模型，本公告中的推荐替换指引将不再随新模型上线而频繁更新。敬请您在业务迁移及日常使用中，持续关注阿里云百炼模型广场，以便灵活选用最新、最契合业务场景的模型版本。</p><p> </p><h3><strong>变更影响</strong></h3><p>模型下线后，将不再支持模型推理，仍在调用上述下线模型的应用和服务将无法返回结果。若您正在使用以上模型，请务必在2026 年 10 月 10 日前完成接口替换、参数调优与业务验证，以免影响线上服务的稳定性。</p><p><a href=\"https://bailian.console.aliyun.com/?tab=doc&amp;scm=20140722.M_10878534.P_126.MO_3931-ID_10875430-MID_10875430-CID_34338-ST_14391-PA_se@1021228191-V_1#/doc/?type=model&amp;url=2987148\" rel=\"noopener noreferrer\" target=\"_blank\">点击此处</a>查看阿里云百炼的模型列表及计费信息。</p>",
+            "impactTimeType": "time-point"
+          }
+        ]
+      }
+    }
+  },
+  "118434": {
+    "success": true,
+    "code": "200",
+    "data": {
+      "success": true,
+      "info": {
+        "id": 118434,
+        "website": "cn",
+        "detailList": [
+          {
+            "language": "zh",
+            "title": "【大模型服务平台百炼】部分老旧模型下线通知",
+            "publishTime": 1783666493000,
+            "impactTime": "",
+            "contentHtml": "<h2>影响时间</h2><p>2026-10-10, 【以实际变更时间为准】</p><p></p><h2>变更内容和影响</h2><p>为了不断提升模型性能和服务体验，同时优化底层资源管理，大模型服务平台百炼将于 2026 年 10 月 10 日对下表中的模型进行下线处理。</p><p><strong>具体下线清单及替换模型推荐如下：</strong></p><table data-width=\"880\" data-autofit=\"false\" data-table-header=\"0\"><colgroup><col width=\"220\"><col width=\"130\"><col width=\"130\"><col width=\"140\"><col width=\"130\"><col width=\"130\"></colgroup><tbody><tr><td colspan=\"1\" rowspan=\"1\"><p><strong>模型名称</strong></p></td><td colspan=\"1\" rowspan=\"1\"><p><strong>输入成本</strong><br><strong>(元/百万tokens)</strong></p></td><td colspan=\"1\" rowspan=\"1\"><p><strong>输出成本</strong><br><strong>(元/百万tokens)</strong></p></td><td colspan=\"1\" rowspan=\"1\"><p><strong>推荐替换模型</strong></p></td><td colspan=\"1\" rowspan=\"1\"><p><strong>输入成本</strong><br><strong>(元/百万tokens)</strong></p></td><td colspan=\"1\" rowspan=\"1\"><p><strong>输出成本</strong><br><strong>(元/百万tokens)</strong></p></td></tr><tr><td colspan=\"1\" rowspan=\"1\"><p>aitryon</p></td><td colspan=\"1\" rowspan=\"1\"><p>0.2 元/张</p></td><td colspan=\"1\" rowspan=\"1\"><p>/</p></td><td colspan=\"1\" rowspan=\"1\"><p>qwen-image-3.0</p></td><td colspan=\"1\" rowspan=\"1\"><p class=\"ql-align-center\">/</p></td><td colspan=\"1\" rowspan=\"1\"><p>0.18 元/每张</p></td></tr><tr><td colspan=\"1\" rowspan=\"1\"><p>aitryon-parsing-v1</p></td><td colspan=\"1\" rowspan=\"1\"><p>0.004 元/张</p></td><td colspan=\"1\" rowspan=\"1\"><p>/</p></td><td colspan=\"1\" rowspan=\"1\"><p>qwen-image-3.0</p></td><td colspan=\"1\" rowspan=\"1\"><p class=\"ql-align-center\">/</p></td><td colspan=\"1\" rowspan=\"1\"><p>0.18 元/每张</p></td></tr></tbody></table><p>❗️ <strong>重要提示：</strong>考虑到公告到模型实际下线期间，阿里云百炼平台将持续快速迭代并发布性能更优的新模型，本公告中的推荐替换指引将不再随新模型上线而频繁更新。敬请您在业务迁移及日常使用中，持续关注阿里云百炼模型广场，以便灵活选用最新、最契合业务场景的模型版本。</p><p></p><h2>应对建议</h2><p>模型下线后，将不再支持模型推理，仍在调用上述下线模型的应用和服务将无法返回结果。若您正在使用以上模型，请务必在 <strong>2026 年 10 月 10 日</strong> 前完成接口替换、参数调优与业务验证，以免影响线上服务的稳定性。</p><p>以上模型下架清单，Coding Plan/Token Plan支持的相关模型，也会同步下线。如您已购买预付费资源包，您可以提交工单按未使用资源进行退款。</p><p><a href=\"https://bailian.console.aliyun.com/?tab=doc&amp;scm=20140722.M_10878534.P_126.MO_3931-ID_10875430-MID_10875430-CID_34338-ST_14391-PA_se@1021228191-V_1#/doc/?type=model&amp;url=2987148\" target=\"_blank\" rel=\"noopener noreferrer\">点击此处</a>查看阿里云百炼的模型列表及计费信息。</p><p></p><p>如您有任何问题，可随时通过<a href=\"https://smartservice.console.aliyun.com/service/create-ticket\" target=\"_blank\" rel=\"noopener noreferrer\">工单</a>或者服务热线与我们联系。</p>",
+            "impactTimeType": "not-set"
+          }
+        ]
+      }
+    }
+  },
+  "118345": {
+    "success": true,
+    "code": "200",
+    "data": {
+      "success": true,
+      "info": {
+        "id": 118345,
+        "website": "cn",
+        "detailList": [
+          {
+            "language": "zh",
+            "title": "【大模型服务平台百炼】部分历史快照模型下线通知",
+            "publishTime": 1780914189000,
+            "impactTime": "[{\"timeZone\":\"Asia/Shanghai\",\"startTime\":\"2026-10-10 00:00:00\",\"endTime\":\"\",\"timeRemark\":\"【以实际变更时间为准】\"}]",
+            "contentHtml": "<h3><strong>变更内容</strong></h3><p>为了不断提升模型性能和服务体验，同时优化底层资源管理，大模型服务平台百炼将于 2026 年 10 月 10 日对下表中的快照模型进行下线处理。具体下线清单及推荐替换方案如下：</p><p><strong>具体下线清单及替换模型推荐如下：</strong></p><table data-width=\"831\" data-autofit=\"false\" data-table-header=\"0\"><colgroup><col width=\"240\"><col width=\"114\"><col width=\"117\"><col width=\"120\"><col width=\"122\"><col width=\"118\"></colgroup><tbody><tr><td colspan=\"1\" rowspan=\"1\"><p class=\"ql-align-center\"><strong>快照模型名称</strong></p></td><td colspan=\"1\" rowspan=\"1\"><p class=\"ql-align-center\"><strong>输入成本</strong></p><p class=\"ql-align-center\">元/百万tokens</p></td><td colspan=\"1\" rowspan=\"1\"><p class=\"ql-align-center\"><strong>输出成本 </strong></p><p class=\"ql-align-center\">元/百万tokens</p></td><td colspan=\"1\" rowspan=\"1\"><p class=\"ql-align-center\"><strong>推荐替换模型</strong></p></td><td colspan=\"1\" rowspan=\"1\"><p class=\"ql-align-center\"><strong>输入成本</strong></p><p class=\"ql-align-center\">元/百万tokens</p></td><td colspan=\"1\" rowspan=\"1\"><p class=\"ql-align-center\"><strong>输出成本</strong></p><p class=\"ql-align-center\">元/百万tokens</p></td></tr><tr><td colspan=\"1\" rowspan=\"1\"><p class=\"ql-align-center\">deepseek-r1-distill-qwen-7b</p></td><td colspan=\"1\" rowspan=\"1\"><p class=\"ql-align-center\">0.5</p></td><td colspan=\"1\" rowspan=\"1\"><p class=\"ql-align-center\">1</p></td><td colspan=\"1\" rowspan=\"1\"><p class=\"ql-align-center\">qwen3.7-plus</p></td><td colspan=\"1\" rowspan=\"1\"><p class=\"ql-align-center\">2</p></td><td colspan=\"1\" rowspan=\"1\"><p class=\"ql-align-center\">8</p></td></tr><tr><td colspan=\"1\" rowspan=\"2\"><p class=\"ql-align-center\">qwen3-vl-8b-instruct</p><p class=\"ql-align-center\">qwen3-8b</p></td><td colspan=\"1\" rowspan=\"2\"><p class=\"ql-align-center\">0.5</p></td><td colspan=\"1\" rowspan=\"2\"><p class=\"ql-align-center\">2</p></td><td colspan=\"1\" rowspan=\"2\"><p class=\"ql-align-center\">qwen3.6-flash</p></td><td colspan=\"1\" rowspan=\"2\"><p class=\"ql-align-center\">1.2</p></td><td colspan=\"1\" rowspan=\"2\"><p class=\"ql-align-center\">7.2</p></td></tr><tr></tr></tbody></table><p>❗️重要提示：考虑到公告到模型实际下线期间，阿里云百炼平台将持续快速迭代并发布性能更优的新模型，本公告中的推荐替换指引将不再随新模型上线而频繁更新。敬请您在业务迁移及日常使用中，持续关注阿里云百炼模型广场，以便灵活选用最新、最契合业务场景的模型版本。</p><p></p><h3>变更影响</h3><p>模型下线后，将不再支持模型推理，仍在调用上述下线模型的应用和服务将无法返回结果。若您正在使用以上模型，请务必在2026 年 10 月 10 日前完成接口替换、参数调优与业务验证，以免影响线上服务的稳定性。</p><p>以上模型下架清单，Coding Plan/Token Plan支持的相关模型，也会同步下线。如您已购买预付费资源包，您可以提交工单按未使用资源进行退款。</p><p><a href=\"https://bailian.console.aliyun.com/?tab=doc&amp;scm=20140722.M_10878534.P_126.MO_3931-ID_10875430-MID_10875430-CID_34338-ST_14391-PA_se@1021228191-V_1#/doc/?type=model&amp;url=2987148\" target=\"_blank\" rel=\"noopener noreferrer\">点击此处</a>查看阿里云百炼的模型列表及计费信息。</p><p></p><p></p>",
+            "impactTimeType": "time-point"
+          }
+        ]
+      }
+    }
+  },
+  "118178": {
+    "success": true,
+    "code": "200",
+    "data": {
+      "success": true,
+      "info": {
+        "id": 118178,
+        "website": "cn",
+        "detailList": [
+          {
+            "language": "zh",
+            "title": "【大模型服务平台百炼】部分历史快照模型下线通知",
+            "publishTime": 1776066797000,
+            "impactTime": "[{\"timeZone\":\"Asia/Shanghai\",\"startTime\":\"2026-05-13 00:00:00\",\"endTime\":\"\",\"timeRemark\":\"【以实际变更时间为准】\"}]",
+            "contentHtml": "<h3><strong>变更内容</strong></h3><p>为了不断提升模型性能和服务体验，同时优化底层资源管理，大模型服务平台百炼将于 2026 年 05 月 13 日对下表中的快照模型进行下线处理。</p><p><strong>具体下线清单如下：</strong></p><ul><li><strong>qwen-max系列快照</strong>：qwen-max-latest，qwen-max-2025-01-25，qwen-max-0919，qwen-max-0428</li><li><strong>qwen-turbo系列模型</strong>：qwen-turbo-latest，qwen-turbo-2025-07-15，qwen-turbo-2025-04-28，qwen-turbo-2025-02-11，qwen-turbo-2024-11-01，qwen-turbo-1101</li></ul><p><strong>推荐替换方案：</strong></p><p>我们推荐将即将下线的模型替换为 Qwen3.6 系列最新模型。</p><p>Qwen3.6 系列模型展现出与当前顶尖前沿模型相媲美的卓越性能，整体效果较 3.5 及历史模型系列实现显著提升。且 Qwen3.6-Plus 模型在 Agentic Coding、前端编程、Vibe Coding 等代码开发能力，以及多模态万物识别、高精度 OCR、细粒度物体定位等视觉理解能力上均有显著增强，可为您提供更稳定、高效的推理体验。</p><p>❗️重要提示：考虑到公告到模型实际下线期间，阿里云百炼平台将持续快速迭代并发布性能更优的新模型，本公告中的推荐替换指引将不再随新模型上线而频繁更新。敬请您在业务迁移及日常使用中，持续关注阿里云百炼模型广场，以便灵活选用最新、最契合业务场景的模型版本。</p><p> </p><h3><strong>变更影响</strong></h3><p>模型下线后，将不再支持模型推理，仍在调用上述下线模型的应用和服务将无法返回结果。若您正在使用以上模型，请务必在2026年5月13日前完成接口替换、参数调优与业务验证，以免影响线上服务的稳定性。</p><p><a href=\"https://bailian.console.aliyun.com/?tab=doc&amp;scm=20140722.M_10878534.P_126.MO_3931-ID_10875430-MID_10875430-CID_34338-ST_14391-PA_se@1021228191-V_1#/doc/?type=model&amp;url=2987148\" rel=\"noopener noreferrer\" target=\"_blank\">点击此处</a>查看阿里云百炼的模型列表及计费信息。</p><p> </p>",
+            "impactTimeType": "time-point"
+          }
+        ]
+      }
+    }
+  },
+  "118217": {
+    "success": true,
+    "code": "200",
+    "data": {
+      "success": true,
+      "info": {
+        "id": 118217,
+        "website": "cn",
+        "detailList": [
+          {
+            "language": "zh",
+            "title": "【大模型服务平台百炼】GTE-RERANK模型下线通知",
+            "publishTime": 1777363872000,
+            "impactTime": "[{\"timeZone\":\"Asia/Shanghai\",\"startTime\":\"2026-05-30 00:00:00\",\"endTime\":\"\",\"timeRemark\":\"【以实际变更时间为准】\"}]",
+            "contentHtml": "<h3><strong>变更内容</strong></h3><p>为了不断提升模型性能和服务体验，同时优化底层资源管理，大模型服务平台百炼将于 2026 年 05 月 30 日对gte-rerank模型进行下线处理。我们推荐将gte-rerank模型替换为 qwen3-rerank模型。</p><h3><strong>变更影响</strong></h3><p>模型下线后，将不再支持模型推理，正在调用模型的应用和服务将无法正常返回结果。若您正在使用此模型，请您在2026年05月30日前调整您的应用，以免影响您的线上服务。</p><p><a href=\"https://bailian.console.aliyun.com/?tab=doc&amp;scm=20140722.M_10878534.P_126.MO_3931-ID_10875430-MID_10875430-CID_34338-ST_14391-PA_se@1021228191-V_1#/doc/?type=model&amp;url=2987148\" rel=\"noopener noreferrer\" target=\"_blank\">点击此处</a>查看阿里云百炼的模型计费信息。</p><p> </p>",
+            "impactTimeType": "time-point"
+          }
+        ]
+      }
+    }
+  },
+  "117814": {
+    "success": true,
+    "code": "200",
+    "data": {
+      "success": true,
+      "info": {
+        "id": 117814,
+        "website": "cn",
+        "detailList": [
+          {
+            "language": "zh",
+            "title": "【大模型服务平台百炼】部分历史快照模型下线通知",
+            "publishTime": 1766567805000,
+            "impactTime": "[{\"timeZone\":\"Asia/Shanghai\",\"startTime\":\"2026-01-30 00:00:00\",\"endTime\":\"\",\"timeRemark\":\"【以实际变更时间为准】\"}]",
+            "contentHtml": "<h3>变更内容</h3><p>为了不断提升模型性能和服务体验，同时优化资源管理，大模型服务平台百炼将于2026年1月30日对下表中的快照模型进行下线处理。</p><p> </p><div class=\"ql-image-container\"><img src=\"https://img.alicdn.com/imgextra/i3/O1CN013zEHCy1wWmfFNlk87_!!6000000006316-2-tps-671-753.png\" alt=\"表格\"></div><p> </p><h3>变更影响</h3><p> 模型下线后，将不再支持模型推理，正在调用模型的应用和服务将无法正常返回结果。若您正在使用以上模型，请您在2026年1月30日前调整您的应用，以免影响您的线上服务。</p><p>  参考：<a href=\"https://bailian.console.aliyun.com/?tab=doc&amp;scm=20140722.M_10878534.P_126.MO_3931-ID_10875430-MID_10875430-CID_34338-ST_14391-PA_se@1021228191-V_1#/doc/?type=model&amp;url=2840915\" rel=\"noopener noreferrer\" target=\"_blank\">通义千问API调用</a></p><p> </p>",
+            "impactTimeType": "time-point"
+          }
+        ]
+      }
+    }
+  }
+}

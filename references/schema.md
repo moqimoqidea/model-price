@@ -330,6 +330,20 @@ with `end_behavior: unavailable` and no `redirect_at`: the official policy says
 old-ID API calls fail and asks developers to migrate manually. The current-model
 table supplies no retirement events. Unreadable notice rows preserve the prior
 notice archive independently of a successful price scan.
+Aliyun's withdrawal index and anonymous bulletin API are independent of its
+current price catalogue. Publication instants come from `publishTime`; a published
+time-point in `impactTime` may refine the prose's day in UTC+8, while a change
+window leaves EOS date-only. Image-only historical lists use the corresponding
+dated `已下线模型` tab in the official rate-limit document. A family label, a
+recommended replacement, or a zero limit on a current model never supplies an
+additional retired ID. A price-catalogue failure does not suppress this read.
+Bedrock's central Legacy schedule covers models launched before 2026-09-07.
+Its namespaced IDs retain the colon version suffix, and separate regional rows
+retain separate `scope` values, excluding private extended-access agreements.
+`Legacy date` supplies EOM for new adoption, not `announced_at`; `EOL date`
+supplies EOS. Historical records explicitly supply `notice_status: retired`.
+Later models' card-specific dates remain outside this reader's coverage. Network
+failures report `source_error` rather than claiming the timetable is absent.
 `notice_status` is `scheduled`, `legacy`, `retired`, or null. `legacy` identifies
 an old-version bucket without claiming shutdown; `scheduled` needs a due definite
 date before it counts as retired; `retired` is an explicit already-down notice,

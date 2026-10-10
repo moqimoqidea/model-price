@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from html.parser import HTMLParser
 from typing import Any, Callable
 from urllib.parse import urljoin
@@ -17,8 +17,9 @@ from zoneinfo import ZoneInfo
 
 from .deepseek_updates import DEEPSEEK_UPDATES_URL, UpdateEntry, read_updates
 from .errors import SourceError
-from .models import normalize_model
 from .mistral_catalogue import MISTRAL_LIFECYCLE_URL, MISTRAL_MODELS_URL, model_url, read_catalogue
+from .models import normalize_model
+from .providers.aliyun import ALIYUN_TIMEZONE
 from .providers.ant_ling import ANT_LING_DEPRECATION_URL
 from .providers.azure import AZURE_MODEL_RETIREMENTS_URL
 from .providers.google_cloud import GOOGLE_CLOUD_MODEL_VERSIONS_URL
@@ -35,6 +36,7 @@ from .text import clean_text, clean_zero_width_text
 LifecycleEvent = dict[str, Any]
 
 SOURCES = {
+    "aliyun": "https://help.aliyun.com/zh/model-studio/model-depreciation.md",
     "volcengine": "https://docs.volcengine.com/docs/ark/model-deprecation-notice",
     "tencent": "https://cloud.tencent.com/document/product/1823/130758",
     "baidu": "https://cloud.baidu.com/doc/qianfan/s/zmh4stou3",
@@ -52,14 +54,14 @@ SOURCES = {
     "google-cloud": GOOGLE_CLOUD_MODEL_VERSIONS_URL,
     "openrouter": OPENROUTER_MODELS_URL,
     "azure": AZURE_MODEL_RETIREMENTS_URL,
+    "aws-bedrock": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-lifecycle-legacy.md",
 }
-# Providers that publish no per-model retirement schedule this tool can read. The
-# absence is a fact about the vendor rather than a gap here: Kling announces a
-# withdrawal in its console rather than on a page, and AWS files its dates on a
-# documentation host that does not resolve on every network this skill runs from —
-# reading it would report a failed source on each scan instead of the truth that
-# there is no schedule to report.
-NO_PUBLIC_SCHEDULE = frozenset({"kling", "aws-bedrock"})
+# Kling's public update log dates effect-template withdrawals, not model EOS.
+# A console notice requiring sign-in is outside this credential-free reader.
+# Network failures on registered sources must remain source_error instead.
+NO_PUBLIC_SCHEDULE = frozenset({"kling"})
+ALIYUN_NOTICE_API = "https://t.aliyun.com/abs/bulletin/bulletinDetail"
+ALIYUN_RETIRED_MODELS_URL = "https://help.aliyun.com/zh/model-studio/rate-limit.md"
 ZHIPU_NOTICE_URLS = (
     SOURCES["zhipu"],
     "https://docs.bigmodel.cn/cn/guide/models/text/glm-z1.md",
@@ -113,37 +115,195 @@ def model_ids(value: str) -> list[str]:
     return list(dict.fromkeys(MODEL_ID.findall(clean_text(value))))
 
 
-def aliyun_events(records: list[dict[str, Any]]) -> list[LifecycleEvent]:
-    """The public model-market API already embeds each model's OfflineTime."""
+def aliyun_model_names(value: str) -> list[str]:
+    """Read literal names only inside a model cell or a labelled shutdown list."""
+    return list(dict.fromkeys(re.findall(r"[a-z][a-z0-9_.:-]*", clean_text(value), re.I)))
+
+
+def aliyun_tables(document: str) -> list[tuple[list[str], list[list[str]]]]:
+    """Keep names in adjacent paragraphs separate before the shared table read."""
+    return headed_document_tables(
+        re.sub(r"</p>\s*<p\b[^>]*>", "<br>", document, flags=re.I)
+    )
+
+
+def aliyun_retired_events(document: str) -> list[LifecycleEvent]:
+    """Read dated retired-model tabs, never inferring EOS from a zero limit."""
+    retired = re.search(
+        r"(?m)^## 已下线模型\b(?P<body>.*?)(?=^## |\Z)", document, re.S
+    )
+    if not retired:
+        raise SourceError("Aliyun rate-limit document has no retired-model section")
     found = []
-    for record in records:
-        metadata = record.get("model_metadata") or {}
-        note = (metadata.get("specifications") or {}).get("sunset_note") or ""
-        raw = str(note).removesuffix(" 下线").strip()
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
-            when = raw
-        else:
-            try:
-                moment = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-                if moment.tzinfo is None:
-                    moment = moment.replace(tzinfo=timezone(timedelta(hours=8)))
-                when = moment.astimezone(timezone(timedelta(hours=8))).isoformat(
-                    timespec="seconds"
-                )
-            except ValueError:
-                when = date_value(raw, utc_offset="+08:00")
-        if when:
-            found.append(
-                event(
-                    record["model_id"],
-                    record.get("source", {}).get("url")
-                    or f"https://www.qianwenai.com/models/{record['model_id']}",
-                    eos_at=when,
-                    end_behavior="unavailable",
-                    scope="百炼推理",
-                )
-            )
+    for tab in re.finditer(
+        r'<Tab\s+title="(?P<title>[^"]+)"[^>]*>(?P<body>.*?)</Tab>',
+        retired["body"],
+        re.S,
+    ):
+        when = date_value(tab["title"])
+        if not when or "下线" not in tab["title"]:
+            continue
+        for _, rows in aliyun_tables(tab["body"]):
+            header = [clean_text(cell) for cell in rows[0]] if rows else []
+            if "模型名称" not in header:
+                continue
+            column = header.index("模型名称")
+            for row in rows[1:]:
+                if column >= len(row):
+                    raise SourceError("Aliyun retired-model table contains an incomplete row")
+                if clean_text(row[column]) == "模型名称":
+                    continue
+                names = aliyun_model_names(row[column])
+                if not names:
+                    raise SourceError("Aliyun retired-model table contains an unreadable model")
+                for name in names:
+                    found.append(event(
+                        name, ALIYUN_RETIRED_MODELS_URL,
+                        eos_at=when, notice_status="retired",
+                        end_behavior="unavailable", scope="百炼推理",
+                    ))
+    if not found:
+        raise SourceError("Aliyun retired-model tabs published no readable model IDs")
     return found
+
+
+def aliyun_notice(payload: dict[str, Any], url: str) -> list[LifecycleEvent]:
+    """Read the public bulletin's own model list, clock, and manual replacement."""
+    try:
+        data = payload["data"]
+        info = data["info"]
+        if payload.get("success") is not True or data.get("success") is not True:
+            raise ValueError("unsuccessful bulletin response")
+        if str(info["id"]) != url.rsplit("/", 1)[-1] or info.get("website") != "cn":
+            raise ValueError("bulletin identity or platform mismatch")
+        detail = next(item for item in info["detailList"] if item["language"] == "zh")
+        title = str(detail["title"])
+        if "百炼" not in title or "下线" not in title:
+            raise ValueError("not a Bailian model withdrawal")
+        body = detail["contentHtml"]
+        if not isinstance(body, str) or not body.strip():
+            raise ValueError("missing bulletin body")
+        announced = datetime.fromtimestamp(
+            float(detail["publishTime"]) / 1000, ALIYUN_TIMEZONE
+        ).isoformat(timespec="seconds")
+    except (
+        KeyError, TypeError, ValueError, AttributeError,
+        StopIteration, OverflowError, OSError,
+    ) as exc:
+        raise SourceError(f"unexpected Aliyun retirement bulletin; source: {url}") from exc
+
+    text = clean_text(body)
+    shutdown = re.search(r"(?:将于|将在)(?P<date>[^。]*?)对[^。]*?模型[^。]*?下线", text)
+    when = date_value(shutdown["date"], utc_offset="+08:00") if shutdown else None
+    if when is None:
+        raise SourceError(f"Aliyun bulletin has no readable model shutdown date; source: {url}")
+    try:
+        impacts = json.loads(detail.get("impactTime") or "[]")
+        for impact in impacts:
+            raw = impact.get("startTime") or ""
+            if (
+                impact.get("timeZone") == "Asia/Shanghai"
+                and detail.get("impactTimeType") == "time-point"
+                and not impact.get("endTime")
+                and (date_value(raw) or "").split("T", 1)[0] == when
+            ):
+                # A published time-point may refine the prose's day. A change
+                # window's start is not an asserted shutdown instant.
+                when = date_value(raw, utc_offset="+08:00") or when
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise SourceError(f"Aliyun bulletin has unreadable impact times; source: {url}") from exc
+
+    found = []
+    for _, rows in aliyun_tables(body):
+        headers = [clean_text(cell) for cell in rows[0]] if rows else []
+        model_column = next(
+            (i for i, cell in enumerate(headers) if cell.endswith("模型名称")), None
+        )
+        if model_column is None:
+            continue
+        replacement_column = (
+            headers.index("推荐替换模型") if "推荐替换模型" in headers else None
+        )
+        for row in rows[1:]:
+            if model_column >= len(row) or not (names := aliyun_model_names(row[model_column])):
+                raise SourceError(f"Aliyun withdrawal table contains an unreadable model; source: {url}")
+            replacements = (
+                aliyun_model_names(row[replacement_column])
+                if replacement_column is not None and replacement_column < len(row)
+                else []
+            )
+            for name in names:
+                found.append(event(
+                    name, url, announced_at=announced, eos_at=when,
+                    replacement=replacements[0] if len(replacements) == 1 else None,
+                    end_behavior="unavailable", scope="百炼推理",
+                ))
+    listed = re.search(r"具体下线清单[^<]*</(?:strong|p)>.*?(<ul\b.*?</ul>)", body, re.S)
+    if listed:
+        for value in re.findall(r"<li\b[^>]*>(.*?)</li>", listed[1], re.S):
+            # A family label before the colon does not withdraw the mainline ID.
+            names = aliyun_model_names(re.split(r"[：:]", clean_text(value), maxsplit=1)[-1])
+            if not names:
+                raise SourceError(f"Aliyun withdrawal list contains an unreadable model; source: {url}")
+            found.extend(event(
+                name, url, announced_at=announced, eos_at=when,
+                end_behavior="unavailable", scope="百炼推理",
+            ) for name in names)
+    if not found and shutdown:
+        direct = re.search(
+            r"对\s*(?P<model>[a-z][a-z0-9_.:-]*)\s*模型进行下线", shutdown[0], re.I
+        )
+        if direct:
+            replacement = re.search(r"模型替换为\s*([a-z][a-z0-9_.:-]*)\s*模型", text, re.I)
+            found.append(event(
+                direct["model"], url, announced_at=announced, eos_at=when,
+                replacement=replacement[1] if replacement else None,
+                end_behavior="unavailable", scope="百炼推理",
+            ))
+    if not found and not re.search(r'<img\b[^>]*alt="[^"]*(?:表格|模型|下线)[^"]*"', body):
+        raise SourceError(f"Aliyun bulletin published no readable withdrawal list; source: {url}")
+    # A rowspan repeats the same model list across pricing tiers. The retirement
+    # fact is identical, so return it once without merging conflicting evidence.
+    return list({tuple(item.items()): item for item in found}.values())
+
+
+def aliyun_events(client: Any, index: str) -> list[LifecycleEvent]:
+    """Follow the official index independently of the currently priced catalogue."""
+    if "下线模型列表" not in index:
+        raise SourceError("Aliyun deprecation document has no withdrawal index")
+    found = []
+    image_dates: set[str] = set()
+    seen: set[str] = set()
+    for section in re.split(r"(?m)(?=^### )", index):
+        heading = next(iter(section.splitlines()), "")
+        when = date_value(heading)
+        if not when or "下线" not in heading:
+            continue
+        for url in re.findall(r"https://www\.aliyun\.com/notice/\d+", section):
+            if url in seen:
+                continue
+            seen.add(url)
+            api = f"{ALIYUN_NOTICE_API}?language=zh&website=cn&id={url.rsplit('/', 1)[-1]}"
+            try:
+                payload = json.loads(client.get_text(api))
+            except ValueError as exc:
+                raise SourceError(f"Aliyun bulletin returned invalid JSON; source: {url}") from exc
+            notices = aliyun_notice(payload, url)
+            if notices:
+                found.extend(notices)
+            else:
+                image_dates.add(when)
+    if image_dates:
+        history = aliyun_retired_events(client.get_text(ALIYUN_RETIRED_MODELS_URL))
+        missing = image_dates - {item["eos_at"] for item in history}
+        if missing:
+            raise SourceError(
+                "Aliyun image-only notices have no dated model-list equivalent: "
+                + ", ".join(sorted(missing))
+            )
+        found.extend(item for item in history if item["eos_at"] in image_dates)
+    # Later bulletins may revise the same literal ID even within one index batch.
+    return sorted(found, key=lambda item: item.get("announced_at") or "", reverse=True)
 
 
 def volcengine_events(document: str) -> list[LifecycleEvent]:
@@ -480,6 +640,64 @@ def azure_events(document: str) -> list[LifecycleEvent]:
                     scope="Azure Foundry",
                 )
             )
+    return found
+
+
+def bedrock_notice_row(row: dict[str, str], *, retired: bool) -> LifecycleEvent:
+    """Keep Bedrock's namespaced ID and regional scope on its own milestones."""
+    model_id = clean_text(row.get("Model ID", "")).strip("`")
+    regions = clean_text(row.get("Regions", ""))
+    if not model_id or not regions:
+        raise SourceError("AWS Bedrock retirement row has no model ID or regional scope")
+    dates: dict[str, str | None] = {}
+    for column, field in (("Legacy date", "eom_at"), ("EOL date", "eos_at")):
+        raw = row.get(column, "")
+        dates[field] = date_value(raw)
+        if dates[field] is None and raw not in ("", "-", "—", "N/A"):
+            raise SourceError(f"AWS Bedrock retirement row has an unreadable {column}: {model_id}")
+    return event(
+        model_id, SOURCES["aws-bedrock"], **dates,
+        notice_status=(
+            "retired" if retired else "scheduled" if dates["eos_at"] else "legacy"
+        ),
+        end_behavior="unavailable",
+        eos_earliest=bool(re.search(
+            r"no sooner than|no earlier than|or later", row.get("EOL date", ""), re.I
+        )),
+        scope=f"Amazon Bedrock（区域：{regions}；不含私有延长访问协议）",
+    )
+
+
+def bedrock_events(document: str) -> list[LifecycleEvent]:
+    """Read the official Markdown's scheduled tables and retired field lists."""
+    found = []
+    for section in re.split(
+        r"(?m)(?=^(?:\*\*|#{1,6}\s+)Models (?:with a scheduled EOL date|that have reached EOL))",
+        document,
+    ):
+        retired = "Models that have reached EOL" in next(iter(section.splitlines()), "")
+        for _, rows in headed_document_tables(section):
+            header = [clean_text(cell) for cell in rows[0]] if rows else []
+            if not {"Model ID", "Regions", "EOL date"}.issubset(header):
+                continue
+            for row in rows[1:]:
+                if len(row) != len(header):
+                    raise SourceError("AWS Bedrock retirement table contains an incomplete row")
+                found.append(bedrock_notice_row(dict(zip(header, row)), retired=retired))
+        # AWS renders its historical HTML table as labelled Markdown lists.
+        # Each repeated Regions field starts a separate scope for the same ID.
+        for block in re.finditer(
+            r"(?ms)^- \*\*[^*]+\*\*\s*\n(?P<body>.*?)(?=^- \*\*|\Z)", section
+        ):
+            fields: dict[str, str] = {}
+            for field in re.finditer(r"\*\*([^*]+):\*\*\s*([^*\n]+)", block["body"]):
+                label, value = field[1].strip(), field[2].strip().rstrip(" /")
+                if label == "Regions" and "Regions" in fields:
+                    found.append(bedrock_notice_row(fields, retired=retired))
+                    fields = {"Model ID": fields.get("Model ID", "")}
+                fields[label] = value
+            if "Model ID" in fields:
+                found.append(bedrock_notice_row(fields, retired=retired))
     return found
 
 
@@ -989,6 +1207,7 @@ PARSERS: dict[str, Callable[[str], list[LifecycleEvent]]] = {
     "minimax": minimax_events,
     "google-cloud": google_cloud_events,
     "azure": azure_events,
+    "aws-bedrock": bedrock_events,
 }
 
 
@@ -998,11 +1217,6 @@ def read_events(
     """Read one provider's official evidence fresh on each scan."""
     if provider_id in NO_PUBLIC_SCHEDULE:
         return None, []
-    if provider_id == "aliyun":
-        found = aliyun_events(records)
-        if not found:
-            raise SourceError("Aliyun model market published no readable offline times")
-        return "https://www.qianwenai.com/models", found
     if provider_id == "openrouter":
         found = openrouter_events(records)
         if not found:
@@ -1050,6 +1264,8 @@ def read_events(
             raise SourceError("Volcengine retirement document published no Markdown")
     if provider_id == "tencent":
         found = tencent_events(client, document)
+    elif provider_id == "aliyun":
+        found = aliyun_events(client, document)
     elif provider_id == "xai":
         found = xai_events(client, document)
     else:
