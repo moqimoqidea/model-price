@@ -298,7 +298,11 @@ failure does not suppress a readable retirement notice, and a notice-source
 failure does not erase a successful price comparison. `source` names the official
 notice/index, `baseline_at` names the selected retirement baseline,
 `last_successful_at` names its most recent successful read, and `event_count`
-counts retained model records. `notice_model_ids[]` lists literal IDs appearing
+counts retained model records. `image_only_dates[]` names batch dates whose
+official notice published its model list only as an image: the read succeeded and
+whatever else the index published is present, and the message states the gap
+rather than treating the batch as withdrawn or failing the channel.
+`notice_model_ids[]` lists literal IDs appearing
 in retained official notices, including future and legacy entries.
 `retired_model_ids[]` lists literal IDs with
 confirmed retirement as of this scan: an explicit “already retired” status, a

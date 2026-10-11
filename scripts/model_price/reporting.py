@@ -1006,6 +1006,12 @@ def lifecycle_digest(report: dict[str, Any]) -> str:
     )
 
 
+def lifecycle_image_only_text(lifecycle: dict[str, Any]) -> str:
+    """Name the batches whose official notice published no readable model list."""
+    dates = "、".join(lifecycle.get("image_only_dates") or [])
+    return f"部分批次仅图片公告、无可读模型名单（{dates}）；其余批次已读取"
+
+
 def partial_catalogue_text(report: dict[str, Any]) -> str:
     """Keep a usable price outcome visible when the independent notice read failed."""
     digest = change_digest(report)

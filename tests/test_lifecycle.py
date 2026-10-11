@@ -92,7 +92,7 @@ class OfficialSourceTests(unittest.TestCase):
             self.assertTrue(url.endswith("/updates/"))
             return page
 
-        _, found = read_events("deepseek", SimpleNamespace(get_text=get_text), [])
+        _, found, _ = read_events("deepseek", SimpleNamespace(get_text=get_text), [])
         self.assertEqual(found[0]["model_id"], "deepseek-old")
 
     def test_xiaomi_keeps_redirect_and_final_expiry_separate(self):
@@ -245,7 +245,7 @@ Starting August 20, 2026, paid APIs remain for existing users. The free music ge
             return json.dumps({"Result": {"MDContent": page}})
 
         client = SimpleNamespace(get_text=get_text)
-        source, found = read_events("volcengine", client, [])
+        source, found, _ = read_events("volcengine", client, [])
         self.assertIn("model-deprecation-notice", source)
         self.assertIn("getDocDetail", seen[0])
         self.assertEqual(found[0]["model_id"], "doubao-old-260101")
@@ -312,7 +312,7 @@ class LifecycleScanTests(unittest.TestCase):
     def scan(self, at, item):
         with mock.patch(
             "model_price.lifecycle.read_events",
-            return_value=("https://official.example/notice", [item]),
+            return_value=("https://official.example/notice", [item], []),
         ):
             return scan_lifecycle(
                 self.provider,
@@ -341,6 +341,25 @@ class LifecycleScanTests(unittest.TestCase):
             [(x["kind"], x.get("milestone")) for x in second["changes"]],
             [("milestone_reached", "eom_at")],
         )
+
+    def test_image_only_batches_are_marked_without_failing_the_notice_read(self):
+        item = event("o1", "https://official.example/notice", eos_at="2026-10-01")
+        with mock.patch(
+            "model_price.lifecycle.read_events",
+            return_value=("https://official.example/notice", [item], ["2026-01-30"]),
+        ):
+            report = scan_lifecycle(
+                self.provider,
+                object(),
+                [],
+                self.store,
+                self.first,
+                self.selection,
+                require_moment(self.first),
+            )
+        self.assertEqual(report["status"], "baseline_created")
+        self.assertEqual(report["image_only_dates"], ["2026-01-30"])
+        self.assertEqual(self.store.read("lifecycle-openai")["captured_at"], self.first)
 
     def test_a_revised_date_is_reported_and_no_notice_is_erased_on_failure(self):
         old = event("o1", "https://official.example/notice", eos_at="2026-10-01")
@@ -386,6 +405,7 @@ class LifecycleScanTests(unittest.TestCase):
                         eos_at="2026-09-29",
                     )
                 ],
+                [],
             ),
         ):
             report = scan_lifecycle(
@@ -408,7 +428,7 @@ class LifecycleScanTests(unittest.TestCase):
         older = event("o1", "https://official.example/old", eos_at="2026-10-01")
         with mock.patch(
             "model_price.lifecycle.read_events",
-            return_value=("https://official.example/index", [newer, older]),
+            return_value=("https://official.example/index", [newer, older], []),
         ):
             scan_lifecycle(
                 self.provider,
@@ -483,7 +503,7 @@ class LifecycleScanTests(unittest.TestCase):
         second = event("o1", "https://official.example/notice", eos_at="2026-10-03")
         with mock.patch(
             "model_price.lifecycle.read_events",
-            return_value=("https://official.example/notice", [first]),
+            return_value=("https://official.example/notice", [first], []),
         ):
             scan_providers(
                 [PriceAdapter()],
@@ -494,7 +514,7 @@ class LifecycleScanTests(unittest.TestCase):
             )
         with mock.patch(
             "model_price.lifecycle.read_events",
-            return_value=("https://official.example/notice", [second]),
+            return_value=("https://official.example/notice", [second], []),
         ):
             payload = scan_providers(
                 [PriceAdapter()],
@@ -529,7 +549,7 @@ class LifecycleScanTests(unittest.TestCase):
         self.scan(self.first, old)
         with mock.patch(
             "model_price.lifecycle.read_events",
-            return_value=("https://official.example/notice", [new]),
+            return_value=("https://official.example/notice", [new], []),
         ):
             result = scan_providers(
                 [BrokenPriceAdapter()],
@@ -586,7 +606,7 @@ class LifecycleScanTests(unittest.TestCase):
             event("earliest", "https://official.example/notice", eos_at="2026-09-23", eos_earliest=True),
         ]
         adapter = PriceAdapter()
-        with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/notice", notices)):
+        with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/notice", notices, [])):
             scan_providers([adapter], self.store, captured_at=self.first, lifecycle_client=object())
             adapter.amount = "2"
             payload = scan_providers(
@@ -625,9 +645,9 @@ class LifecycleScanTests(unittest.TestCase):
 
         first = event("notice-only", "https://official.example/notice", eos_at="2026-10-01")
         revised = event("notice-only", "https://official.example/notice", eos_at="2026-10-03")
-        with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/notice", [first])):
+        with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/notice", [first], [])):
             scan_providers([PriceAdapter()], self.store, captured_at=self.first, lifecycle_client=object())
-        with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/notice", [revised])):
+        with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/notice", [revised], [])):
             payload = scan_providers([PriceAdapter()], self.store, captured_at=self.second, lifecycle_client=object())
         self.assertEqual(
             payload["providers"][0]["model_availability"]["notice-only"], "listed"
@@ -655,7 +675,7 @@ class LifecycleScanTests(unittest.TestCase):
         })
         self.store = SnapshotStore(Path(self.temp.name))
         new = event("new", "https://official.example/new", eos_at="2026-10-01")
-        with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/index", [new])):
+        with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/index", [new], [])):
             report = scan_lifecycle(
                 self.provider, object(), [], self.store, self.second,
                 self.selection, require_moment(self.second),
@@ -681,7 +701,7 @@ class LifecycleScanTests(unittest.TestCase):
             )["captured_at"],
             self.first,
         )
-        with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/index", [old])):
+        with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/index", [old], [])):
             report = scan_lifecycle(
                 self.provider, object(), [], self.store, self.second,
                 parse_baseline_selection("yesterday"), require_moment(self.second),
@@ -705,7 +725,7 @@ class LifecycleScanTests(unittest.TestCase):
         self.store = SnapshotStore(Path(self.temp.name))
         new = event("new", "https://official.example/new", eos_at="2026-10-02")
         at = "2026-09-23T11:00:00+08:00"
-        with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/index", [new])):
+        with mock.patch("model_price.lifecycle.read_events", return_value=("https://official.example/index", [new], [])):
             report = scan_lifecycle(
                 self.provider, object(), [], self.store, at,
                 parse_baseline_selection("yesterday"), require_moment(at),

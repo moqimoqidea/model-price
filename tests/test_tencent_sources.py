@@ -141,7 +141,7 @@ class TencentSourceTests(unittest.TestCase):
             ),
         })
         client.get_text = lambda url: LABELLED_NOTICE
-        url, events = read_events("tencent", client, None)
+        url, events, _ = read_events("tencent", client, None)
         self.assertEqual(url, SOURCES["tencent"])
         self.assertEqual(events[0]["model_id"], "deepseek-v4-flash-0731")
         self.assertEqual(len(client.calls), 1)

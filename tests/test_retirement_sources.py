@@ -28,6 +28,7 @@ from model_price.lifecycle_sources import (
     bedrock_events,
     read_events,
 )
+from model_price.messages import scan_message
 from model_price.reporting import lifecycle_schedule_text
 from model_price.snapshots import SnapshotStore, parse_baseline_selection, require_moment
 
@@ -37,7 +38,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 class FixtureClient:
     """Reject undeclared reads so audits cannot fall back to a live price API."""
 
-    def __init__(self) -> None:
+    def __init__(self, unreachable: tuple[str, ...] = ()) -> None:
         self.documents = {
             SOURCES["aliyun"]: (FIXTURES / "aliyun-retirement-index.md").read_text(),
             ALIYUN_RETIRED_MODELS_URL: (FIXTURES / "aliyun-retired-models.md").read_text(),
@@ -46,10 +47,13 @@ class FixtureClient:
         self.notices = json.loads((FIXTURES / "aliyun-retirement-notices.json").read_text())
         for identifier, payload in self.notices.items():
             self.documents[f"{ALIYUN_NOTICE_API}?language=zh&website=cn&id={identifier}"] = json.dumps(payload)
+        self.unreachable = set(unreachable)
         self.calls: list[str] = []
 
     def get_text(self, url: str) -> str:
         self.calls.append(url)
+        if url in self.unreachable:
+            raise SourceError(f"connection failed for help.aliyun.com; source: {url}")
         return self.documents[url]
 
 
@@ -61,10 +65,11 @@ class AliyunRetirementTests(unittest.TestCase):
         return aliyun_notice(self.client.notices[identifier], "https://www.aliyun.com/notice/" + identifier)
 
     def test_current_and_retired_ids_are_read_without_the_price_catalogue(self) -> None:
-        source, events = read_events("aliyun", self.client, [])
+        source, events, image_only_dates = read_events("aliyun", self.client, [])
         self.assertEqual(source, SOURCES["aliyun"])
         self.assertIn("qwen-turbo", {item["model_id"] for item in events})
         self.assertIn("qwen-max-2024-04-03", {item["model_id"] for item in events})
+        self.assertEqual(image_only_dates, [])
         self.assertEqual(len(self.client.calls), len(set(self.client.calls)))
         self.assertEqual(self.client.calls.count(ALIYUN_RETIRED_MODELS_URL), 1)
 
@@ -129,6 +134,34 @@ class AliyunRetirementTests(unittest.TestCase):
         with self.assertRaisesRegex(SourceError, "image-only notices"):
             read_events("aliyun", self.client, [])
 
+    def test_a_withdrawn_retired_model_page_marks_image_batches_without_failing(self) -> None:
+        self.client.documents[ALIYUN_RETIRED_MODELS_URL] = (
+            FIXTURES / "aliyun-rate-limit-withdrawn.md"
+        ).read_text()
+        source, events, image_only_dates = read_events("aliyun", self.client, [])
+        self.assertEqual(source, SOURCES["aliyun"])
+        self.assertEqual(image_only_dates, ["2026-01-30"])
+        names = {item["model_id"] for item in events}
+        self.assertIn("qwen-turbo", names)
+        self.assertNotIn("qwen-max-2024-04-03", names)
+
+    def test_an_unreachable_retired_model_page_keeps_the_readable_notices(self) -> None:
+        client = FixtureClient(unreachable=(ALIYUN_RETIRED_MODELS_URL,))
+        source, events, image_only_dates = read_events("aliyun", client, [])
+        self.assertEqual(source, SOURCES["aliyun"])
+        self.assertEqual(image_only_dates, ["2026-01-30"])
+        self.assertIn("qwen-turbo", {item["model_id"] for item in events})
+
+    def test_a_network_failure_is_still_reported_as_a_source_error(self) -> None:
+        def fail(url: str) -> str:
+            raise SourceError("DNS unavailable: " + url)
+
+        report = audit_provider(
+            "aliyun", SimpleNamespace(get_text=fail), require_moment("2026-10-11T12:00:00+08:00")
+        )
+        self.assertEqual(report["status"], "source_error")
+        self.assertIn("DNS unavailable", report["error"])
+
     def test_an_unreadable_retired_row_is_not_silently_dropped(self) -> None:
         document = self.client.documents[ALIYUN_RETIRED_MODELS_URL].replace("qwen-max-2024-04-03", "")
         with self.assertRaisesRegex(SourceError, "unreadable model"):
@@ -180,9 +213,10 @@ class BedrockRetirementTests(unittest.TestCase):
         self.events = bedrock_events(self.client.documents[SOURCES["aws-bedrock"]])
 
     def test_public_schedule_replaces_the_hardcoded_absence(self) -> None:
-        source, events = read_events("aws-bedrock", self.client, [])
+        source, events, image_only_dates = read_events("aws-bedrock", self.client, [])
         self.assertEqual(source, SOURCES["aws-bedrock"])
         self.assertEqual(len(events), 14)
+        self.assertEqual(image_only_dates, [])
         self.assertEqual(self.client.calls, [source])
 
     def test_legacy_stops_new_adoption_but_is_not_an_announcement_or_shutdown(self) -> None:
@@ -259,6 +293,33 @@ class RetirementIndependenceTests(unittest.TestCase):
         self.assertEqual(report["lifecycle"]["status"], "baseline_created")
         self.assertIn("qwen-turbo", report["lifecycle"]["retired_model_ids"])
 
+    def test_a_withdrawn_image_only_list_is_stated_in_the_channel_conclusion(self) -> None:
+        def fail() -> list[dict[str, Any]]:
+            raise SourceError("price API unavailable")
+
+        client = FixtureClient()
+        client.documents[ALIYUN_RETIRED_MODELS_URL] = (
+            FIXTURES / "aliyun-rate-limit-withdrawn.md"
+        ).read_text()
+        adapter = SimpleNamespace(
+            provider_id="aliyun", provider_name="阿里云百炼",
+            source_url="https://www.qianwenai.com/models", source_kind="anonymous_api",
+            catalog_records=fail,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            payload = scan_providers(
+                [adapter], SnapshotStore(Path(directory)),
+                captured_at="2026-10-11T12:00:00+08:00", lifecycle_client=client,
+            )
+        lifecycle = payload["providers"][0]["lifecycle"]
+        self.assertEqual(lifecycle["status"], "baseline_created")
+        self.assertEqual(lifecycle["image_only_dates"], ["2026-01-30"])
+        self.assertIn("qwen-turbo", lifecycle["retired_model_ids"])
+        self.assertIn(
+            "阿里云百炼 退役公告：部分批次仅图片公告、无可读模型名单（2026-01-30）；其余批次已读取。",
+            scan_message(payload),
+        )
+
     def test_failed_and_empty_sources_preserve_successful_notice_history(self) -> None:
         for provider_id in ("aliyun", "aws-bedrock"):
             with self.subTest(provider_id=provider_id), tempfile.TemporaryDirectory() as directory:
@@ -278,7 +339,7 @@ class RetirementIndependenceTests(unittest.TestCase):
                     self.assertEqual(report["notice_model_ids"], good["notice_model_ids"])
 
     def test_kling_without_a_public_model_timetable_does_not_request_a_console(self) -> None:
-        self.assertEqual(read_events("kling", object(), []), (None, []))
+        self.assertEqual(read_events("kling", object(), []), (None, [], []))
 
 
 if __name__ == "__main__":

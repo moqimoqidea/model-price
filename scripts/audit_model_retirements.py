@@ -30,10 +30,10 @@ def audit_provider(provider_id: str, client: Any, as_of: datetime) -> dict[str, 
     """Trace one vendor through its own source reader and preserve failures."""
     provider = PROVIDERS[provider_id]
     try:
-        source_url, events = read_events(provider_id, client, [])
+        source_url, events, image_only_dates = read_events(provider_id, client, [])
         if source_url is None:
             raise ValueError("provider has no official retirement reader")
-        return {
+        report = {
             "provider": provider_id,
             "status": "verified",
             "source_url": source_url,
@@ -46,6 +46,9 @@ def audit_provider(provider_id: str, client: Any, as_of: datetime) -> dict[str, 
                 for item in events
             ],
         }
+        if image_only_dates:
+            report["image_only_dates"] = image_only_dates
+        return report
     except Exception as exc:
         return {"provider": provider_id, "status": "source_error", "error": str(exc)}
 

@@ -266,7 +266,7 @@ class MistralEvidenceTests(unittest.TestCase):
         self.assertEqual(payload["model_descriptions"][0]["status"], "source_error")
 
     def test_notices_keep_announcement_shutdown_and_manual_replacement_separate(self) -> None:
-        url, events = read_events("mistral", DocumentClient(), [])
+        url, events, _ = read_events("mistral", DocumentClient(), [])
         self.assertEqual(url, MISTRAL_MODELS_URL)
         item = next(e for e in events if e["model_id"] == "zai-glm-5-2")
         self.assertEqual((item["announced_at"], item["eos_at"]), ("2026-09-29", "2026-10-31"))

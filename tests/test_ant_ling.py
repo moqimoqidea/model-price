@@ -169,7 +169,7 @@ class AntLingRetirementTests(unittest.TestCase):
 
     def test_published_times_ids_and_recommendations_keep_their_original_scope(self) -> None:
         client = DocumentClient({ANT_LING_DEPRECATION_URL: DEPRECATIONS})
-        url, events = read_events("ant-ling", client, [])
+        url, events, _ = read_events("ant-ling", client, [])
         self.assertEqual(url, ANT_LING_DEPRECATION_URL)
         self.assertEqual(client.requests, [url])
         self.assertEqual(

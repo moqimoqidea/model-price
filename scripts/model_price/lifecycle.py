@@ -49,7 +49,9 @@ def scan_lifecycle(
     ):
         previous = None
     try:
-        source_url, fresh = read_events(provider_id, client, records or [])
+        source_url, fresh, image_only_dates = read_events(
+            provider_id, client, records or []
+        )
         if source_url is None:
             return {
                 "status": "no_public_schedule",
@@ -115,6 +117,7 @@ def scan_lifecycle(
             "baseline_at": (previous or {}).get("captured_at"),
             "last_successful_at": (latest or {}).get("captured_at"),
             "event_count": len(known),
+            "image_only_dates": image_only_dates,
             "notice_model_ids": notice_model_ids(known.values()),
             "retired_model_ids": retired_model_ids(known.values(), reference_at),
             "changes": changes,

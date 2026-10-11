@@ -267,8 +267,14 @@ def aliyun_notice(payload: dict[str, Any], url: str) -> list[LifecycleEvent]:
     return list({tuple(item.items()): item for item in found}.values())
 
 
-def aliyun_events(client: Any, index: str) -> list[LifecycleEvent]:
-    """Follow the official index independently of the currently priced catalogue."""
+def aliyun_events(client: Any, index: str) -> tuple[list[LifecycleEvent], list[str]]:
+    """Follow the official index independently of the currently priced catalogue.
+
+    A batch whose bulletin published its list only as an image is resolved against
+    the dated tabs in the rate-limit document. When those tabs are withdrawn or
+    unreadable, the batch dates stay unresolved and marked instead of discarding
+    every notice the index did publish.
+    """
     if "下线模型列表" not in index:
         raise SourceError("Aliyun deprecation document has no withdrawal index")
     found = []
@@ -293,17 +299,27 @@ def aliyun_events(client: Any, index: str) -> list[LifecycleEvent]:
                 found.extend(notices)
             else:
                 image_dates.add(when)
+    image_only_dates: list[str] = []
     if image_dates:
-        history = aliyun_retired_events(client.get_text(ALIYUN_RETIRED_MODELS_URL))
-        missing = image_dates - {item["eos_at"] for item in history}
-        if missing:
-            raise SourceError(
-                "Aliyun image-only notices have no dated model-list equivalent: "
-                + ", ".join(sorted(missing))
-            )
-        found.extend(item for item in history if item["eos_at"] in image_dates)
+        try:
+            history = aliyun_retired_events(client.get_text(ALIYUN_RETIRED_MODELS_URL))
+        except SourceError:
+            # The page stopped publishing the dated tables (or its request failed).
+            # The batches stay marked as image-only rather than failing the read.
+            image_only_dates = sorted(image_dates)
+        else:
+            missing = image_dates - {item["eos_at"] for item in history}
+            if missing:
+                raise SourceError(
+                    "Aliyun image-only notices have no dated model-list equivalent: "
+                    + ", ".join(sorted(missing))
+                )
+            found.extend(item for item in history if item["eos_at"] in image_dates)
     # Later bulletins may revise the same literal ID even within one index batch.
-    return sorted(found, key=lambda item: item.get("announced_at") or "", reverse=True)
+    return (
+        sorted(found, key=lambda item: item.get("announced_at") or "", reverse=True),
+        image_only_dates,
+    )
 
 
 def volcengine_events(document: str) -> list[LifecycleEvent]:
@@ -1213,31 +1229,37 @@ PARSERS: dict[str, Callable[[str], list[LifecycleEvent]]] = {
 
 def read_events(
     provider_id: str, client: Any, records: list[dict[str, Any]]
-) -> tuple[str | None, list[LifecycleEvent]]:
-    """Read one provider's official evidence fresh on each scan."""
+) -> tuple[str | None, list[LifecycleEvent], list[str]]:
+    """Read one provider's official evidence fresh on each scan.
+
+    The third element names dated batches the read could not turn into model
+    events — an official notice that published its list only as an image, with no
+    readable equivalent — so the result stays a successful read that says what is
+    missing instead of one that claims nothing could be read at all.
+    """
     if provider_id in NO_PUBLIC_SCHEDULE:
-        return None, []
+        return None, [], []
     if provider_id == "openrouter":
         found = openrouter_events(records)
         if not found:
             raise SourceError(
                 "OpenRouter catalogue published no dated deprecation"
             )
-        return OPENROUTER_MODELS_URL, found
+        return OPENROUTER_MODELS_URL, found, []
     if provider_id == "mistral":
         found = mistral_events(client)
         if not found:
             raise SourceError("Mistral model directory published no retirement notices")
-        return MISTRAL_MODELS_URL, found
+        return MISTRAL_MODELS_URL, found, []
     url = SOURCES.get(provider_id)
     if not url:
-        return None, []
+        return None, [], []
     if provider_id == "zhipu":
         pages = {page_url: client.get_text(page_url) for page_url in ZHIPU_NOTICE_URLS}
         found = zhipu_events(pages)
         if not found:
             raise SourceError("Zhipu model pages published no readable withdrawal notices")
-        return url, found
+        return url, found, []
     if provider_id == "deepseek":
         # Read the same dated entries the price stamp and the introductions use,
         # rather than scraping the withdrawal sentence out of a whole HTML page.
@@ -1246,7 +1268,7 @@ def read_events(
             raise SourceError(
                 "DeepSeek update log published no readable withdrawal notice"
             )
-        return url, found
+        return url, found, []
     if provider_id == "tencent":
         document = read_tencent_article(client, url).get("body")
         if not isinstance(document, str) or not document.strip():
@@ -1262,10 +1284,11 @@ def read_events(
             raise SourceError("unexpected Volcengine retirement document response") from exc
         if not isinstance(document, str) or not document.strip():
             raise SourceError("Volcengine retirement document published no Markdown")
+    image_only_dates: list[str] = []
     if provider_id == "tencent":
         found = tencent_events(client, document)
     elif provider_id == "aliyun":
-        found = aliyun_events(client, document)
+        found, image_only_dates = aliyun_events(client, document)
     elif provider_id == "xai":
         found = xai_events(client, document)
     else:
@@ -1274,4 +1297,4 @@ def read_events(
         raise SourceError(
             f"{provider_id} published no readable model retirement milestones"
         )
-    return url, found
+    return url, found, image_only_dates

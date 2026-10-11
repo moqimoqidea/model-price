@@ -67,6 +67,7 @@ from .reporting import (
     format_price,
     lifecycle_change_text,
     lifecycle_digest,
+    lifecycle_image_only_text,
     model_change_title,
     model_digest,
     model_availability,
@@ -502,6 +503,14 @@ def channel_conclusion(payload: dict[str, Any]) -> list[str]:
             lines.append(
                 sentence_text(
                     f"{report['provider']['name']} 退役公告：{lifecycle_digest(report)}"
+                )
+            )
+        # A batch the vendor published only as an image has no readable list; the
+        # remark keeps that gap visible without turning it into a failed read.
+        if lifecycle.get("image_only_dates"):
+            lines.append(
+                sentence_text(
+                    f"{report['provider']['name']} 退役公告：{lifecycle_image_only_text(lifecycle)}"
                 )
             )
         announcements = report.get("announcements") or {}
