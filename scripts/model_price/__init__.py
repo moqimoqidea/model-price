@@ -17,7 +17,6 @@ Responsibility split:
 - ``updating``     Git self-update before an explicit refresh
 - ``snapshots``    archived baselines, retention, and point-in-time selection
 - ``diffing``      what moved between two baselines
-- ``price_attribution`` optional endpoint evidence explaining a billed movement
 - ``changes``      all change causes grouped by a channel's literal model ID
 - ``delta``        the scan-every-catalogue-and-compare run
 - ``reporting``    the shared wording and single-value formatters

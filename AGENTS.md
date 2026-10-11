@@ -56,7 +56,6 @@ Standard library only, Python 3, no install step, no build step.
 │       ├── updating.py          Git fast-forward before an explicit refresh
 │       ├── snapshots.py         archived baselines, retention, and point-in-time selection
 │       ├── diffing.py           what moved between two baselines
-│       ├── price_attribution.py optional evidence of supplier rates, discounts, and routes
 │       ├── changes.py           every change cause grouped by channel and literal model ID
 │       ├── delta.py             the scan-every-catalogue run
 │       ├── deepseek_updates.py  DeepSeek's official update log, read once for every date consumer
@@ -108,7 +107,7 @@ delta
   ├── adapter.catalog_records()              always fresh — a cache hit reads as "no change"
   ├── SnapshotStore.select()          previous, yesterday, last month, or a timestamp
   ├── snapshots.build_snapshot() → SnapshotStore.write() archives every success
-  ├── diffing.compare_snapshots(selected, current)
+  ├── diffing.compare_snapshots(selected, current)   the channel's policy decides what is compared
   ├── lifecycle_sources.read_events()        fresh official notice evidence
   ├── lifecycle.scan_lifecycle()             independent history and date crossings
   ├── announcements.scan_announcements()     fresh releases, independently archived
@@ -145,11 +144,16 @@ detailed. Full introductions remain in JSON; full prices remain in JSON and
 snapshots. These presentation choices are made before measuring length, never
 to meet a budget.
 
-An adapter's `aggregated_pricing` policy changes those items to catalogue-price
-fluctuations with endpoint attribution, without changing the batch threshold.
-Optional supplier evidence lives outside offer conditions and price identity. It
-can explain a movement, but only a billed amount/unit change creates one. A pinned
-endpoint reference never becomes a different provider merely because a route moved.
+An adapter may declare `reports_price_movements = False` — OpenRouter does, because
+it rebills whichever endpoint a route lands on and those amounts move daily without
+telling a reader anything. The comparison then reports that channel's listing and
+notices alone: `diffing.model_changes` skips its offers entirely, so no price or
+billing-mode movement enters `changes`, a day of rate noise reads `unchanged`, and
+`messages.changed_blocks` leaves the channel out of 模型价格. That is a comparison
+rule, not a rendering trick: the message and the JSON agree, and nothing downstream
+may re-introduce an amount. Amounts are still read and archived, and `compare` still
+answers a question about one model. The policy travels from the adapter through the
+provider report rather than being inferred from a provider ID.
 
 - **The introduction limit** (300 characters) lives at `descriptions.core`: a
   vendor summary longer than that is kept whole and marked
@@ -280,7 +284,9 @@ even when the tests still pass.
     fact. A scan labels every cause: new listing, catalogue removal, price
     movement, billing-mode addition/removal, replacement revision, notice change,
     crossed milestone, official publication, access change, or announcement rate
-    change. Simultaneous causes all remain visible; listing state
+    change — for a channel that reports no price movements, only the listing,
+    notice, publication, and capability causes (invariant 24). Simultaneous causes
+    all remain visible; listing state
     never replaces them. Notice facts and evidence belong with the same channel's
     model in 模型能力, not a separate section. Catalogue prices are shown only for
     models whose `model_availability` is `listed`. Announcement rates are separate
@@ -326,6 +332,21 @@ even when the tests still pass.
     and audience; restrictions on a sibling variant, a feature, or model weights
     never close an otherwise public API. Third-party hosts need their own release
     evidence. Announcement archives have a separate compatibility version.
+24. **A channel that reports no price movements is compared on its listing.**
+    OpenRouter rebills whichever upstream endpoint a request routes to, so its
+    published amounts move daily without stating anything a reader can act on.
+    Its adapter declares `reports_price_movements = False`; `diffing` then skips
+    that channel's offers entirely, so no price or billing-mode movement enters
+    `changes`, a day of rate noise reads `unchanged`, and the provider report says
+    so. The rule lives in the comparison, not in the rendering: the message and
+    the JSON agree, the channel is absent from 模型价格, and no amount, batch, or
+    count for it is written, expanded, or re-counted by any later stage. Listing,
+    notice, publication, and capability changes are reported as for any other
+    channel — a new listing by its introduction and never by its rates. Amounts
+    are still read, archived, and answering a named-model query (`compare`,
+    `provider`), because those answer a question about one model rather than the
+    daily comparison. The policy travels from the adapter through the provider
+    report; nothing infers it from a provider ID.
 
 ## Where a change goes
 
@@ -337,7 +358,7 @@ even when the tests still pass.
 | A cell that publishes several rates reads wrongly | `parsing.cell_rates` and the rules it is built from |
 | Add a model-introduction source | `descriptions/sources.py` and `DESCRIPTION_SOURCE_CLASSES`; routing in `descriptions/resolver.py` |
 | Change how one value reads | `reporting.py` |
-| Change price-movement attribution | `price_attribution.py`; vendor endpoint reads stay in `providers/` |
+| Change whether one channel's price movements are compared | that adapter's `reports_price_movements`, then `diffing.py` and `messages.changed_blocks` |
 | Change how catalogue and notice changes are grouped by model | `changes.py`; keep labels in `reporting.py` |
 | Change how a message is laid out | `messages.py` |
 | Change which blocks a density keeps, or what opens a message | the section list in `messages.py` (`comparison_sections` / `scan_sections`) |
@@ -502,6 +523,8 @@ git push gitee <branch>
   anywhere but `budget.py`, `messages.finalize`, and the summary limit in
   `descriptions.core`.
 - Printing a model's introduction once per channel, or below the price.
+- Removing a channel's price movements from the message while the comparison still
+  reports them — or re-deriving an amount for a channel that reports none.
 - Caching anything `delta` reads.
 - Growing the CLI entry point past argument parsing and dispatch.
 - Adding a dependency.

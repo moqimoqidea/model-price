@@ -306,7 +306,6 @@ def price_sort_key(price: dict[str, Any]) -> tuple[int, int, str, str]:
 # They sit apart from an offer's ``conditions``, which say how a charge is billed
 # rather than what one amount is against another.
 PRICE_TERM_FIELDS = ("list_amount", "discount", "effective_until")
-PRICE_ATTRIBUTION_FIELDS = ("provider_name", "provider_tag", "list_amount_basis")
 
 
 def billed_amount(price: dict[str, Any]) -> tuple[Any, Any]:
@@ -320,7 +319,7 @@ def price_amount_line(price: dict[str, Any]) -> dict[str, Any]:
         "amount": price.get("amount"), "unit": price.get("unit"),
         **{
             field: price[field]
-            for field in (*PRICE_TERM_FIELDS, *PRICE_ATTRIBUTION_FIELDS)
+            for field in PRICE_TERM_FIELDS
             if price.get(field) is not None
         },
     }

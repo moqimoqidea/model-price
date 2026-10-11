@@ -27,9 +27,7 @@ from .paths import (
     SNAPSHOT_RETENTION_MONTHS,
     SNAPSHOT_SCHEMA_VERSION,
 )
-from .pricing import (
-    PRICE_ATTRIBUTION_FIELDS, PRICE_TERM_FIELDS, offer_priority, price_sort_key,
-)
+from .pricing import PRICE_TERM_FIELDS, offer_priority, price_sort_key
 
 LATEST = "latest"
 YESTERDAY = "yesterday"
@@ -107,10 +105,9 @@ NON_IDENTITY_CONDITIONS = frozenset({"source_section"})
 # read out of a baseline rather than off a live record, so a field missing here is a
 # field the reader cannot print. A field added here needs no baseline bump, because
 # the diff compares amounts rather than this tuple and an older baseline reads as
-# ``None`` where the key is absent.
-PRICE_FIELDS = (
-    "type", "label", "amount", "unit", *PRICE_TERM_FIELDS, *PRICE_ATTRIBUTION_FIELDS,
-)
+# ``None`` where the key is absent — and a field dropped here needs none either, for
+# the same reason: a baseline carrying it keeps a key nothing reads.
+PRICE_FIELDS = ("type", "label", "amount", "unit", *PRICE_TERM_FIELDS)
 
 
 def offer_identity(offer: dict[str, Any]) -> tuple[Any, ...]:
@@ -203,8 +200,6 @@ def build_snapshot(
         },
         "models": {key: models[key] for key in sorted(models)},
     }
-    if getattr(provider, "aggregated_pricing", False):
-        snapshot["aggregated_pricing"] = True
     return snapshot
 
 
@@ -237,8 +232,6 @@ def _offer_payload(offer: dict[str, Any]) -> dict[str, Any]:
             key=price_sort_key,
         ),
     }
-    if attribution := offer.get("pricing_attribution"):
-        payload["pricing_attribution"] = attribution
     return payload
 
 

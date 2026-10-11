@@ -568,52 +568,14 @@ Two catalogue-level traps:
   converted to dollars, `video_tokens` keeps its own measure. Negative figures are
   the vendor's marker for a charge that depends on the routed model and are never
   amounts.
-- **OpenRouter endpoint attribution** — only a model with a price movement against
-  the selected or latest successful archive is read at
-  `GET /api/v1/models/{author}/{slug}/endpoints`. Initial scans, unchanged models,
-  and `compare`/`provider`/`list` never enumerate endpoint pages. Default endpoint
-  evidence does not annotate batch, context, time-window, or video SKU offers.
-  Every changed model costs at most one document read, shared by all its charges;
-  the existing host request budget and retries still apply. Budget exhaustion or
-  a failed endpoint read is a visible attribution failure, not a failed catalogue.
-
-  [The official endpoint schema](https://openrouter.ai/openapi.json) defines
-  `pricing.discount` as a fractional reduction of that endpoint's own rate:
-  multiply by `1 - discount`, with zero meaning no reduction and one meaning free.
-  The endpoint rates match the discounted catalogue figures. The shared price
-  schema stores the paid multiplier instead, so API `0.55` becomes price
-  `discount: "0.45"`. `list_amount` is reconstructed as `amount / (1 - discount)`
-  only for a valid, explicitly published reduction below one. Its
-  `list_amount_basis: endpoint_discount` names this calculation; it is not an
-  independently quoted list price or the model creator's rate. Missing, invalid,
-  and full reductions establish no reconstructed base price. Raw API fields
-  remain in the snapshot beside the normalized rates.
-
-  Selection requires the whole catalogue rate vector to match one available
-  endpoint (`status: 0`), never the minimum input rate or just one matching charge.
-  Catalogue zero placeholders absent from endpoint pricing supply no endpoint
-  terms. Multiple matching endpoints leave the selected host ambiguous; identical
-  rates never prove a route. The first uniquely matched endpoint with a published
-  provider name and tag becomes the pinned reference. This is a stable monitoring
-  choice, not a claim that OpenRouter designates it primary or that it is the model
-  creator. Literal tag identity preserves serving variants independently of display
-  name changes. A price match identifies a quoted rate, not proof of a request's
-  actual serving route. Subsequent scans keep that reference even when the catalogue
-  selects another host; a disappeared or
-  unavailable reference is retained rather than replaced by a cheaper endpoint.
-
-  Only observations of that same reference can establish an un-discounted rate
-  adjustment. Promotions and selected-provider switches have separate causes;
-  simultaneous causes remain visible. An older baseline without endpoint evidence
-  cannot be backfilled from today's endpoint list. Unchanged catalogue offers keep
-  their last dated observation; failures keep the reference without claiming a new
-  verified price. These optional fields remain outside offer identity and price
-  comparison, so snapshot version 4 remains compatible and other providers keep
-  their existing baselines. No global list-price comparison or debounce is enabled.
-  Reference changes compare endpoint observation times, which can predate the
-  selected catalogue baseline; they do not assert an exact repricing day. A primary
-  endpoint change while the model-level catalogue price holds still is not guaranteed
-  to be detected, because unchanged models incur no new endpoint reads.
+- **OpenRouter never reports price movements** — the two catalogue documents above
+  are the whole of what a scan reads for this channel. Its amounts are parsed and
+  archived exactly like any other channel's, but no endpoint page is ever
+  requested, because a channel whose rates follow a request's route has no price
+  movement worth a daily report: `reports_price_movements = False` confines the
+  comparison to the models it lists and withdraws. This also keeps the scan's
+  request count at two documents per run, whatever the catalogue does. A named
+  model query (`compare`, `provider`, `list`) still reads and shows its rates.
 - **AWS Bedrock** — one region per model, read from the two public offer files
   (`AmazonBedrock` and `AmazonBedrockFoundationModels`), read together because
   neither is complete: the first prices the models under AWS's own offer code, the

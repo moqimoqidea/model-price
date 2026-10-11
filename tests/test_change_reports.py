@@ -26,7 +26,7 @@ from model_price.snapshots import SnapshotStore
 def model_record(model_id: str, amount: str = "1.125") -> dict[str, Any]:
     """A standing price whose exact decimals and conditions must survive rendering."""
     return make_record(
-        "openrouter", "OpenRouter", model_id, model_id, "Global",
+        "aggregator", "Aggregator", model_id, model_id, "Global",
         [{
             "name": "standard", "conditions": {"context_tier": "short"},
             "prices": [
@@ -34,7 +34,7 @@ def model_record(model_id: str, amount: str = "1.125") -> dict[str, Any]:
                 price_item("output", "输出", "8.875", "USD_per_million_tokens"),
             ],
         }],
-        "https://openrouter.example/models", "test", "2026-09-30T09:00:00+08:00",
+        "https://aggregator.example/models", "test", "2026-09-30T09:00:00+08:00",
     )
 
 
@@ -43,7 +43,7 @@ class ChannelAdapter:
 
     source_kind = "test"
 
-    def __init__(self, records: list[dict[str, Any]], provider_id: str = "openrouter") -> None:
+    def __init__(self, records: list[dict[str, Any]], provider_id: str = "aggregator") -> None:
         self.provider_id = provider_id
         self.provider_name = provider_id
         self.catalog_url = f"https://{provider_id}.example/models"
@@ -82,7 +82,7 @@ class ChannelIntroduction(DescriptionSource):
 
 def scanned_pair(
     before: list[dict[str, Any]], after: list[dict[str, Any]],
-    provider_id: str = "openrouter",
+    provider_id: str = "aggregator",
 ) -> dict[str, Any]:
     resolver = DescriptionResolver({provider_id: ChannelIntroduction(provider_id)})
     with tempfile.TemporaryDirectory() as directory:
@@ -106,7 +106,7 @@ def report_sections(payload: dict[str, Any]) -> tuple[str, str, str]:
 
 class BatchPriceReportTests(unittest.TestCase):
     def test_multiple_models_are_one_item_in_both_sections_for_any_channel(self) -> None:
-        for channel in ("openrouter", "aliyun"):
+        for channel in ("aggregator", "aliyun"):
             with self.subTest(channel=channel):
                 payload = scanned_pair(
                     [model_record("m1"), model_record("m2")],
@@ -210,7 +210,7 @@ class BatchPriceReportTests(unittest.TestCase):
         message = scan_message(payload, max_chars=10)
         self.assertIn("需总结压缩到 10 字内", message)
         self.assertEqual(message.count("、".join(ids)), 2)
-        self.assertEqual(message.count("https://openrouter.example/models"), 2)
+        self.assertEqual(message.count("https://aggregator.example/models"), 2)
 
 
 class ChangeClassificationTests(unittest.TestCase):
@@ -245,13 +245,13 @@ class ChangeClassificationTests(unittest.TestCase):
             "status": "changed", "changes": [{
                 "kind": "detail_revised", "field": "replacement",
                 "before": "old-successor", "after": "new-successor",
-                "event": event("m1", "https://openrouter.example/notices", replacement="new-successor"),
+                "event": event("m1", "https://aggregator.example/notices", replacement="new-successor"),
             }],
         }
         capabilities, prices, conclusion = report_sections(payload)
         self.assertIn("【价格调整】【替代模型更新】m1", capabilities)
         self.assertIn("old-successor → new-successor", capabilities)
-        self.assertIn("https://openrouter.example/notices", capabilities)
+        self.assertIn("https://aggregator.example/notices", capabilities)
         self.assertIn("m1、m2", prices)
         self.assertIn("替代模型更新 1", conclusion)
 
@@ -261,7 +261,7 @@ class ChangeClassificationTests(unittest.TestCase):
         message = scan_message(payload)
         self.assertIn("0 个无变化，1 个未能完成", message)
         self.assertIn("notice unavailable", message)
-        self.assertNotIn("无变化：openrouter", message)
+        self.assertNotIn("无变化：aggregator", message)
 
     def test_same_model_on_two_channels_keeps_two_local_introductions_in_queries(self) -> None:
         providers = [

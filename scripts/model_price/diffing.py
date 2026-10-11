@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from .price_attribution import price_attribution
 from .pricing import billed_amount, price_amount_line
 from .snapshots import offer_identity, price_identity
 
@@ -31,19 +30,24 @@ def compare_snapshots(
     current: dict[str, Any],
     *,
     no_baseline_status: str = BASELINE_CREATED,
+    reports_price_movements: bool = True,
 ) -> dict[str, Any]:
     """Report how ``current`` differs from ``previous``.
 
     ``previous`` is ``None`` on a first run or when a requested historical point
     has no match. ``no_baseline_status`` preserves that distinction where the
     comparison result is created rather than patching the report afterward.
+
+    ``reports_price_movements`` is the channel's own policy, passed in rather than
+    read from a baseline: what a scan says about a channel is decided by what that
+    channel publishes today, not by which archive it happened to be compared with.
     """
     changes = (
         empty_changes()
         if previous is None
         else model_changes(
             previous.get("models", {}), current.get("models", {}),
-            aggregated_pricing=bool(current.get("aggregated_pricing")),
+            reports_price_movements=reports_price_movements,
         )
     )
     status = UNCHANGED
@@ -51,7 +55,7 @@ def compare_snapshots(
         status = no_baseline_status
     elif changes["total"]:
         status = CHANGED
-    report = {
+    return {
         "provider": current["provider"],
         "status": status,
         "baseline_at": previous.get("captured_at") if previous else None,
@@ -60,9 +64,6 @@ def compare_snapshots(
         "model_count": len(current.get("models", {})),
         "changes": changes,
     }
-    if current.get("aggregated_pricing"):
-        report["aggregated_pricing"] = True
-    return report
 
 
 def empty_changes() -> dict[str, Any]:
@@ -70,30 +71,35 @@ def empty_changes() -> dict[str, Any]:
 
 
 def model_changes(
-    before: dict[str, Any], after: dict[str, Any], *, aggregated_pricing: bool = False
+    before: dict[str, Any], after: dict[str, Any], *,
+    reports_price_movements: bool = True,
 ) -> dict[str, Any]:
     """Diff two snapshots' model tables.
 
     A model that appeared or disappeared is recorded whole, offers and prices
     included: a report that names a new model without saying what it costs leaves
     the reader to go and look it up.
+
+    A channel that reports no price movements is compared on its listing alone.
+    Its offers and amounts are archived like any other channel's, but a movement
+    between them is not a change this scan reports: an aggregator rebills whatever
+    endpoint a request routes to, so those movements are routing noise rather than
+    a price a reader can act on. Listing a model and withdrawing it stay changes.
     """
     changes = empty_changes()
     for key in sorted(set(after) - set(before)):
         changes["models_added"].append(after[key])
     for key in sorted(set(before) - set(after)):
         changes["models_removed"].append(before[key])
-    for key in sorted(set(before) & set(after)):
-        offer_changes(
-            before[key], after[key], changes, aggregated_pricing=aggregated_pricing,
-        )
+    if reports_price_movements:
+        for key in sorted(set(before) & set(after)):
+            offer_changes(before[key], after[key], changes)
     changes["total"] = sum(len(changes[field]) for field in CHANGE_FIELDS)
     return changes
 
 
 def offer_changes(
     before: dict[str, Any], after: dict[str, Any], changes: dict[str, Any],
-    *, aggregated_pricing: bool = False,
 ) -> None:
     """Diff one model's offers, then the prices inside the offers both scans have."""
     model = _model_brief(after)
@@ -110,7 +116,6 @@ def offer_changes(
     for key in sorted(set(before_offers) & set(after_offers)):
         price_changes(
             model, before_offers[key], after_offers[key], changes["price_changes"],
-            aggregated_pricing=aggregated_pricing,
         )
 
 
@@ -119,7 +124,6 @@ def price_changes(
     before: dict[str, Any],
     after: dict[str, Any],
     changes: list[dict[str, Any]],
-    *, aggregated_pricing: bool = False,
 ) -> None:
     """Record a price's appearance, disappearance, or new amount.
 
@@ -145,7 +149,6 @@ def price_changes(
                 **_price_brief(after_prices[key]),
                 "from": None,
                 "to": price_amount_line(after_prices[key]),
-                **price_attribution(before, after, key, aggregated_pricing),
             }
         )
     for key in sorted(set(before_prices) - set(after_prices)):
@@ -155,7 +158,6 @@ def price_changes(
                 **_price_brief(before_prices[key]),
                 "from": price_amount_line(before_prices[key]),
                 "to": None,
-                **price_attribution(before, after, key, aggregated_pricing),
             }
         )
     for key in sorted(set(before_prices) & set(after_prices)):
@@ -167,7 +169,6 @@ def price_changes(
                     **_price_brief(now),
                     "from": price_amount_line(was),
                     "to": price_amount_line(now),
-                    **price_attribution(before, after, key, aggregated_pricing),
                 }
             )
 
@@ -191,11 +192,8 @@ def _model_brief(model: dict[str, Any]) -> dict[str, Any]:
 
 
 def _offer_brief(offer: dict[str, Any]) -> dict[str, Any]:
-    brief = {
+    return {
         "name": offer.get("name", ""),
         "conditions": dict(offer.get("conditions") or {}),
         "prices": list(offer.get("prices") or []),
     }
-    if attribution := offer.get("pricing_attribution"):
-        brief["pricing_attribution"] = attribution
-    return brief

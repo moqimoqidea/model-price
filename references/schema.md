@@ -88,8 +88,7 @@ Each result contains:
   two are different facts and are never written the same way
 
 Price fields are `type`, `label`, `amount`, `unit`, and optional `display`,
-`list_amount`, `discount`, or `effective_until`. Endpoint-attributed prices may
-also carry `provider_name`, `provider_tag`, and `list_amount_basis`.
+`list_amount`, `discount`, or `effective_until`.
 
 Mistral adds the `thousand_pages` measure for its OCR rates and reads `/M Chars`
 as `million_characters`. Its records retain each literal published API identifier
@@ -115,17 +114,6 @@ Two things a vendor publishes beside an amount decide which of several prices on
 - `list_amount` — the other rate the vendor printed for the same charge, written as `（原价 …）`. A promotion publishes both numbers, so the lower one is never taken for what the model ordinarily costs.
 - `discount` — the multiplier the vendor itself published, written as the 折 a Chinese page reads (`0.5` is `5 折`, not `0.5 折`). It is recorded only where the vendor states one; where a vendor instead prints two dated amounts, the pair is recorded and no ratio is derived from it.
 - `effective_until` — the last day `amount` applies, written against the amount (`0.75 美元/百万 tokens 至 2026-12-31（原价 1.50）`) so the date cannot be read as qualifying the rate beside it. Where a vendor dates its rate per row, the date sits on the price; where it dates a whole activity in a banner, the window sits on the offer as `promotion_window` below.
-
-OpenRouter endpoint evidence uses the same paid-multiplier convention: the API's
-fractional reduction of `0.55` becomes `discount: "0.45"`, and its own
-pre-discount amount is calculated from the official formula. Such a price carries
-`list_amount_basis: "endpoint_discount"` and reads as
-`端点未折价（按折扣还原）`, not an independently published original rate.
-`discount: "1"` means the endpoint explicitly published no reduction;
-`discount: "0"` is a full reduction, for which no pre-discount price is inferred.
-The raw API reduction is retained separately. Missing or invalid discounts leave
-`list_amount` unknown. These fields describe that hosting endpoint, never a
-different provider or the model creator.
 
 A vendor that runs an activity prices it as an offer of its own: `name` is the activity's own wording, and its `conditions` add `channel` (the serving channel it prices, which the activity's name has taken over from the standing offer) and `promotion_window` (the window the vendor published, in the vendor's words). Those two stay out of the offer's `name` because they are terms, and both are part of the offer's identity: an activity that ends is an offer that ended, not a price that moved. A standing rate carries neither.
 
@@ -369,10 +357,15 @@ Availability controls which catalogue prices can appear in 模型价格; separat
 quoted announcement rates retain their published scope. Availability never replaces a
 change category. 模型能力 groups literal IDs by provider and labels every actual
 cause: 新增上架, 目录下架, 价格调整, 计费模式新增/移除, 替代模型更新, 退役公告新增,
-退役日期更新, 官方状态更新, 退役信息更新, or 退役时间节点. One model can carry
+退役日期更新, 官方状态更新, 退役信息更新, or 退役时间节点. A channel that reports no
+price movements carries only its listing, notice, publication, and capability
+causes. One model can carry
 several labels, and its notice facts and evidence appear beside its own channel's
 introduction. There is no separate retirement section. Catalogue removal does not
 establish actual service shutdown.
+
+A channel that reports no price movements forms no such batch; its own shape is
+below.
 
 If one channel has standard price movements on at least two distinct listed
 models, 模型能力 and 模型价格 each show one linked batch item. It names every
@@ -382,10 +375,6 @@ separate facts. New-model prices, added/removed standard offers, and single-mode
 price movements remain detailed. JSON retains every description, price change,
 amount, condition, and removed-model count; batching never changes this payload
 or the stored baselines and does not depend on the character budget.
-
-Aggregated batches retain this threshold and layout, but their tag/count read as
-`目录价波动`/`目录价变化`. Provider, discount, and cause evidence is grouped into
-the same item; the scope note distinguishes hosting rates from creator prices.
 
 Notice archives are under `snapshots/lifecycle-<provider>/`, independent of the
 price archives and with their own `lifecycle_schema_version`. A failed or empty
@@ -416,11 +405,10 @@ human-readable catalogue when declared, otherwise its price source URL. It is
 used for batch follow-up links and unavailable-introduction references. It is
 runtime metadata and does not change the price or lifecycle snapshot shapes.
 
-An adapter with `aggregated_pricing: true` also carries that policy in records,
-price snapshots, and provider reports. It changes price-change wording to
-`目录价波动`/`目录价变化`; reporting never infers the policy from a provider ID.
-Other adapters default to false. The policy does not change the amount comparison
-or the two-model batch threshold.
+An adapter whose amounts are routing noise declares
+`reports_price_movements = False`, and its provider report carries
+`reports_price_movements: false`. Every other adapter defaults to true and omits
+the key. Nothing infers this from a provider ID.
 
 `summary.changed` and `summary.unchanged` remain catalogue comparison counts;
 `summary.lifecycle_changes` counts notices separately, and
@@ -440,7 +428,9 @@ notice-only changes on a provider whose price status is `unchanged` or
 never walks every detail page merely to repeat unchanged prose.
 
 `model_count` includes listed models with no parseable price. `changes` holds `models_added`, `models_removed`, `offers_added`, `offers_removed`,
-`price_changes`, and their `total`. A model entry is the snapshot model, offers and
+`price_changes`, and their `total`. A channel reporting no price movements fills
+only `models_added` and `models_removed`: its amounts sit in the baseline and in
+`models_added`'s model entries, but no offer or amount movement is compared. A model entry is the snapshot model, offers and
 prices included, so a new model's price is readable without a second query. Each
 model has `price_status` (`published` or `unknown`); `unknown` means the source
 published no price for it at all, so `offers: []`, and it still appears in
@@ -454,65 +444,25 @@ billed `{amount, unit}` pair together with any price term that side carried, wit
 alone; the terms travel with it for the reader, so `6 → 4.8` never has to be read
 without `5 折` beside it.
 
-### Aggregated-price attribution
+### A channel that reports no price movements
 
-OpenRouter's `delta` enriches only models with price movements against the selected
-or latest archive. A standing offer may carry `pricing_attribution` independently
-of `conditions`; it never becomes part of `offer_identity`:
+OpenRouter is the one channel with `reports_price_movements: false`. It rebills
+whichever upstream endpoint a request routes to, so its catalogue amounts move
+daily without telling a reader anything they can act on. The scan therefore
+compares it on listing and notices alone:
 
-- `status`: `matched`, `ambiguous`, `not_found`, or `source_error`
-- `source.url/kind`, `observed_at`, optional `error`: the endpoint document and
-  observation/attempt time; unchanged scans retain the original time
-- `endpoints[]`: each endpoint's literal `provider_name`, `tag`, optional `name`,
-  `model_id`, `context_length`, `status`, `quantization`, raw `pricing`, and
-  normalized `prices[]`. Endpoints stay separate; a model's prices are never the
-  minimum of this array
-- `selected_endpoint`: the uniquely available whole-vector price match, or null
-- `reference_endpoint`: the first uniquely matched tagged endpoint, subsequently
-  kept as a stable supplier reference. Missing/unavailable/failed reads retain the
-  last reference, never substitute another host
-- `reference_status`: `observed`, `not_found`, `unavailable`, or `source_error`
-- `reference_observed_at`: when the reference itself was last observed; a retained
-  endpoint is historical evidence, not proof of present availability or price
-
-Each aggregated `price_changes[]` entry adds:
-
-- `cause` and `causes[]`: `price_adjustment` (the same pinned endpoint's
-  reconstructed pre-discount rate moved), `promotion_change` (observed discount
-  change on the same endpoint), `provider_switch` (unique matched endpoint changed),
-  or `catalog_price_fluctuation` (no verified primary adjustment, promotion, or
-  provider switch). The primary cause
-  gives a base-rate adjustment precedence, while the list preserves simultaneous
-  observations. Different hosts' base prices are never compared as one list price
-- `provider_name`, `discount`, `list_amount`, `endpoint_discount`: the selected
-  endpoint and current normalized terms, or null where unavailable;
-  `endpoint_discount` preserves the API's reduction fraction
-- `pricing_attribution`: `status`, `source`, `error`, `observed_at`,
-  `reference_provider_name`, `reference_tag`, `reference_status`,
-  `reference_from`/`reference_to` (amount/unit plus normalized terms),
-  `reference_baseline_at`, `reference_observed_at`, and `reference_unchanged`
-  (whether that same reference's known pre-discount rate held still, otherwise null)
-
-Only actual billed amount/unit movements enter `price_changes`; new evidence or
-term changes alone never create a delta. Old snapshots remain compatible but
-cannot establish historical promotions or routes they did not observe. Batch
-messages keep all IDs and the official catalogue link in one item per section,
-with neutral aggregated wording and attribution instead of expanded amounts.
-Single-model movements keep their complete amounts and normalized terms.
-Verified reference adjustments are explicitly marked within the same batch;
-single-model rows show the reference's own pre-discount movement separately from
-the catalogue movement. A reference comparison is relative to its dated endpoint
-observations, not proof of a change on the selected catalogue baseline day.
-Unchanged model-level prices do not trigger new endpoint observations.
-
-An unexpected enrichment failure adds provider-level
-`pricing_attribution: {"status": "source_error", "error": "…"}` while archiving
-the valid unmodified catalogue. Known endpoint read failures are scoped to their
-offers/movements instead. Neither failure fabricates a reference adjustment.
-
-These fields are additive evidence, so snapshot version 4 is retained. The parsed
-response cache version is bumped. No whole-catalogue endpoint enumeration, global
-list-price comparison, historical backfill, or scan debounce is introduced.
+- `changes` carries `models_added` and `models_removed` and nothing else;
+  `offers_added`, `offers_removed`, and `price_changes` stay empty, so a day of
+  rate movement is `unchanged` rather than a page of amounts.
+- A model entry in `models_added` is still the whole snapshot model, so the
+  listing's own rates stay readable; nothing renders them.
+- The scan message leaves the channel out of 模型价格 entirely. Its listing,
+  capability, notice, and publication facts appear in 模型能力 as for any other
+  channel, and a new listing is introduced from its own source and never by its
+  rates.
+- Its snapshot keeps every amount and condition, because the archive is the
+  catalogue rather than the comparison; `compare`, `provider`, and `list` are
+  unaffected and still answer a query about one model.
 
 Baselines are timestamped files under `snapshots/<provider>/`. Every successful
 scan is archived, including an unchanged catalogue. Retention is hard-capped at
