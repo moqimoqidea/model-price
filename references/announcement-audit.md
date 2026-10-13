@@ -134,3 +134,73 @@ OpenAI 同一篇官方文章在旧请求 UA 下返回 403 挑战页，改用指�
 本次接入只登记官方价格和下架来源，独立发布覆盖为 `catalogue_only`，模型介绍为
 `not_found`，不把价目读取成功当作独立公告覆盖。验证使用临时基线，既有历史未推进。
 上述 18 渠道的核查结果仍描述此前那次核查范围。
+
+## 2026-10-13 发布来源修复与博客复核
+
+此次核查覆盖当前全部 20 个渠道。使用项目的匿名 HTTP 客户端读取官方公开来源，
+保留 Chrome/macOS UA、浏览器提示、语言、来源页和匿名会话处理；反爬候选页另试
+导航请求头。小米和 Mistral 的早期连接失败在重试后恢复，最终结果以下表为准。
+仍被验证页拦截的可选博客按用户要求不登记，不把验证页当成正常正文。
+
+Google Cloud 的旧 `cloud.google.com/static/feeds/` 地址已返回 404。只换成
+`docs.cloud.google.com` 的旧 Vertex feed 仍只能读到旧内容，不能解决发布遗漏。
+已改读 [Gemini Enterprise Agent Platform 发布记录](https://docs.cloud.google.com/gemini-enterprise-agent-platform/release-notes)
+及其[当前 Atom](https://docs.cloud.google.com/feeds/gemini-enterprise-agent-platform-release-notes.xml)。
+同一天的记录按 Feature、Announcement、Change 等类别分开读取，模型发布不混入修复、
+退役或功能教程的证据。部分 feed 链接额外带了 `/docs/`，证据链接使用已核验的现行页面
+加原始日期锚点。此次读取获得 16 个不同的发布名称，来源无错误。
+
+[GLM-Legal](https://z.ai/blog/glm-legal) 此前遗漏有两层原因：原来只读 BigModel
+能力目录，而该测试模型在独立文章发布；文章的 HTML 又是空壳，正文编译在其链接的
+同域模块里。现在同时读取能力目录、[Z.ai 模型更新](https://docs.z.ai/release-notes/new-released.md)
+及已核验文章，并从模块读取字面的 MDX 段落和文章自身的日期 `2026-10-12`。
+“Apply for API access”保留为受限申请证据，不生成 BigModel API ID、免费报价或普遍开放。
+名称规则也支持 GLM-Legal、GLM-Image、GLM-OCR 这类没有版本数字的字面名称。
+
+Z.ai 的 `/blog`、博客 sitemap 和 feed 均未提供可读总索引。因此这里仍是明确的有限覆盖：
+模型更新和能力目录之外的其他独立文章，需要登记已核验的官方 URL；此次修复不能声称
+已自动覆盖所有未被索引的 Z.ai 文章。没有把 GLM-Legal 的名称写进模型识别器。
+
+| 渠道 | 此次核验的官方发布入口 | 结果与覆盖范围 |
+| --- | --- | --- |
+| 阿里云百炼 | [Qwen 博客](https://qwen.ai/)及其匿名文章 API | 可读，继续读取字面标题、完整正文与官方日期。研究发布不证明百炼托管。 |
+| 火山引擎方舟 | [Seed 博客](https://seed.bytedance.com/en/blog)及匿名分页 API | 可读，新增近期博客与现有成果目录的组合读取；实际 API 会限制每页条数，必须跟随分页令牌。包括 SeedRealtime、Seedance 2.5、Seed Audio 1.0；名称由官方卡片标签限定。 |
+| 腾讯 TokenHub | [Hunyuan 研究索引](https://hunyuan.tencent.com/)及匿名 `publicList` | 可读，本次近期窗口内没有可识别发布。索引沉默不证明没有研究进展；研究正文不替代 TokenHub 的授权介绍镜像。 |
+| 百度千帆 | [ERNIE 博客 RSS](https://ernie.baidu.com/blog/index.xml) | 可读，但 feed 最新条目仍为 2026-05-09，近期窗口无记录。旧订阅的覆盖限制仍保留。 |
+| DeepSeek | [官方更新日志](https://api-docs.deepseek.com/zh-cn/updates/) | 可读，继续与日期、介绍和退役消费者复用同一次文档读取。 |
+| Kimi | 用户指定的[官方博客](https://www.kimi.ai/blog/) | 可读，现已作为登记入口。Next.js `articleList.items` 提供标题、地址和日期，先排除旧文章及外部论文；本次确认 Kimi K3。 |
+| 智谱 BigModel | [能力目录](https://docs.bigmodel.cn/cn/guide/start/model-overview.md)、[Z.ai 更新](https://docs.z.ai/release-notes/new-released.md)、[GLM-Legal](https://z.ai/blog/glm-legal) | 三处均可读。测试申请模型与当前价格目录分别保留；总博客索引的缺口见上文。 |
+| MiniMax | 用户指定的[官方新闻](https://www.minimax.io/news) | 已是登记入口，本次可读。当前服务端响应主要提供模型导航并带新闻页跳转标记；沿已公布的第一方链接确认 M3、M2.7、M2.5、H3、Music 3.0。未标日期的页面只证明首次发现。 |
+| 小米 MiMo | [研究博客](https://mimo.xiaomi.com/)、[能力目录](https://mimo.mi.com/docs/zh-CN/quick-start/summary/model)、[模型更新](https://mimo.mi.com/docs/en-US/updates/model) | 用户修复访问后，三处均可读。新增博客读取，目录包含 More 中折叠卡片；博客同域请求 12 次，CDN 数据 3 次，低于默认单域名额度。 |
+| 快手可灵 | [官方博客](https://klingai.com/global/blog)及视频、图片能力图 | 均可读。新增独立发布入口；Kling 4.0 有发布正文，“Kling 4.0 Multiple Keyframes”教程不成为另一个模型。 |
+| 蚂蚁大模型 | [官方博客](https://developer.ant-ling.com/en/blogs/) | 可读，新增 Next.js 发布卡片读取，本次识别 Ling-3.0-flash。客座部署指南和比较对象不成为发布主体。 |
+| OpenAI | [新闻 RSS](https://openai.com/news/rss.xml)及规范文章地址 | 可读，继续用官网 UA 与末尾斜杠读取正文；新增无数字的字面名称识别同样作用于官方研究发布。 |
+| Anthropic | [官方新闻](https://www.anthropic.com/news) | 可读，同文的 Fable、Mythos 等模型保留各自开放证据。 |
+| Google Gemini | [模型研究博客](https://blog.google/innovation-and-ai/models-and-research/gemini-models/)及 RSS | 可读，保持原厂发布与 Google Cloud 托管发布的渠道边界。 |
+| xAI | [官方新闻](https://x.ai/news) | 可读，沿近期模型发布卡片读取正文。 |
+| Mistral AI | [官方新闻](https://mistral.ai/news/)与公开模型数据 | 重试恢复，新闻和文档均可读；本次确认 Mistral Large 4。无数字的发布主体仍由官方模型目录限定。 |
+| OpenRouter | [模型 API](https://openrouter.ai/api/v1/models?output_modalities=all)；候选[博客](https://openrouter.ai/blog/) | 博客在浏览器 UA、提示及导航头下仍返回 HTTP 200 验证页，已排除；维持 `catalogue_only`。原厂博客不能证明 OpenRouter 托管。 |
+| Google Cloud | [现行发布 Atom](https://docs.cloud.google.com/feeds/gemini-enterprise-agent-platform-release-notes.xml) | 可读，已替换失效且过时的 Vertex 来源，模型发布与同日其他类别分开。 |
+| AWS Bedrock | [AWS What's New](https://aws.amazon.com/about-aws/whats-new/recent/feed/) | 可读，只收录 Bedrock 自己的模型引入证据。 |
+| Azure Foundry | [Azure 博客 RSS](https://azure.microsoft.com/en-us/blog/feed/) | 可读，修复只读摘要的问题：完整 `content:encoded` 才包含实际访问限制。GPT-6 Astra、Sol、Luna 等明确并列名称可展开，正文范围不被标题覆盖。 |
+
+小米博客的卡片不是普通链接。读取器从首页明确链接的 Rspress 路由和部署清单定位
+`en/index.mdx` 的当前内容块，限定到官网指定的 Xiaomi CDN 前缀，读取字面的
+`title/link/desc` 及该文章路由的 `frontmatter.date`，不执行 JavaScript。
+新文章的 iframe 正文只跟随一个明确的同域地址；没有日期时保持未知，系列标题也不会
+展开成猜测型号。官网旧 `/index.html` 地址会经 `/index` 再到目录页面，两次跳转容易耗尽
+单域名额度；已使用现场核验的规范路径，保留原文章内容与来源。
+
+一个渠道现在可以组合博客、模型更新和能力目录，所有登记读取器独立运行。
+其中一处失败仍会展示其他可读记录，但公告状态为 `source_error`，不推进公告历史。
+多来源入口与覆盖范围作为可选来源信息保留；公告历史继续兼容版本 1，价格快照保持
+版本 4，解析缓存版本升为 34。去掉了原先只能选择一种来源的分支及蚂蚁旧的
+`catalogue_only` 声明，未修改价格、消息长度或退役语义。
+
+681 项离线测试全部通过，另通过 CLI 帮助检查和差异空白检查。新增回归覆盖发布类别隔离、
+正文限权、博客分页、模型主体与教程区别、无数字名称、同文兄弟型号、模块字面解析、
+同域 iframe、部署变化、文章日期归属及部分失败后的历史保留。
+现场完整扫描验证均使用临时缓存和基线，没有推进用户已有历史：
+智谱读取 67 条价格记录且价格不变，新增公布中包含 GLM-Legal；Google Cloud 读取
+127 条价格记录且价格不变，收录 16 个公告名称；小米读取 6 条价格记录且价格不变，
+公告历史保留 15 个规范化名称。发布、访问、目录和价格仍分别报告。

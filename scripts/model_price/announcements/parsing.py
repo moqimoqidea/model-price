@@ -40,7 +40,8 @@ LIMITED_WORDS = re.compile(
     r"(?:available|rolling out|access (?:is )?limited)\s+(?:only\s+)?to\s+"
     r"(?:a set of\s+)?(?:trusted|vetted|selected|approved)|"
     r"available only|only (?:available |through )|limited (?:access|preview)|"
-    r"private preview|allowlist|available (?:in|through) early.access|"
+    r"private preview|allowlist|available (?:in|through) early.access|entering early.access|"
+    r"\b(?:apply for|request) (?:API )?access\b|"
     r"仅(?:对|向)|受邀|白名单|内测|定向开放|灰度",
     re.I,
 )
@@ -77,6 +78,9 @@ class PageParser(HTMLParser):
         self.blocks: list[tuple[str, str]] = []
         self.links: list[tuple[str, str]] = []
         self.scripts: list[str] = []
+        self.script_sources: list[str] = []
+        self.module_scripts: list[str] = []
+        self.frames: list[str] = []
         self.link_dates: dict[str, str | None] = {}
         self._ignored_tags = (
             ("script", "style", "nav", "footer")
@@ -89,10 +93,17 @@ class PageParser(HTMLParser):
         self._link: str | None = None
         self._link_words: list[str] = []
         self._link_heading: list[str] = []
+        self._link_label = ""
         self._script_words: list[str] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
+        if tag == "script" and attributes.get("src"):
+            self.script_sources.append(attributes["src"])
+        if tag == "script" and attributes.get("type") == "module" and attributes.get("src"):
+            self.module_scripts.append(attributes["src"])
+        if tag == "iframe" and attributes.get("src"):
+            self.frames.append(attributes["src"])
         if tag in self._ignored_tags:
             self._skip += 1
         if tag == "script" and attributes.get("type") == "application/ld+json":
@@ -103,6 +114,7 @@ class PageParser(HTMLParser):
             self._link = attributes.get("href") or ""
             self._link_words = []
             self._link_heading = []
+            self._link_label = attributes.get("aria-label") or attributes.get("title") or ""
         if tag in ("h1", "h2", "h3", "h4", "p", "li") and self._block is None:
             self._block = tag
             self._words = []
@@ -134,7 +146,7 @@ class PageParser(HTMLParser):
                 self.blocks.append((tag, value))
             self._block = None
         if tag == "a" and self._link is not None:
-            title = clean_text(" ".join(self._link_heading or self._link_words))
+            title = clean_text(" ".join(self._link_heading or self._link_words) or self._link_label)
             if title:
                 self.links.append((self._link, title))
                 self.link_dates[self._link] = date_value(
@@ -201,7 +213,7 @@ def feed_entries(text: str, base_url: str) -> list[dict[str, Any]]:
                 "title": markdown_text(value("title")),
                 "url": url,
                 "summary": markdown_text(summary),
-                "body": summary,
+                "body": value("encoded") or value("content") or summary,
                 "published_at": published_date(
                     value("pubDate") or value("published") or value("updated")
                 ),
@@ -212,20 +224,104 @@ def feed_entries(text: str, base_url: str) -> list[dict[str, Any]]:
     return entries
 
 
+def release_note_entries(entries: list[dict[str, Any]], base_url: str) -> list[dict[str, Any]]:
+    """Separate dated platform notes so fixes and retirements cannot lend claims."""
+    found = []
+    for entry in entries:
+        sections = re.split(r"(<h3\b[^>]*>.*?</h3>)", entry["body"], flags=re.S | re.I)
+        if len(sections) == 1:
+            found.append(entry)
+            continue
+        for heading, body in zip(sections[1::2], sections[2::2]):
+            if markdown_text(heading).lower() not in ("feature", "announcement", "change"):
+                continue
+            page = page_data(body)
+            title = next((value for tag, value in page.blocks if tag in ("p", "h4")), "")
+            if not title:
+                continue
+            found.append({
+                **entry,
+                "title": title,
+                "url": base_url + ("#" + urlsplit(entry["url"]).fragment if urlsplit(entry["url"]).fragment else ""),
+                "summary": markdown_text(body),
+                "body": body,
+                "model_subject_required": True,
+            })
+    return found
+
+
+def _embedded_values(text: str, key: str) -> list[Any]:
+    """Read a named value from public Next.js payloads without running scripts."""
+    decoder = json.JSONDecoder()
+    values = []
+    for match in re.finditer(r'self\.__next_f\.push\(\[\d+,\s*("(?:\\.|[^"\\])*")\]\)', text):
+        payload = json.loads(match[1])
+        for marker in re.finditer(r'"' + re.escape(key) + r'"\s*:\s*', payload):
+            value, _ = decoder.raw_decode(payload, marker.end())
+            values.append(value)
+    return values
+
+
+def embedded_blog_entries(text: str, base_url: str) -> list[dict[str, Any]]:
+    """Read the official blog's serialized post cards, including dates and tags."""
+    posts: dict[str, dict[str, Any]] = {}
+    for post in _embedded_values(text, "post"):
+        if not isinstance(post, dict) or not post.get("slug") or not post.get("title"):
+            raise ValueError("official blog post card omitted its identity")
+        url = official_link(base_url.rstrip("/") + "/", post["slug"].rstrip("/") + "/")
+        if not url:
+            raise ValueError("official blog post card linked an unofficial article")
+        posts[url] = {
+            "title": post["title"], "url": url,
+            "summary": post.get("summary") or "", "body": "",
+            "published_at": published_date(post.get("date") or ""),
+            "is_release": any(RELEASE_WORDS.search(tag) for tag in post.get("tags") or []),
+        }
+    if not posts:
+        raise ValueError("official blog index published no readable post cards")
+    return list(posts.values())
+
+
+def article_list_entries(text: str, base_url: str) -> list[dict[str, Any]]:
+    """The research card's date belongs to its href, not a repeated navigation link."""
+    entries: dict[str, dict[str, Any]] = {}
+    for collection in _embedded_values(text, "articleList"):
+        if not isinstance(collection, dict) or not isinstance(collection.get("items"), list):
+            raise ValueError("official research index omitted its article list")
+        for item in collection["items"]:
+            url = official_link(base_url, item.get("href") or "")
+            if not item.get("href") or not item.get("title"):
+                raise ValueError("official research card omitted its title or article link")
+            if not url:
+                # Research hubs also link papers and repositories. Those cards
+                # do not authorize reading another host as this blog's article.
+                continue
+            entries[url] = {
+                "title": item["title"], "url": url,
+                "summary": item.get("description") or "", "body": "",
+                "published_at": published_date(item.get("date") or ""),
+            }
+    if not entries:
+        raise ValueError("official research index published no readable article cards")
+    return list(entries.values())
+
+
 def model_names(text: str, brands: str) -> list[str]:
-    """Read versioned model subjects, allowing new generations without an ID list."""
+    """Read versioned subjects and literal dashed names without a generation list."""
     # Lower-case narrative ends a spaced name. Dashed IDs and capitalized
     # qualifiers belong to the name; a title's release prose does not.
     pattern = re.compile(
-        rf"(?<![\w-])(?:{brands})(?:[- ](?:[A-Z][a-zA-Z]*))*[- ]?"
-        rf"(?:[A-Za-z]*\d[\w.-]*)(?:[- ](?:[A-Z][\w.-]*|preview|experimental))*"
+        rf"(?<![\w-])(?:"
+        rf"(?:{brands})(?:[- ](?:[A-Z][a-zA-Z]*))*[- ]?"
+        rf"(?:[A-Za-z]*\d[\w.-]*)(?:[- ](?!(?:{brands})(?:\b|[-]))(?:[A-Z][\w.-]*|preview|experimental))*"
+        rf"|(?:{brands})(?:-[A-Za-z][\w.]*)+)"
     )
     names = []
     for match in pattern.finditer(text.replace("‑", "-")):
         name = re.split(
-            r"\s+(?:API|Tech|Technical|Tops|NEW|Officially|Becomes|A|The)\b",
+            r"\s+(?:API|Tech|Technical|Tops|NEW|Officially|Becomes|A|The|For|With|Is|Are|Now|Released|Release)\b",
             match.group(),
-        )[0]
+        )[0].rstrip(" .")
         if name and normalize_model(name) not in {
             normalize_model(item) for item in names
         }:
@@ -244,6 +340,18 @@ def publication_names(title: str, summary: str, brands: str) -> list[str]:
             title,
         )
         names = model_names(expanded, brands)
+        first = names[0]
+        # A title may share both brand and version: GPT-9 Quartz, Opal, and Jade.
+        # Expand only a complete coordinated name list, never nearby funding or
+        # benchmark numbers. The publication supplies every qualifier itself.
+        version = re.fullmatch(r"(.*?\d[\d.]*)([- ])([A-Z][\w.-]*)", first)
+        tail = title[title.find(first) + len(first):].split(":", 1)[0]
+        qualifier = r"[A-Z][\w.-]*"
+        if version and re.fullmatch(rf"(?:,\s*{qualifier})*,?\s+and\s+{qualifier}", tail):
+            names.extend(
+                version[1] + version[2] + word
+                for word in re.findall(rf"(?:,\s*|\band\s+)({qualifier})", tail)
+            )
     detailed = model_names(summary, brands)
     if len(names) == 1 and re.search(r"\d$", names[0]):
         variants = [
@@ -392,6 +500,18 @@ def release_facts(name: str, names: list[str], paragraphs: list[str]) -> dict[st
     }
     pricing_notes: list[str] = []
     offers = []
+    brand = re.match(r"[A-Za-z]+", name)
+    # An article can discuss an unannounced sibling as well as its title subject.
+    # Its literal longer name still owns its clauses, without discovering that
+    # sibling or losing the single subject of an anaphoric API-access sentence.
+    evidence_names = list(dict.fromkeys([
+        *names,
+        *(
+            subject
+            for paragraph in paragraphs
+            for subject in model_names(paragraph, re.escape(brand[0]))
+        ),
+    ])) if brand else names
     for paragraph in paragraphs:
         scope: list[str] = []
         clauses = re.split(
@@ -399,14 +519,13 @@ def release_facts(name: str, names: list[str], paragraphs: list[str]) -> dict[st
             paragraph,
         )
         for clause in clauses:
-            mentioned = referenced_models(clause, names)
+            mentioned = referenced_models(clause, evidence_names)
             if mentioned:
                 scope = mentioned
             if not mentioned:
                 # A single-model article can still compare other generations or
                 # competitors. Their explicitly named rates and access are not
                 # anaphoric claims about the article's subject.
-                brand = re.match(r"[A-Za-z]+", name)
                 namespace = (
                     model_names(clause, re.escape(brand.group())) if brand else []
                 )

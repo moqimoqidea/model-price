@@ -138,7 +138,7 @@ class AntLingPricingTests(unittest.TestCase):
             self.assertIn(adapters["ant-ling"], select_catalog_providers(adapters))
         self.assertEqual(client.requests, [])
 
-    def test_unregistered_introductions_and_news_are_reported_honestly(self) -> None:
+    def test_absent_introductions_and_an_unreadable_registered_blog_are_explicit(self) -> None:
         records = self.adapter().catalog_records()
         descriptions = DescriptionResolver({}).resolve_many(query_targets("ling", records))
         self.assertTrue(all(item["status"] == "not_found" for item in descriptions))
@@ -147,8 +147,9 @@ class AntLingPricingTests(unittest.TestCase):
         publications = read_publications(
             "ant-ling", client, datetime.fromisoformat("2026-10-01T00:00:00+08:00")
         )
-        self.assertEqual(publications["status"], "catalogue_only")
-        self.assertEqual(client.requests, [])
+        self.assertEqual(publications["status"], "source_error")
+        self.assertEqual(publications["coverage"], "recent_official_news")
+        self.assertEqual(client.requests, [publications["source"]["url"]])
 
 
 class AntLingRetirementTests(unittest.TestCase):

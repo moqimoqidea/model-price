@@ -20,8 +20,9 @@
 | 阿里云百炼、火山引擎方舟、腾讯云 TokenHub、百度智能云千帆、DeepSeek 原厂、月之暗面 Kimi、智谱 BigModel、MiniMax 原厂、小米 MiMo、快手可灵、蚂蚁大模型 | OpenAI、Anthropic、Google Gemini、xAI、Mistral AI、OpenRouter、Google Cloud Vertex AI、AWS Bedrock、Microsoft Azure Foundry |
 
 蚂蚁大模型的渠道 id 为 `ant-ling`，读取官方人民币价目与下架文档，保留限时优惠价、
-原价和优惠原文。同页的第三方平台报价归属各自渠道。当前未登记蚂蚁模型介绍与独立
-发布来源，分别如实标记 `not_found` 和 `catalogue_only`。
+原价和优惠原文。同页的第三方平台报价归属各自渠道。当前独立模型介绍仍标记为
+`not_found`；`delta` 另读[官方博客](https://developer.ant-ling.com/en/blogs/)中的模型发布，
+保留公告自己的介绍与来源，研究权重发布不等于该渠道 API 已上架。
 
 海外渠道又分两类：**模型原厂**（OpenAI、Anthropic、Google Gemini、xAI、Mistral AI）按模型名推断，
 **聚合与云渠道**（OpenRouter、Google Cloud Vertex AI、AWS Bedrock、Microsoft Azure Foundry）
@@ -277,6 +278,10 @@ JSON 和历史基线仍保留完整金额与条件，不能为了简短修改原
 仍以价格目录为入口，公告发现属于 `delta`。各渠道的核查发现与边界见
 [发布来源核查](references/announcement-audit.md)，来源维护规则见
 [source-notes.md](references/source-notes.md#model-announcements)。
+
+同一渠道的博客、官方更新页和能力目录会独立读取；其中一处失败，其余可读发布仍会展示，
+但不会推进公告历史。智谱还读取 Z.ai 官方更新页及已核验的 GLM Legal 测试申请文章；
+Z.ai 尚无可读的博客总索引，未在更新页或目录出现的其他独立文章仍需登记其官方链接。
 
 **退役时间单独监控。** `delta` 每次重新读取各渠道可公开访问的官方下线公告或模型目录，
 把公告新增、公告日期修订、停止新购（EOM）、自动切换和服务下线（EOS）到点列为变化。

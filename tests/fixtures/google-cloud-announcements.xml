@@ -1,0 +1,14 @@
+<feed xmlns="http://www.w3.org/2005/Atom">
+<entry><title>October 07, 2026</title>
+<link rel="alternate" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/docs/release-notes#October_07_2026"/>
+<updated>2026-10-07T00:00:00-07:00</updated>
+<content type="html"><![CDATA[
+<h3>Feature</h3><p><strong>Anthropic's Claude Haiku 9.5</strong></p>
+<p>Claude Haiku 9.5 is available in Model Garden.</p>
+<h3>Feature</h3><p><strong>xAI's Grok 9.7</strong></p>
+<p>Grok 9.7 is available in public preview in Model Garden.</p>
+<h3>Fixed</h3><p>Introducing fixes for Gemini 1 Legacy.</p>
+<h3>Deprecated</h3><p>Claude 1 Old is no longer available.</p>
+<h3>Feature</h3><p><strong>Fine-tuning now available</strong></p>
+<p>Fine-tuning for Gemini 9 Pro is available only to selected developers.</p>
+]]></content></entry></feed>

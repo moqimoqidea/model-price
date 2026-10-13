@@ -65,6 +65,7 @@ Standard library only, Python 3, no install step, no build step.
 │       ├── announcements/       official publication, access, and quoted-rate history
 │       │   ├── core.py          independent archive, identity joins, and change causes
 │       │   ├── parsing.py       feeds, article subjects, and scoped official claims
+│       │   ├── documents.py     literal blog data and article prose, without running JavaScript
 │       │   └── sources.py       each channel's own public discovery policy
 │       ├── reporting.py         the shared wording: one value, written once
 │       ├── messages.py          the two plain-text messages those values are laid into

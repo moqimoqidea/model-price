@@ -19,7 +19,13 @@ SCRIPTS = Path(__file__).parents[1] / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from model_price.announcements.core import compare_announcements
+from model_price.announcements.core import compare_announcements, scan_announcements
+from model_price.announcements.documents import (
+    compiled_article_details,
+    compiled_blog_entries,
+    read_public_article,
+    read_rspress_blog_entries,
+)
 from model_price.announcements.parsing import (
     article_details,
     feed_entries,
@@ -35,8 +41,15 @@ from model_price.announcements.sources import (
     INVENTORY_SOURCES,
     NEWS_SOURCES,
     QWEN_BLOG_API,
+    KIMI_BLOG_URL,
     SEED_MODELS_URL,
+    ZHIPU_BLOG_URL,
+    ZHIPU_UPDATES_URL,
+    XIAOMI_UPDATES_URL,
+    XIAOMI_BLOG_URL,
+    XIAOMI_BLOG_ASSETS,
     read_publications,
+    seed_blog_url,
 )
 from model_price.changes import changed_model_groups
 from model_price.delta import scan_providers
@@ -93,6 +106,13 @@ ARGON_FEED = rss(
         )
     ]
 )
+
+FIXTURES = Path(__file__).parent / "fixtures"
+LEGAL_MODULE_URL = "https://z.ai/blog/assets/legal-current.js"
+LEGAL_SHELL = (FIXTURES / "zai-article-shell.html").read_text(encoding="utf-8")
+LEGAL_MODULE = (FIXTURES / "zai-article-module.js").read_text(encoding="utf-8")
+ZHIPU_OVERVIEW = "# 模型概览\n\n| 模型 | 特点 |\n| --- | --- |\n| GLM-9 | 通用文本模型 |\n"
+ZHIPU_UPDATES = '<Update label="2026-10-09" description=" GLM-9">A model for reasoning.</Update>'
 
 
 class MappingClient:
@@ -439,7 +459,8 @@ class DiscoverySourceTests(unittest.TestCase):
         )
         self.assertEqual(result["models"][0]["model_id"], "GLM-9")
         self.assertEqual(result["models"][0]["summary"], "复杂推理，尚未公开开放")
-        self.assertEqual(client.calls, [source.source_url])
+        self.assertIn(source.source_url, client.calls)
+        self.assertFalse(any("price" in url for url in client.calls))
 
     def test_seed_uses_the_official_models_group_not_the_research_link_list(
         self,
@@ -564,6 +585,369 @@ class DiscoverySourceTests(unittest.TestCase):
         self.assertEqual(result["source"]["url"], spec.url)
         self.assertEqual(result["coverage"], "recent_official_news")
         self.assertEqual(result["models"], [])
+
+
+class BlogDiscoveryRegressionTests(unittest.TestCase):
+    reference = datetime.fromisoformat("2026-10-13T12:00:00+08:00")
+
+    def zhipu_client(self) -> MappingClient:
+        return MappingClient({
+            ZHIPU_BLOG_URL: LEGAL_SHELL,
+            LEGAL_MODULE_URL: LEGAL_MODULE,
+            INVENTORY_SOURCES["zhipu"].source_url: ZHIPU_OVERVIEW,
+            ZHIPU_UPDATES_URL: ZHIPU_UPDATES,
+        })
+
+    def xiaomi_blog_client(self) -> MappingClient:
+        return MappingClient(json.loads((FIXTURES / "xiaomi-blog-documents.json").read_text()))
+
+    def test_unversioned_dashed_names_are_literal_subjects_not_compared_versions(self) -> None:
+        self.assertEqual(model_names("GLM-Legal: Legal model beta", "GLM"), ["GLM-Legal"])
+        self.assertEqual(model_names("Introducing GLM-Image and GLM-OCR", "GLM"), ["GLM-Image", "GLM-OCR"])
+        self.assertEqual(model_names("How GLM Built Its Own Infrastructure", "GLM"), [])
+        self.assertEqual(publication_names(
+            "GLM-Legal: Legal model beta", "Built on GLM-5.3-Flash.", "GLM",
+        ), ["GLM-Legal"])
+
+    def test_coordinated_version_and_brand_shorthand_needs_no_model_list(self) -> None:
+        self.assertEqual(publication_names(
+            "GPT-9 Quartz, Opal, and Jade: For production agents",
+            "Our latest models.", "GPT",
+        ), ["GPT-9 Quartz", "GPT-9 Opal", "GPT-9 Jade"])
+        self.assertEqual(publication_names(
+            "GPT-9 Quartz and $1B in funding", "Our latest model.", "GPT",
+        ), ["GPT-9 Quartz"])
+
+    def test_compiled_article_keeps_inline_text_but_not_attributes_or_comparison_rates(self) -> None:
+        details = compiled_article_details(LEGAL_MODULE)
+        self.assertEqual(details["published_at"], "2026-10-12")
+        self.assertIn("It combines legal reasoning with tools and document analysis.", details["paragraphs"])
+        facts = release_facts("GLM-Legal", ["GLM-Legal"], details["paragraphs"])
+        self.assertEqual(facts["access"]["developers"], "limited")
+        self.assertEqual(facts["announced_offers"], [])
+
+    def test_a_body_only_sibling_does_not_lend_its_access_to_the_title_subject(self) -> None:
+        facts = release_facts("Kling 9.0", ["Kling 9.0"], [
+            "Kling 9.0 is entering early access. Kling 9.0 Flash will be available to subscribers next month.",
+        ])
+        self.assertEqual(facts["access"]["status"], "limited")
+        self.assertEqual(facts["access"]["consumers"], "unknown")
+        self.assertNotIn("Flash", " ".join(facts["access"]["statements"]))
+
+    def test_article_module_comes_from_the_shell_and_shared_runtime_is_never_fetched(self) -> None:
+        client = self.zhipu_client()
+        self.assertEqual(read_public_article(client, ZHIPU_BLOG_URL)["title"], "GLM-Legal: Legal model beta")
+        self.assertEqual(client.calls, [ZHIPU_BLOG_URL, LEGAL_MODULE_URL])
+
+    def test_compiled_article_rejects_dynamic_children_and_fake_metadata_inside_prose(self) -> None:
+        for body in (
+            LEGAL_MODULE.replace("children:`GLM-Legal is our new model for legal workflows.`", "children:runtimeClaim"),
+            LEGAL_MODULE.replace("legal workflows.", "legal ${runtimeClaim} workflows."),
+            'const fake = "date:`2026-10-12`,title:`GLM-Legal`";',
+            '// date:`2026-10-12`,title:`GLM-Legal`\n',
+        ):
+            with self.subTest(body=body[:70]), self.assertRaises(SourceError):
+                compiled_article_details(body)
+
+    def test_quoted_jsx_examples_cannot_supply_article_paragraphs(self) -> None:
+        example = 'const example = ".jsx)(t.p,{children:`GLM-Legal is available to all API users.`})";'
+        details = compiled_article_details(LEGAL_MODULE + example)
+        self.assertFalse(any("available to all" in paragraph for paragraph in details["paragraphs"]))
+
+    def test_article_shell_rejects_foreign_modules_and_unreadable_bodies(self) -> None:
+        for body in ("<h1>Documentation</h1>", LEGAL_SHELL.replace("/blog/assets/legal-current.js", "https://foreign.example/claim.js")):
+            client = MappingClient({ZHIPU_BLOG_URL: body})
+            with self.subTest(body=body), self.assertRaises(SourceError):
+                read_public_article(client, ZHIPU_BLOG_URL)
+            self.assertEqual(client.calls, [ZHIPU_BLOG_URL])
+
+    def test_zhipu_blog_updates_and_inventory_are_independent_and_all_registered(self) -> None:
+        client = self.zhipu_client()
+        result = read_publications("zhipu", client, self.reference)
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["coverage"], "official_news_and_inventory")
+        legal = next(item for item in result["models"] if item["model_id"] == "GLM-Legal")
+        self.assertEqual(legal["source_url"], ZHIPU_BLOG_URL)
+        self.assertEqual(legal["identity_kind"], "published_name")
+        self.assertEqual(legal["published_at"], "2026-10-12")
+        self.assertEqual(legal["summary"], "GLM-Legal is our new model for legal workflows.")
+        self.assertEqual(set(result["source"]["urls"]), {
+            ZHIPU_BLOG_URL, ZHIPU_UPDATES_URL, INVENTORY_SOURCES["zhipu"].source_url,
+        })
+        self.assertEqual(len(client.calls), 4)
+
+    def test_a_broken_component_keeps_all_other_readable_publications(self) -> None:
+        for broken in (ZHIPU_BLOG_URL, ZHIPU_UPDATES_URL, INVENTORY_SOURCES["zhipu"].source_url):
+            client = self.zhipu_client()
+            client.pages[broken] = SourceError("offline")
+            result = read_publications("zhipu", client, self.reference)
+            with self.subTest(source=broken):
+                self.assertEqual(result["status"], "source_error")
+                self.assertTrue(result["models"])
+                self.assertIn(broken, result["errors"][0])
+                if broken != ZHIPU_BLOG_URL:
+                    self.assertIn("GLM-Legal", [item["model_id"] for item in result["models"]])
+
+    def test_new_google_cloud_feed_separates_hosted_launches_from_other_notes(self) -> None:
+        spec = NEWS_SOURCES["google-cloud"]
+        client = MappingClient({spec.index_url: (FIXTURES / "google-cloud-announcements.xml").read_text()})
+        result = read_publications("google-cloud", client, self.reference)
+        self.assertEqual(result["status"], "available")
+        self.assertEqual([item["model_id"] for item in result["models"]], ["Claude Haiku 9.5", "Grok 9.7"])
+        self.assertEqual(client.calls, ["https://docs.cloud.google.com/feeds/gemini-enterprise-agent-platform-release-notes.xml"])
+        for item in result["models"]:
+            self.assertEqual(item["published_at"], "2026-10-07T00:00:00-07:00")
+            self.assertEqual(item["source_url"], spec.url + "#October_07_2026")
+            self.assertNotIn("fine-tuning", " ".join(item["access"]["statements"]))
+
+    def test_google_cloud_coordinated_and_availability_titles_are_model_publications(self) -> None:
+        spec = NEWS_SOURCES["google-cloud"]
+        feed = '''<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>October 12, 2026</title>
+        <link href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/release-notes"/>
+        <updated>2026-10-12</updated><content type="html"><![CDATA[
+        <h3>Feature</h3><p>Gemini 9.6 Flash and 9.5 Flash-Lite are generally available</p>
+        <p>Gemini 9.6 Flash and Gemini 9.5 Flash-Lite are available for production.</p>
+        <h3>Feature</h3><p>Anthropic's Claude Fable 9.1 is now available</p><p>Claude Fable 9.1 is available in Model Garden.</p>
+        ]]></content></entry></feed>'''
+        result = read_publications("google-cloud", MappingClient({spec.index_url: feed}), self.reference)
+        self.assertEqual([item["model_id"] for item in result["models"]], ["Gemini 9.6 Flash", "Gemini 9.5 Flash-Lite", "Claude Fable 9.1"])
+
+    def test_rss_full_content_owns_access_even_when_its_teaser_is_generic(self) -> None:
+        spec = NEWS_SOURCES["azure"]
+        feed = '''<rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><item>
+        <title>GPT-9 Quartz: In Microsoft Foundry</title><link>https://azure.microsoft.com/en-us/blog/quartz/</link>
+        <pubDate>Mon, 12 Oct 2026 12:00:00 +0000</pubDate><description>Our latest Azure model.</description>
+        <content:encoded><![CDATA[<p>GPT-9 Quartz is available only to selected API developers through Foundry.</p>]]></content:encoded>
+        </item></channel></rss>'''
+        result = read_publications("azure", MappingClient({spec.index_url: feed}), self.reference)
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["models"][0]["access"]["developers"], "limited")
+
+    def test_ant_blog_reads_structured_dates_and_release_tags_without_guest_posts(self) -> None:
+        spec = NEWS_SOURCES["ant-ling"]
+        posts = [{"post": post} for post in (
+            {"slug": "ling-9-release", "title": "Ling-9-flash: More Useful Work", "date": "2026-10-12", "tags": ["Model Release"], "summary": "A new model."},
+            {"slug": "guest", "title": "Ling-9-flash for AI Agents", "date": "2026-10-12", "tags": ["Insights"], "summary": "A guest deployment guide."},
+        )]
+        index = '<script>self.__next_f.push([1,' + json.dumps(json.dumps(posts)) + '])</script>'
+        url = spec.url + "ling-9-release/"
+        client = MappingClient({spec.index_url: index, url: "<h1>Ling-9-flash</h1><p>Ling-9-flash is a reasoning model.</p>"})
+        result = read_publications("ant-ling", client, self.reference)
+        self.assertEqual(result["status"], "available")
+        self.assertEqual([item["model_id"] for item in result["models"]], ["Ling-9-flash"])
+        self.assertEqual(result["models"][0]["published_at"], "2026-10-12")
+        self.assertEqual(client.calls, [spec.index_url, url])
+
+    def test_seed_blog_paginates_past_old_pinned_posts_and_reuses_its_inventory(self) -> None:
+        model_url = "https://seed.bytedance.com/en/blog/spatial-release"
+        def entry(title: str, slug: str, when: str) -> dict[str, Any]:
+            return {
+                "ArticleMeta": {"StatusEn": 2, "PublishDate": int(datetime.fromisoformat(when).timestamp() * 1000)},
+                "ArticleSubContentEn": {"Title": title, "TitleKey": slug, "Abstract": "A model."},
+            }
+        fresh = entry("Introducing SeedSpatial", "spatial-release", "2026-10-12T00:00:00+08:00")
+        inventory = {"loaderData": {"layout": {"footer_config": [{"titleEn": "Models", "content": [{"labelEn": "SeedSpatial", "linkEn": "/en/spatial"}]}]}}}
+        article = {"loaderData": {"(locale$)/blog/(id)/page": {"data": {"article": {
+            "SubArticle": fresh, "ContentEn": "<p>Today we introduce SeedSpatial for spatial reasoning.</p>",
+        }}}}}
+        client = MappingClient({
+            SEED_MODELS_URL: '<script>window._ROUTER_DATA = ' + json.dumps(inventory) + '</script>',
+            seed_blog_url(): json.dumps({"BaseResp": {"StatusCode": 0}, "sub_article_list": [entry("Introducing Seed1", "old", "2025-01-01T00:00:00+08:00")], "has_more": True, "next_page_token": "20"}),
+            seed_blog_url("20"): json.dumps({"BaseResp": {"StatusCode": 0}, "sub_article_list": [fresh], "has_more": True, "next_page_token": "40"}),
+            seed_blog_url("40"): json.dumps({"BaseResp": {"StatusCode": 0}, "has_more": False, "next_page_token": ""}),
+            model_url: '<script>window._ROUTER_DATA = ' + json.dumps(article) + '</script>',
+        })
+        result = read_publications("volcengine", client, self.reference)
+        self.assertEqual(result["status"], "available")
+        blog = next(item for item in result["models"] if item["source_url"] == model_url)
+        self.assertEqual(blog["model_id"], "SeedSpatial")
+        self.assertEqual(blog["published_at"], "2026-10-11T16:00:00+00:00")
+        self.assertEqual(client.calls.count(SEED_MODELS_URL), 1)
+        self.assertNotIn("https://seed.bytedance.com/en/blog/old", client.calls)
+
+    def test_seed_missing_initial_rows_or_repeated_pagination_are_source_errors(self) -> None:
+        for payload in (
+            {"BaseResp": {"StatusCode": 0}, "has_more": False},
+            {"BaseResp": {"StatusCode": 0}, "sub_article_list": [{"ArticleMeta": {"StatusEn": 1}}], "has_more": True, "next_page_token": "0"},
+        ):
+            client = MappingClient({seed_blog_url(): json.dumps(payload)})
+            result = read_publications("volcengine", client, self.reference)
+            with self.subTest(payload=payload):
+                self.assertEqual(result["status"], "source_error")
+                self.assertTrue(any("Seed official blog" in error for error in result["errors"]))
+
+    def test_seed_uses_the_official_subject_label_instead_of_headline_descriptors(self) -> None:
+        article_url = "https://seed.bytedance.com/en/blog/audio-release"
+        entry = {
+            "ArticleMeta": {"StatusEn": 2, "PublishDate": int(self.reference.timestamp() * 1000)},
+            "ArticleSubContentEn": {"Title": "Introducing Seed Audio 9.0 Audio Creation Model", "ImageTitle": "Seed Audio 9.0", "TitleKey": "audio-release"},
+        }
+        article = {"loaderData": {"(locale$)/blog/(id)/page": {"data": {"article": {
+            "SubArticle": entry, "ContentEn": "<p>Seed Audio 9.0 creates speech and sound.</p>",
+        }}}}}
+        client = MappingClient({
+            seed_blog_url(): json.dumps({"BaseResp": {"StatusCode": 0}, "sub_article_list": [entry], "has_more": False}),
+            article_url: '<script>window._ROUTER_DATA = ' + json.dumps(article) + '</script>',
+            SEED_MODELS_URL: SourceError("inventory unavailable"),
+        })
+        result = read_publications("volcengine", client, self.reference)
+        self.assertEqual([item["model_id"] for item in result["models"]], ["Seed Audio 9.0"])
+        self.assertEqual(result["status"], "source_error")
+
+    def test_xiaomi_update_bullets_publish_literal_variants_without_overview_or_prices(self) -> None:
+        updates = '''<h1>Model Release</h1><h2>2026-10-12 MiMo-V9 Series Release</h2>
+        <ul><li>mimo-v9-pro: A reasoning model.</li><li>mimo-v9-flash: A fast multimodal model.</li></ul>
+        <h2>2025-01-01 MiMo-V1 Release</h2><p>An older release.</p>'''
+        client = MappingClient({
+            XIAOMI_UPDATES_URL: updates,
+            INVENTORY_SOURCES["xiaomi"].source_url: SourceError("overview unavailable"),
+        })
+        result = read_publications("xiaomi", client, self.reference)
+        self.assertEqual([item["model_id"] for item in result["models"]], ["mimo-v9-pro", "mimo-v9-flash"])
+        self.assertTrue(all(item["published_at"] == "2026-10-12" for item in result["models"]))
+        self.assertTrue(all(item["announced_offers"] == [] for item in result["models"]))
+        self.assertEqual(result["status"], "source_error")
+
+    def test_xiaomi_blog_finds_unpriced_model_and_preserves_independent_inventory_failure(self) -> None:
+        client = self.xiaomi_blog_client()
+        client.pages.update({
+            INVENTORY_SOURCES["xiaomi"].source_url: SourceError("overview unavailable"),
+            XIAOMI_UPDATES_URL: '<h2>2026-10-11 MiMo-V8 Release</h2><p>MiMo-V8 is a text model.</p>',
+        })
+        result = read_publications("xiaomi", client, self.reference)
+        self.assertEqual([item["model_id"] for item in result["models"]], ["MiMo-V9", "MiMo-V8"])
+        self.assertEqual(result["status"], "source_error")
+        self.assertEqual(len(result["errors"]), 1)
+        model = result["models"][0]
+        self.assertEqual(model["source_url"], XIAOMI_BLOG_URL + "blog/new")
+        self.assertEqual(model["published_at"], "2026-10-12")
+        self.assertEqual(model["access"]["developers"], "public")
+        self.assertEqual(model["announced_offers"], [])
+        self.assertEqual(model["summary"], "MiMo-V9 is a reasoning model.")
+        self.assertEqual(set(result["source"]["urls"]), {
+            XIAOMI_BLOG_URL, INVENTORY_SOURCES["xiaomi"].source_url, XIAOMI_UPDATES_URL,
+        })
+        self.assertFalse(any("old" in url or "tutorial" in url or "lib-react" in url for url in client.calls))
+        self.assertEqual(len(client.calls), len(set(client.calls)))
+
+    def test_xiaomi_blog_success_composes_with_overview_and_model_updates(self) -> None:
+        client = self.xiaomi_blog_client()
+        client.pages.update({
+            INVENTORY_SOURCES["xiaomi"].source_url: '<table><tr><th>模型 ID</th><th>能力支持</th></tr><tr><td>mimo-v8</td><td>Text reasoning.</td></tr></table>',
+            XIAOMI_UPDATES_URL: '<h2>2026-10-11 MiMo-V8 Release</h2><p>MiMo-V8 is a text model.</p>',
+        })
+        result = read_publications("xiaomi", client, self.reference)
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["coverage"], "official_news_and_inventory")
+        self.assertEqual([item["model_id"] for item in result["models"]], ["MiMo-V9", "mimo-v8", "MiMo-V8"])
+
+    def test_compiled_blog_cards_ignore_quotes_comments_and_foreign_links(self) -> None:
+        text = '''const example = 'blogs:[{title:"Introducing MiMo-V1",link:"/fake"}]';
+        // blogs:[{title:"Introducing MiMo-V2",link:"/fake"}]
+        const index = {blogs:[{title:"Introducing MiMo-V9",link:"/blog/current",desc:"A reasoning model."},
+        {title:"A paper",link:"https://foreign.example/paper",desc:"Research"}]};'''
+        entries = compiled_blog_entries(text, XIAOMI_BLOG_URL)
+        self.assertEqual([entry["title"] for entry in entries], ["Introducing MiMo-V9"])
+        self.assertIsNone(entries[0]["published_at"])
+
+    def test_compiled_blog_cards_reject_computed_metadata_and_unreadable_card_lists(self) -> None:
+        for body in (
+            'const index={blogs:[{title:"MiMo-V9"+runtimeTitle,link:"/blog/current"}]};',
+            'const index={blogs:[{title:"MiMo-V9",link:`/blog/${runtimePath}`}]};',
+            'const index={blogs:[runtimeCard]};',
+            'const index={blogs:[{title:"MiMo-V9"}]};',
+        ):
+            with self.subTest(body=body), self.assertRaises(SourceError):
+                compiled_blog_entries(body, XIAOMI_BLOG_URL)
+
+    def test_rspress_blog_dates_are_scoped_to_article_routes_and_assets_read_once(self) -> None:
+        client = self.xiaomi_blog_client()
+        entries = read_rspress_blog_entries(
+            client, XIAOMI_BLOG_URL, asset_base=XIAOMI_BLOG_ASSETS, file_path="en/index.mdx",
+        )
+        self.assertEqual([entry["published_at"] for entry in entries], ["2026-10-12", "2025-01-01", None])
+        self.assertEqual(len(client.calls), 4)
+        self.assertEqual(len(client.calls), len(set(client.calls)))
+
+    def test_rspress_blog_rejects_a_changed_deployment_or_foreign_asset_host(self) -> None:
+        for mode in ("deployment", "script_host", "chunk"):
+            client = self.xiaomi_blog_client()
+            runtime = XIAOMI_BLOG_ASSETS + "static/js/index.current.js"
+            if mode == "deployment":
+                client.pages[runtime] = client.pages[runtime].replace(XIAOMI_BLOG_ASSETS, "https://foreign.example/")
+            elif mode == "script_host":
+                client.pages[XIAOMI_BLOG_URL] = client.pages[XIAOMI_BLOG_URL].replace(XIAOMI_BLOG_ASSETS, "https://foreign.example/")
+            else:
+                client.pages[runtime] = client.pages[runtime].replace('222:"cd34"', '333:"cd34"')
+            with self.subTest(mode=mode), self.assertRaises(SourceError):
+                read_rspress_blog_entries(client, XIAOMI_BLOG_URL, asset_base=XIAOMI_BLOG_ASSETS, file_path="en/index.mdx")
+            self.assertFalse(any("foreign.example" in url for url in client.calls))
+
+    def test_public_article_rejects_foreign_recursive_and_unreadable_frames(self) -> None:
+        url = XIAOMI_BLOG_URL + "blog/current"
+        for frame in ("https://foreign.example/article.html", url, "/article.html"):
+            client = MappingClient({url: '<iframe src="' + frame + '"></iframe>', XIAOMI_BLOG_URL + "article.html": "<p>No model article</p>"})
+            with self.subTest(frame=frame), self.assertRaises(SourceError):
+                read_public_article(client, url)
+            self.assertFalse(any("foreign.example" in target for target in client.calls))
+
+    def test_kimi_ai_uses_dated_article_cards_and_ignores_navigation_and_external_papers(self) -> None:
+        items = [
+            {"title": "Kimi K9", "href": "/blog/kimi-k9", "date": "2026-10-12"},
+            {"title": "Kimi K1", "href": "/blog/kimi-k1", "date": "2025-01-01"},
+            {"title": "Kimi Research Paper", "href": "https://papers.example/research", "date": "2026-10-12"},
+        ]
+        payload = {"articleList": {"items": items}}
+        index = '<nav><a href="/blog/kimi-k1">Kimi K1</a></nav><script>self.__next_f.push([1,' + json.dumps(json.dumps(payload)) + '])</script>'
+        url = "https://www.kimi.ai/blog/kimi-k9"
+        client = MappingClient({KIMI_BLOG_URL: index, url: "<h1>Kimi K9</h1><p>Kimi K9 is a reasoning model.</p>"})
+        result = read_publications("kimi", client, self.reference)
+        self.assertEqual(result["status"], "available")
+        self.assertEqual([item["model_id"] for item in result["models"]], ["Kimi K9"])
+        self.assertEqual(result["models"][0]["published_at"], "2026-10-12")
+        self.assertEqual(client.calls, [KIMI_BLOG_URL, url])
+
+    def test_kling_blog_can_discover_a_model_absent_from_both_capability_maps(self) -> None:
+        spec = NEWS_SOURCES["kling"]
+        url = "https://klingai.com/blog/new-kling"
+        client = MappingClient({
+            spec.index_url: '<a href="/blog/new-kling"><span>Oct 12, 2026</span><h2>Introducing Kling 9.0</h2></a><a href="/blog/guide"><h2>Kling 9.0 Multiple Keyframes: A Guide</h2></a>',
+            url: "<h1>Introducing Kling 9.0</h1><p>Today we introduce Kling 9.0 for video creation.</p>",
+            **{page: "| 模型 | 描述 |\n| --- | --- |\n| Kling 1.0 | 旧模型 |\n" for page in INVENTORY_SOURCES["kling"].source_urls},
+        })
+        result = read_publications("kling", client, self.reference)
+        self.assertEqual(result["status"], "available")
+        self.assertIn("Kling 9.0", [item["model_id"] for item in result["models"]])
+        self.assertEqual(result["coverage"], "official_news_and_inventory")
+        self.assertNotIn("https://klingai.com/blog/guide", client.calls)
+
+    def test_partial_composite_failure_preserves_archive_then_reports_recovered_access(self) -> None:
+        class ZhipuAdapter(Adapter):
+            provider_id = "zhipu"
+            provider_name = "智谱"
+        client = self.zhipu_client()
+        with tempfile.TemporaryDirectory() as directory:
+            store = SnapshotStore(Path(directory))
+            def scan(at: str) -> dict[str, Any]:
+                return scan_announcements(
+                    ZhipuAdapter(), client, [], store, at,
+                    parse_baseline_selection(None), datetime.fromisoformat(at),
+                )
+            first = scan("2026-10-13T12:00:00+08:00")
+            self.assertEqual(first["status"], "baseline_created")
+            self.assertEqual(first["model_count"], 2)
+            legal = next(item for item in first["models"] if item["model_id"] == "GLM-Legal")
+            self.assertEqual(legal["catalog_status"], "not_listed")
+            client.pages[LEGAL_MODULE_URL] = SourceError("offline")
+            failed = scan("2026-10-13T13:00:00+08:00")
+            self.assertEqual(failed["status"], "source_error")
+            self.assertEqual(store.read("announcements-zhipu")["captured_at"], "2026-10-13T12:00:00+08:00")
+            self.assertIn("GLM-Legal", [item["model_id"] for item in failed["models"]])
+            client.pages[LEGAL_MODULE_URL] = LEGAL_MODULE.replace("Apply for API access: ", "GLM-Legal is generally available via its API. ")
+            recovered = scan("2026-10-13T14:00:00+08:00")
+            self.assertEqual(recovered["status"], "changed")
+            self.assertEqual([change["kind"] for change in recovered["changes"]], ["access_changed"])
 
 
 class AdditionalEvidenceTests(unittest.TestCase):

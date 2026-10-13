@@ -205,9 +205,14 @@ result contains:
 
 - `status`: `changed`, `unchanged`, `baseline_created`, `baseline_not_found`,
   `no_announcements`, `source_error`, or `catalogue_only`
-- `source.url/kind`, `coverage`, and `note`: the registered source and its scope,
-  retained even on read failures. `coverage` is `recent_official_news`,
-  `official_model_inventory`, or `catalogue_only` (with `source: null`)
+- `source.url/kind`, optional `source.urls`, `coverage`, and `note`: registered
+  evidence and its scope, retained even on read failures. `source.url` is the
+  primary entry point; `source.urls` lists distinct entry points when independent
+  readers share a channel. `coverage` is `recent_official_news`,
+  `official_model_inventory`, `official_news_and_inventory`, or `catalogue_only`
+  (with `source: null`). A partial composite failure retains readable models but
+  is `source_error` and cannot advance the announcement archive. The optional
+  provenance fields do not affect version-1 announcement comparisons
 - `baseline_at`, `last_successful_at`: independently selected and latest successful
   announcement archive timestamps
 - `models[]`, optional `model_count`: all retained publication records, not only
