@@ -206,6 +206,77 @@ class HttpClientTests(unittest.TestCase):
             self.client(opener).get_text("https://example.test/a")
         self.assertEqual(len(opener.requests), 2)
 
+    def test_an_edge_mitigated_403_is_retried_with_exponential_backoff(self):
+        opener = SequenceOpener(
+            http_error(403, "Forbidden", headers={"x-vercel-mitigated": "deny"}),
+            http_error(403, "Forbidden", headers={"x-vercel-mitigated": "deny"}),
+            Response(b"price table"),
+        )
+        client = self.client(opener)
+
+        self.assertEqual(client.get_text("https://example.test/a"), "price table")
+        self.assertEqual(self.timer.delays, [2.0, 4.0])
+        self.assertEqual(len(opener.requests), 3)
+
+    def test_an_edge_mitigated_403_that_persists_reports_its_attempts(self):
+        opener = SequenceOpener(
+            *[
+                http_error(403, "Forbidden", headers={"x-vercel-mitigated": "deny"})
+                for _ in range(3)
+            ]
+        )
+        with self.assertRaisesRegex(
+            SourceError, r"request rejected.*3 attempt\(s\).*HTTP 403.*edge mitigation"
+        ):
+            self.client(opener).get_text("https://example.test/a")
+        self.assertEqual(len(opener.requests), 3)
+
+    def test_an_exhausted_edge_mitigation_leaves_the_rest_of_the_host_readable(self):
+        opener = SequenceOpener(
+            *[
+                http_error(403, "Forbidden", headers={"x-vercel-mitigated": "deny"})
+                for _ in range(3)
+            ],
+            Response(b"second document"),
+        )
+        client = self.client(opener)
+
+        with self.assertRaises(SourceError):
+            client.get_text("https://example.test/a")
+        self.assertEqual(client.get_text("https://example.test/b"), "second document")
+
+    def test_a_plain_403_without_an_edge_marker_is_not_retried(self):
+        opener = SequenceOpener(
+            http_error(403, "Forbidden"),
+            Response(b"should not be read"),
+        )
+        with self.assertRaisesRegex(
+            SourceError, r"request rejected.*1 attempt\(s\).*HTTP 403"
+        ):
+            self.client(opener).get_text("https://example.test/a")
+        self.assertEqual(len(opener.requests), 1)
+
+    def test_a_cdn_403_that_also_challenges_stays_an_anti_bot_challenge(self):
+        opener = SequenceOpener(
+            *[
+                http_error(
+                    403,
+                    "Forbidden",
+                    headers={"cf-mitigated": "challenge", "x-vercel-mitigated": "deny"},
+                )
+                for _ in range(2)
+            ],
+            Response(b"should not be read"),
+        )
+        client = self.client(opener, attempts=2)
+
+        with self.assertRaisesRegex(SourceError, r"anti-bot challenge"):
+            client.get_text("https://example.test/a")
+        self.assertEqual(len(opener.requests), 2)
+        # A challenge is host-wide, so it still stops this host for the run.
+        with self.assertRaisesRegex(SourceError, r"paused"):
+            client.get_text("https://example.test/b")
+
     def test_bare_timeout_always_has_a_nonempty_diagnostic(self):
         opener = SequenceOpener(TimeoutError())
         with self.assertRaisesRegex(

@@ -48,6 +48,7 @@ from model_price.announcements.sources import (
     XIAOMI_UPDATES_URL,
     XIAOMI_BLOG_URL,
     XIAOMI_BLOG_ASSETS,
+    discovery_policy,
     read_publications,
     seed_blog_url,
 )
@@ -908,19 +909,33 @@ class BlogDiscoveryRegressionTests(unittest.TestCase):
         self.assertEqual(result["models"][0]["published_at"], "2026-10-12")
         self.assertEqual(client.calls, [KIMI_BLOG_URL, url])
 
-    def test_kling_blog_can_discover_a_model_absent_from_both_capability_maps(self) -> None:
-        spec = NEWS_SOURCES["kling"]
-        url = "https://klingai.com/blog/new-kling"
+    def test_kling_reads_only_its_capability_maps_and_never_requests_the_blog(self) -> None:
+        # The blog index is readable but every article behind it is a client-rendered
+        # shell, so the registered release source could never prove a subject. Kling
+        # therefore keeps the two capability maps and no news index at all.
+        self.assertNotIn("kling", NEWS_SOURCES)
+        source = INVENTORY_SOURCES["kling"]
+        video, image = source.source_urls
         client = MappingClient({
-            spec.index_url: '<a href="/blog/new-kling"><span>Oct 12, 2026</span><h2>Introducing Kling 9.0</h2></a><a href="/blog/guide"><h2>Kling 9.0 Multiple Keyframes: A Guide</h2></a>',
-            url: "<h1>Introducing Kling 9.0</h1><p>Today we introduce Kling 9.0 for video creation.</p>",
-            **{page: "| 模型 | 描述 |\n| --- | --- |\n| Kling 1.0 | 旧模型 |\n" for page in INVENTORY_SOURCES["kling"].source_urls},
+            video: "| 模型 | 描述 |\n| --- | --- |\n| Kling 1.0 | 旧模型 |\n",
+            image: "| 模型 | 描述 |\n| --- | --- |\n| Kling Image 1.0 | 旧图像模型 |\n",
         })
         result = read_publications("kling", client, self.reference)
         self.assertEqual(result["status"], "available")
-        self.assertIn("Kling 9.0", [item["model_id"] for item in result["models"]])
-        self.assertEqual(result["coverage"], "official_news_and_inventory")
-        self.assertNotIn("https://klingai.com/blog/guide", client.calls)
+        self.assertEqual(result["coverage"], "official_model_inventory")
+        self.assertEqual(
+            sorted(item["model_id"] for item in result["models"]),
+            ["Kling 1.0", "Kling Image 1.0"],
+        )
+        self.assertEqual(result["source"]["url"], source.source_url)
+        self.assertNotIn("https://klingai.com/global/blog", client.calls)
+
+    def test_a_channel_note_names_only_the_sources_it_actually_reads(self) -> None:
+        inventory_only = discovery_policy("kling")
+        self.assertEqual(inventory_only["coverage"], "official_model_inventory")
+        self.assertNotIn("新闻读取", inventory_only["note"])
+        self.assertIn("能力目录", inventory_only["note"])
+        self.assertIn("新闻读取", discovery_policy("openai")["note"])
 
     def test_partial_composite_failure_preserves_archive_then_reports_recovered_access(self) -> None:
         class ZhipuAdapter(Adapter):

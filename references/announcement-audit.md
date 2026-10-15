@@ -172,7 +172,7 @@ Z.ai 的 `/blog`、博客 sitemap 和 feed 均未提供可读总索引。因此�
 | 智谱 BigModel | [能力目录](https://docs.bigmodel.cn/cn/guide/start/model-overview.md)、[Z.ai 更新](https://docs.z.ai/release-notes/new-released.md)、[GLM-Legal](https://z.ai/blog/glm-legal) | 三处均可读。测试申请模型与当前价格目录分别保留；总博客索引的缺口见上文。 |
 | MiniMax | 用户指定的[官方新闻](https://www.minimax.io/news) | 已是登记入口，本次可读。当前服务端响应主要提供模型导航并带新闻页跳转标记；沿已公布的第一方链接确认 M3、M2.7、M2.5、H3、Music 3.0。未标日期的页面只证明首次发现。 |
 | 小米 MiMo | [研究博客](https://mimo.xiaomi.com/)、[能力目录](https://mimo.mi.com/docs/zh-CN/quick-start/summary/model)、[模型更新](https://mimo.mi.com/docs/en-US/updates/model) | 用户修复访问后，三处均可读。新增博客读取，目录包含 More 中折叠卡片；博客同域请求 12 次，CDN 数据 3 次，低于默认单域名额度。 |
-| 快手可灵 | [官方博客](https://klingai.com/global/blog)及视频、图片能力图 | 均可读。新增独立发布入口；Kling 4.0 有发布正文，“Kling 4.0 Multiple Keyframes”教程不成为另一个模型。 |
+| 快手可灵 | [视频、图片能力图](https://klingai.com/document-api/guides/capability-map/video.md) | 两张能力图可读。博客索引虽然服务端渲染，但 `/blog/<slug>` 正文页一律是客户端渲染外壳：无标题、可见文本为零，索引到的模型名在 HTML 中根本不存在，正文佐证因此永远无法成立，该入口自登记起每次都报读取失败。已移除该发布入口，可灵改为只读两张能力图。 |
 | 蚂蚁大模型 | [官方博客](https://developer.ant-ling.com/en/blogs/) | 可读，新增 Next.js 发布卡片读取，本次识别 Ling-3.0-flash。客座部署指南和比较对象不成为发布主体。 |
 | OpenAI | [新闻 RSS](https://openai.com/news/rss.xml)及规范文章地址 | 可读，继续用官网 UA 与末尾斜杠读取正文；新增无数字的字面名称识别同样作用于官方研究发布。 |
 | Anthropic | [官方新闻](https://www.anthropic.com/news) | 可读，同文的 Fable、Mythos 等模型保留各自开放证据。 |

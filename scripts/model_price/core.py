@@ -47,6 +47,10 @@ BROWSER_HEADERS = {
     "user-agent": DEFAULT_USER_AGENT,
 }
 AUTHENTICATION_HOSTS = frozenset({"accounts.google.com", "login.microsoftonline.com"})
+# An edge firewall can refuse a request it would serve a moment later. Vercel marks
+# those refusals with a mitigation header; a 403 without one is a permanent answer,
+# so only the marked form is retried.
+EDGE_MITIGATION_MARKERS = (("x-vercel-mitigated", "deny"),)
 CHALLENGE_MARKERS = (
     b"/cdn-cgi/challenge-platform/",
     b"window._cf_chl_opt",
@@ -248,10 +252,11 @@ class HttpClient:
                     challenge = (
                         exc.code in {200, 403, 429, 503} and self._is_challenge(exc)
                     )
+                    mitigated = not challenge and self._is_edge_mitigation(exc)
                     retryable = (
                         not challenge_retried
                         if challenge
-                        else exc.code in RETRYABLE_HTTP_STATUSES
+                        else mitigated or exc.code in RETRYABLE_HTTP_STATUSES
                     )
                     retry_after = self._parse_retry_after(
                         (exc.headers or {}).get("Retry-After")
@@ -264,7 +269,11 @@ class HttpClient:
                         raise SourceError(message) from exc
                     if not retryable or attempt >= attempts:
                         message = self._failure_message(
-                            error_url, exc, attempt, challenge=challenge
+                            error_url,
+                            exc,
+                            attempt,
+                            challenge=challenge,
+                            mitigated=mitigated,
                         )
                         if challenge or exc.code == 429:
                             self._pause_host(error_url, message)
@@ -396,6 +405,17 @@ class HttpClient:
             re.search(br"<title>\s*(?:just a moment|attention required)[^<]*</title>", prefix)
         )
 
+    @staticmethod
+    def _is_edge_mitigation(exc: urllib.error.HTTPError) -> bool:
+        """An edge firewall's marked refusal, which is retried rather than believed."""
+        if exc.code != 403:
+            return False
+        headers = {
+            str(name).lower(): str(value).strip().lower()
+            for name, value in (exc.headers or {}).items()
+        }
+        return any(headers.get(name) == value for name, value in EDGE_MITIGATION_MARKERS)
+
     def _failure_message(
         self,
         url: str,
@@ -403,6 +423,7 @@ class HttpClient:
         attempts: int,
         *,
         challenge: bool = False,
+        mitigated: bool = False,
     ) -> str:
         host = urllib.parse.urlsplit(url).hostname or "unknown host"
         if isinstance(exc, urllib.error.HTTPError):
@@ -415,6 +436,8 @@ class HttpClient:
             detail = f"HTTP {exc.code}" + (f" {reason}" if reason else "")
             if challenge:
                 detail += " (anti-bot challenge)"
+            elif mitigated:
+                detail += " (edge mitigation)"
             return f"{category} by {host} after {attempts} attempt(s): {detail}; source: {url}"
         detail = str(exc).strip() or type(exc).__name__
         reason = getattr(exc, "reason", None)

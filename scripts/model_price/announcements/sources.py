@@ -82,7 +82,6 @@ class NewsSource:
     subject_inventory: Callable[[Any], list[str]] | None = None
     entry_reader: Callable[[Any], list[dict[str, Any]]] | None = None
     article_reader: Callable[[Any, str], dict[str, Any]] | None = None
-    requires_release_signal: bool = False
 
 
 def mistral_subject_inventory(client: Any) -> list[str]:
@@ -181,11 +180,6 @@ NEWS_SOURCES = {
         subject_inventory=seed_subject_inventory,
         entry_reader=lambda client: _seed_news_entries(client),
         article_reader=lambda client, url: _read_seed_article(client, url),
-    ),
-    "kling": NewsSource(
-        "https://klingai.com/global/blog", "https://klingai.com/global/blog",
-        r"Kling|KLING", transport="html", article_path=r"/blog/[^/]+$",
-        requires_release_signal=True,
     ),
     "ant-ling": NewsSource(
         ANT_BLOG_URL, ANT_BLOG_URL, r"Ling|Ring|Ming",
@@ -355,7 +349,7 @@ def _read_news(
         if entry.get("model_subject_required") and not model_subject:
             continue
         release_signal = entry.get("is_release") or RELEASE_WORDS.search(title + " " + entry["summary"])
-        if not release_signal and (spec.requires_release_signal or not model_subject):
+        if not release_signal and not model_subject:
             continue
         details = entry.get("details") or (article_details(entry["body"]) if entry["body"] else {})
         detail_error = ""
@@ -747,7 +741,11 @@ def discovery_policy(provider_id: str) -> dict[str, Any]:
     source: dict[str, Any] = {"url": urls[0], "kind": "official_model_discovery"}
     if len(urls) > 1:
         source["urls"] = urls
-    note = f"新闻读取最近 {NEWS_WINDOW_DAYS} 天的官方发布；已收录历史与当前能力目录保留。"
+    note = (
+        f"新闻读取最近 {NEWS_WINDOW_DAYS} 天的官方发布；已收录历史与当前能力目录保留。"
+        if "recent_official_news" in coverages
+        else "仅读取当前能力目录；已收录历史保留。"
+    )
     news = NEWS_SOURCES.get(provider_id)
     if news and news.transport == "article":
         note += "该博客未提供可读总索引，独立文章仅覆盖已登记的官方链接。"
