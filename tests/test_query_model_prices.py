@@ -894,6 +894,38 @@ class PromotionNoteTests(unittest.TestCase):
             },
         )
 
+    def test_a_promotion_sentence_keeps_its_soft_wrapped_date(self):
+        document = (
+            "    Priority processing was renamed Fast mode on July 30,\n"
+            "    2026. GPT-5.6 Sol’s promotional pricing is available at least through\n"
+            "    November 21, 2026.\n"
+        )
+        self.assertEqual(promotion_notes(document, names={"gpt-5.6-sol"}), {
+            "gpt-5.6-sol": [
+                "GPT-5.6 Sol’s promotional pricing is available at least through "
+                "November 21, 2026."
+            ]
+        })
+
+    def test_promotion_paragraphs_and_list_items_keep_their_own_scope(self):
+        for document in (
+            "Model-A is available\n\nModel-B has promotional pricing",
+            "- Model-A is available\n- Model-B has promotional pricing",
+            "<p>Model-A is available</p><p>Model-B has promotional pricing</p>",
+        ):
+            with self.subTest(document=document):
+                self.assertEqual(promotion_notes(document, names={"Model-A", "Model-B"}), {
+                    "Model-B": ["Model-B has promotional pricing"]
+                })
+
+    def test_table_rows_and_code_examples_cannot_extend_a_promotion_sentence(self):
+        document = (
+            "Model-A is available\n"
+            "| Model | Notes |\n| --- | --- |\n| Model-B | promotional pricing |\n"
+            "\n```text\nModel-A has promotional pricing\n```\n"
+        )
+        self.assertEqual(promotion_notes(document, names={"Model-A"}), {})
+
     def test_a_model_the_document_explains_nothing_about_gets_no_note(self):
         document = (
             "GPT-5.6 Sol\u2019s promotional pricing is available at least through "

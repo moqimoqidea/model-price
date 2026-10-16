@@ -6,7 +6,7 @@ import json
 import re
 from datetime import datetime
 from html.parser import HTMLParser
-from typing import Any, Iterable, NamedTuple
+from typing import Any, Iterable, Iterator, NamedTuple
 
 from .models import model_family, normalize_model
 from .pricing import (
@@ -1271,12 +1271,43 @@ def promotion_notes(document: str, *, names: Iterable[str]) -> dict[str, list[st
     return notes
 
 
-def _sentences(document: str) -> list[str]:
-    """The document's own sentences, in the order it published them."""
+def prose_blocks(document: str) -> Iterator[tuple[bool, str]]:
+    """Yield explicit list items and paragraphs, retaining their separate scopes."""
     visible = HTML_NON_TEXT_RE.sub("", document)
+    # Inline spans can split a model name from its terms. Only actual block or
+    # explicit line breaks separate prose; physical newlines can wrap a sentence.
+    visible = re.sub(
+        r"<br\s*/?>|</(?:p|li|div|td|tr|button|h[1-6])\s*>",
+        "\n\n", visible, flags=re.I,
+    )
+    pending: list[str] = []
+    is_list = False
+    fence = ""
+    for line in [*visible.splitlines(), ""]:
+        stripped = line.strip()
+        marker = re.match(r"^(`{3,}|~{3,})", stripped)
+        boundary = not stripped or marker is not None or stripped.startswith(("|", "#"))
+        starts_list = bool(LIST_MARKER_RE.match(line))
+        if boundary or starts_list or (is_list and not line[:1].isspace()):
+            if pending:
+                yield is_list, " ".join(pending)
+                pending = []
+            is_list = starts_list
+        if marker:
+            if not fence:
+                fence = marker[1][0]
+            elif marker[1][0] == fence:
+                fence = ""
+            continue
+        if not boundary and not fence:
+            pending.append(_strip_list_marker(stripped))
+
+
+def _sentences(document: str) -> list[str]:
+    """Join soft wraps without carrying a model's scope across block boundaries."""
     return [
         stripped
-        for line in HTML_TEXT_BREAK_RE.sub("\n", visible).splitlines()
-        for part in SENTENCE_SPLIT_RE.split(clean_text(line))
-        if (stripped := _strip_list_marker((part or "").strip()))
+        for _, paragraph in prose_blocks(document)
+        for part in SENTENCE_SPLIT_RE.split(clean_text(paragraph))
+        if (stripped := part.strip())
     ]

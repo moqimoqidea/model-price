@@ -150,7 +150,10 @@ def build_snapshot(
     model across several records cannot silently lose half its prices.
     """
     models: dict[str, dict[str, Any]] = {}
+    documents: dict[str, dict[str, Any]] = {}
     for record in records:
+        if retrieval := (record.get("source") or {}).get("retrieval"):
+            documents[retrieval["document_url"]] = dict(retrieval)
         key = normalize_model(record["model_id"])
         offers = [
             _offer_payload(offer)
@@ -200,6 +203,8 @@ def build_snapshot(
         },
         "models": {key: models[key] for key in sorted(models)},
     }
+    if documents:
+        snapshot["source"]["documents"] = list(documents.values())
     return snapshot
 
 

@@ -101,7 +101,7 @@ source keeps its last successful notice archive.
 | Kimi | [Model list](https://platform.kimi.com/docs/models) | Retired-model section gives series-level dates and literal retired IDs. Match a table ID to the longest published series prefix. |
 | Xiaomi MiMo | [Deprecation log](https://mimo.mi.com/static/docs/updates/deprecate.md) | Separates the earlier automatic replacement time from the final old-ID expiry time where both are printed. |
 | Ant Ling | [Model deprecation](https://developer.ant-ling.com/zh-CN/docs/models/deprecation/) | Read tables headed 模型 ID with 计划下架日期 or 下架日期. 即将下架 is scheduled; 已下架 explicitly confirms retirement. Preserve the published UTC+8 clock to seconds and each literal ID's case. 推荐替代模型 is a manual migration recommendation, not an automatic redirect: the policy says old-ID API calls return errors after shutdown. 当前可用模型 and partner migration examples are not retirement notices. A partially unreadable notice table is a source error. |
-| OpenAI | [API deprecations](https://developers.openai.com/api/docs/deprecations) | Published notification and shutdown tables. A row may name several aliases separated by escaped Markdown pipes; each literal ID gets its own event. |
+| OpenAI | [API deprecations](https://developers.openai.com/api/docs/deprecations) | Published notification and shutdown tables, with the shared Docs MCP fallback described below. A row may name several aliases separated by escaped Markdown pipes; each literal ID gets its own event. The official `shutdown_date` API requires credentials and is outside this public reader. |
 | Anthropic | [Model deprecations](https://platform.claude.com/docs/en/about-claude/model-deprecations) | Deprecated and retired table applies to Anthropic-operated API. A row explicitly marked Retired is down even if its retirement date is blank. Partner platform schedules may differ. Active models' “not sooner than” dates are not shutdown promises. |
 | Google Gemini | [Gemini API deprecations](https://ai.google.dev/gemini-api/docs/deprecations) | Shutdown dates are the *earliest possible* dates. The page separately marks already-shutdown models with `row-gray` table rows, including one with no published shutdown date. Only that explicit row state confirms retirement; reaching an unshaded row's date does not. |
 | xAI | [Official migration guides](https://docs.x.ai/developers/migration/may-15-retirement) | Old slugs can continue to resolve through automatic redirection, with billing at replacement-model prices. Read the effective PT clock where given; a date-only notice remains date-only. |
@@ -145,7 +145,12 @@ introduction. Retirement evidence is independent and never substituted for prose
 announcement prose is passed directly from that channel's registered release
 source, without guessing a per-model API documentation URL.
 
-- OpenAI, Gemini, and xAI use the official per-model Markdown variants. Anthropic
+- OpenAI, Gemini, and xAI use the official per-model Markdown variants. OpenAI
+  shares the public Docs MCP fallback with prices and retirement notices. Its
+  Markdown writes some limits value-first; MCP writes labelled properties and an
+  inline comma-separated `Supported features` list. Both forms preserve explicitly
+  published context/input/output limits, cutoff, and modalities; unsupported
+  features and tool lists never become positive capabilities. Anthropic
   first reads its official models-overview Markdown, which publishes each model's
   detail link, Claude API id, and alias, then follows that indexed detail page;
   punctuation in a price-table id is never used to guess a URL. A generated
@@ -355,7 +360,31 @@ than its API. This is runtime report metadata, not part of snapshot identity.
   visible day precision, without adding the hidden metadata's time of day. Both
   pricing and retirement use the shared browser identity, pacing, retry policy,
   and source-error diagnostics, with no extra transport or credentials.
-- OpenAI: `https://developers.openai.com/api/docs/pricing`; no public pricing JSON is exposed, so use its official `.md` representation.
+- OpenAI: `https://developers.openai.com/api/docs/pricing`; no public complete
+  credential-free pricing JSON endpoint was found in the official API reference.
+  Use its `.md` representation first. `DocumentClient` shares one logical-document
+  cache and one OpenAI reader across prices, retirement, and introductions.
+  After exhausted Vercel mitigation it uses the official public
+  [Docs MCP](https://developers.openai.com/learn/docs-mcp) at
+  `https://developers.openai.com/mcp`, skipping further direct-document probes for
+  this run. An isolated timeout or malformed page can try MCP without closing
+  other direct pages; ordinary permanent 4xx errors retain their original meaning.
+  Both successful and failed logical reads are reused only within this run.
+  The server is currently stateless: initialize once with protocol `2025-03-26`,
+  send `notifications/initialized`, then call `fetch_openai_doc` with the canonical
+  page URL. Only the explicitly read-only tool call is retryable POST; initialization
+  and its notification are one attempt. JSON and SSE data frames are supported,
+  notifications are skipped, and response IDs, protocol versions, errors, content
+  blocks, Markdown, and catalogue-table headers are checked before accepting a page.
+  An unavailable transport/protocol is not probed for each subsequent document;
+  a tool error on one page leaves other pages readable. All calls retain the shared
+  pacing, 20-attempt host budget, and host pauses, including long Retry-After values.
+  The same hostname does not guarantee that MCP remains accessible under every
+  edge policy; failure stays `source_error`, never a stale successful baseline.
+  Canonical URLs remain the public evidence; optional retrieval metadata records
+  the actual transport endpoint, capture time, and SHA-256. No HTTP Last-Modified
+  value is relabelled as a vendor update time. Content negotiation was verified
+  during the dated audit but is not a third retry chain against the same edge.
 - Anthropic: `https://platform.claude.com/docs/en/about-claude/pricing`; no public pricing JSON is exposed, so use its official `.md` representation.
 - Google Gemini: `https://ai.google.dev/gemini-api/docs/pricing.md.txt`. The page
   publishes a Markdown copy, so its `pricing-table` HTML classes are no longer read.
@@ -503,13 +532,17 @@ incomplete reads, damaged compressed responses, and HTTP 408, 425, 429, 500, 502
 30-second cap: the first waits are 1–2 seconds and 2–4 seconds. A valid Retry-After
 on an error response is a minimum delay, never a replacement that shortens this
 backoff. A requested wait above 30 seconds stops that host for the run; exhausted
-429 retries do the same. Persistent verification pages, including those served
-with HTTP 200, get at most one retry before that host stops. A 403 an edge
+429 retries do the same. Persistent Cloudflare verification pages, including those served
+with HTTP 200, get at most one retry before that host stops. A 403 with an edge
 firewall mitigation header (`x-vercel-mitigated`, whose value is `deny` or
 `challenge`) is an edge decision rather than a credential answer, so it is retried
 on the same backoff; the header's presence is the signal rather than its value, so a
 value Vercel adds later cannot become a permanent refusal; the host is
-not stopped, because the next document on it may still be served. A 403 without
+not stopped, because the next document on it may still be served. Vercel HTML
+checkpoint titles or HTML carrying its mitigation header are also rejected when
+served with HTTP 200, using the same bounded edge retry policy. OpenAI's document
+reader can then switch its direct-document channel to MCP without pausing the
+entire hostname. A 403 without
 that header is an ordinary permanent error and fails immediately. Ordinary
 permanent 4xx errors do not close other public documents on that host.
 Other hosts continue normally.
@@ -518,10 +551,14 @@ POST is one attempt unless its caller declares a read-only operation idempotent;
 the Bailian catalogue, Tencent document API, and Tencent research index do so.
 Safe responses and failures are held only in run-local memory, keyed by method,
 URL, body, and caller headers. Failures remain errors, never stale successes;
-the next run tries the source afresh. Parser failures alone do not trigger new
-requests. Every registered provider builds its catalogue in one source pass.
-Diagnostics retain the source URL and distinguish timeout, connection failure,
-rejected requests, verification pages, and server errors.
+the next run tries the source afresh. Once a document passes representation
+validation, vendor parser failures do not trigger new requests. Every registered
+provider builds its catalogue in one source pass.
+Diagnostics retain the effective source URL and distinguish timeout, connection
+failure, rejected requests, verification pages, and server errors. HTTP failures
+retain typed status/verification facts through run-local reuse. Only cf-mitigated,
+x-vercel-mitigated, x-vercel-id, and Retry-After headers enter diagnostic prose;
+cookies and challenge tokens do not.
 
 The self-updater's idempotent Git fetch uses the same UA and browser identity
 headers while Git owns its protocol's Accept/content headers. It inherits system

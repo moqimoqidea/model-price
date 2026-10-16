@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any, Iterable
 
+from .documents import document_evidence
 from .lifecycle_sources import read_events
 from .paths import LIFECYCLE_SCHEMA_VERSION, SNAPSHOT_SCHEMA_VERSION
 from .snapshots import BaselineSelection, SnapshotStore, require_moment
@@ -95,7 +96,11 @@ def scan_lifecycle(
             "lifecycle_schema_version": LIFECYCLE_SCHEMA_VERSION,
             "provider": {"id": provider_id, "name": adapter.provider_name},
             "captured_at": captured_at,
-            "source": {"url": source_url, "kind": "official_retirement_notice"},
+            "source": {
+                "url": source_url,
+                "kind": "official_retirement_notice",
+                **document_evidence(client, source_url),
+            },
             "models": known,
         }
         changes = (

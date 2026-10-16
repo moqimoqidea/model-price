@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import html
 import re
+from typing import Iterator
 
 from ..models import normalize_model
-from ..parsing import markdown_link_text, markdown_tables
+from ..parsing import markdown_link_text, markdown_tables, prose_blocks
 from ..text import CELL_BREAK_RE, clean_text
 
 FRONTMATTER_RE = re.compile(r"\A---\s*\n(?P<body>.*?)\n---\s*\n", re.S)
@@ -106,15 +107,22 @@ def markdown_summary(text: str) -> str:
     return frontmatter(text).get("description", "")
 
 
+def _bullets(text: str) -> Iterator[str]:
+    """Keep explicit list items and their indented wraps, excluding code examples."""
+    for is_list, value in prose_blocks(text):
+        if is_list:
+            yield markdown_text(value)
+
+
 def markdown_capabilities(text: str) -> list[str]:
     """Read explicit feature lists or capability tables without inference."""
     features = section(text, "Supported features")
     if features:
-        return [
-            markdown_text(line[2:])
-            for line in features.splitlines()
-            if line.startswith("- ") and markdown_text(line[2:])
-        ]
+        return list(_bullets(features))
+    for bullet in _bullets(text):
+        label, separator, value = bullet.partition(":")
+        if separator and label.lower() == "supported features":
+            return [feature.strip() for feature in value.split(",") if feature.strip()]
     capabilities = section(text, "Capabilities")
     result = []
     for line in capabilities.splitlines():
@@ -140,22 +148,31 @@ def markdown_specifications(text: str) -> dict[str, str]:
     labels = {
         "context window": "context_window",
         "input token limit": "input_token_limit",
+        "maximum input tokens": "input_token_limit",
+        "max input": "input_token_limit",
         "output token limit": "output_token_limit",
         "max output": "max_output",
+        "max output tokens": "max_output",
         "knowledge cutoff": "knowledge_cutoff",
         "reliable knowledge cutoff": "knowledge_cutoff",
         "input modalities": "input_modalities",
         "output modalities": "output_modalities",
     }
-    for line in text.splitlines():
-        bullet = re.match(r"-\s*([^:]+):\s*(.+)", line)
-        if bullet:
-            label = markdown_text(bullet.group(1)).lower()
-            key = labels.get(label)
-            if key:
-                value = markdown_text(bullet.group(2))
-                if value:
-                    result[key] = value
+    for bullet in _bullets(text):
+        label, separator, value = bullet.partition(":")
+        if separator:
+            key = labels.get(label.lower())
+        else:
+            # OpenAI's Markdown download prints these limits value-first, while
+            # its MCP representation uses labelled properties. Neither is inferred.
+            match = re.fullmatch(
+                r"(.+?)\s+(context window|max output tokens|knowledge cutoff)",
+                bullet, re.I,
+            )
+            key = labels.get(match[2].lower()) if match else None
+            value = match[1] if match else ""
+        if key and value.strip():
+            result[key] = value.strip()
     property_headers = {
         "attribute",
         "feature",

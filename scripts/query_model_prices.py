@@ -24,9 +24,10 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from model_price.budget import DEFAULT_MAX_CHARS
-from model_price.core import HttpClient, now_iso
+from model_price.core import now_iso
 from model_price.delta import scan_providers
 from model_price.descriptions import build_description_resolver
+from model_price.documents import DocumentClient
 from model_price.messages import comparison_message, scan_message
 from model_price.paths import DEFAULT_CACHE_DIR, DEFAULT_SNAPSHOT_DIR
 from model_price.registry import (
@@ -193,7 +194,7 @@ def main() -> int:
     # cache hit would serve the previous scan's data back as "no change".
     refresh = args.command == "delta" or getattr(args, "refresh", False)
     skill_update = update_skill_before_refresh(refresh)
-    client = HttpClient(args.timeout)
+    client = DocumentClient(args.timeout)
     adapters = build_adapters(client, cache_dir=args.cache_dir, refresh=refresh)
     descriptions = build_description_resolver(
         client, cache_dir=args.cache_dir, refresh=refresh

@@ -24,7 +24,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .errors import SourceError
+from .errors import HttpSourceError, SourceError
 from .models import model_matches, normalize_model
 
 
@@ -58,6 +58,9 @@ CHALLENGE_MARKERS = (
     b"/cdn-cgi/challenge-platform/",
     b"window._cf_chl_opt",
     b'id="challenge-form"',
+)
+HTTP_DIAGNOSTIC_HEADERS = (
+    "cf-mitigated", "x-vercel-mitigated", "x-vercel-id", "retry-after",
 )
 RequestKey = tuple[str, str, Optional[bytes], tuple[tuple[str, str], ...]]
 TRANSIENT_NETWORK_ERRORS = (
@@ -195,7 +198,7 @@ class HttpClient:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._monotonic = monotonic or time.monotonic
         self._responses: dict[RequestKey, str] = {}
-        self._failures: dict[RequestKey, str] = {}
+        self._failures: dict[RequestKey, SourceError] = {}
         self._host_requests: dict[str, int] = {}
         self._host_ready_at: dict[str, float] = {}
         self._paused_hosts: dict[str, str] = {}
@@ -229,13 +232,13 @@ class HttpClient:
         if reusable and key in self._responses:
             return self._responses[key]
         if reusable and key in self._failures:
-            raise SourceError(self._failures[key])
+            raise self._failures[key].with_traceback(None)
         request = urllib.request.Request(url, data=data, headers=merged, method=method)
         try:
             text = self._request(request, attempts)
         except SourceError as exc:
             if reusable:
-                self._failures[key] = str(exc)
+                self._failures[key] = exc
             raise
         if reusable:
             self._responses[key] = text
@@ -252,24 +255,42 @@ class HttpClient:
             except urllib.error.HTTPError as exc:
                 error_url = exc.geturl() or url
                 try:
-                    challenge = (
-                        exc.code in {200, 403, 429, 503} and self._is_challenge(exc)
+                    headers = self._response_headers(exc.headers)
+                    try:
+                        body = exc.read(64 * 1024)
+                    except (OSError, ValueError, http.client.HTTPException):
+                        body = b""
+                    verification = (
+                        self._verification_kind(headers, body)
+                        if exc.code in {200, 403, 429, 503}
+                        else None
                     )
-                    mitigated = not challenge and self._is_edge_mitigation(exc)
+                    challenge = verification == "challenge"
+                    mitigated = not challenge and (
+                        verification == "edge"
+                        or (
+                            exc.code == 403
+                            and any(name in headers for name in EDGE_MITIGATION_HEADERS)
+                        )
+                    )
+                    if mitigated:
+                        verification = "edge"
                     retryable = (
                         not challenge_retried
                         if challenge
                         else mitigated or exc.code in RETRYABLE_HTTP_STATUSES
                     )
                     retry_after = self._parse_retry_after(
-                        (exc.headers or {}).get("Retry-After")
+                        headers.get("retry-after")
                     )
                     if retry_after is not None and retry_after > self.retry_after_cap:
                         message = self._retry_after_message(
                             error_url, exc, attempt, retry_after
                         )
                         self._pause_host(error_url, message)
-                        raise SourceError(message) from exc
+                        raise HttpSourceError(
+                            message, url=error_url, status=exc.code, verification=verification
+                        ) from exc
                     if not retryable or attempt >= attempts:
                         message = self._failure_message(
                             error_url,
@@ -280,7 +301,9 @@ class HttpClient:
                         )
                         if challenge or exc.code == 429:
                             self._pause_host(error_url, message)
-                        raise SourceError(message) from exc
+                        raise HttpSourceError(
+                            message, url=error_url, status=exc.code, verification=verification
+                        ) from exc
                     challenge_retried = challenge_retried or challenge
                     self._defer_host(
                         error_url, max(retry_after or 0, self._jitter(attempt - 1))
@@ -307,8 +330,8 @@ class HttpClient:
         self._before_request(request.full_url)
         with self._opener(request, timeout=self.timeout) as response:
             body = response.read()
-            headers = getattr(response, "headers", None) or {}
-            encoding = str(headers.get("Content-Encoding", "")).lower().strip()
+            headers = self._response_headers(getattr(response, "headers", None))
+            encoding = headers.get("content-encoding", "").lower().strip()
             try:
                 if encoding == "gzip" or body.startswith(b"\x1f\x8b"):
                     body = gzip.decompress(body)
@@ -323,7 +346,7 @@ class HttpClient:
                     )
             except (EOFError, OSError, zlib.error) as exc:
                 raise http.client.IncompleteRead(body) from exc
-            if self._challenge_page(headers, body):
+            if self._verification_kind(headers, body):
                 # Some intermediaries serve their verification screen with 200.
                 # It must neither reach a parser nor enter the response cache.
                 raise urllib.error.HTTPError(
@@ -388,36 +411,34 @@ class HttpClient:
         )
 
     @staticmethod
-    def _is_challenge(exc: urllib.error.HTTPError) -> bool:
-        if str((exc.headers or {}).get("cf-mitigated", "")).lower() == "challenge":
-            return True
-        try:
-            body = exc.read(64 * 1024)
-        except (OSError, ValueError, http.client.HTTPException):
-            return False
-        return HttpClient._challenge_page(exc.headers or {}, body)
+    def _response_headers(headers: Any) -> dict[str, str]:
+        return {str(name).lower(): str(value) for name, value in (headers or {}).items()}
 
     @staticmethod
-    def _challenge_page(headers: Any, body: bytes) -> bool:
-        if str(headers.get("cf-mitigated", "")).lower() == "challenge":
-            return True
+    def _verification_kind(headers: dict[str, str], body: bytes) -> str | None:
+        if headers.get("cf-mitigated", "").lower() == "challenge":
+            return "challenge"
         prefix = body[:64 * 1024].lower().lstrip()
         if not prefix.startswith((b"<!doctype html", b"<html", b"<head", b"<title")):
-            return False
-        return any(marker in prefix for marker in CHALLENGE_MARKERS) or bool(
+            return None
+        if any(marker in prefix for marker in CHALLENGE_MARKERS) or (
             re.search(br"<title>\s*(?:just a moment|attention required)[^<]*</title>", prefix)
-        )
+        ):
+            return "challenge"
+        if any(name in headers for name in EDGE_MITIGATION_HEADERS) or re.search(
+            br"<title>\s*vercel security checkpoint\s*</title>", prefix
+        ):
+            return "edge"
+        return None
 
-    @staticmethod
-    def _is_edge_mitigation(exc: urllib.error.HTTPError) -> bool:
-        """An edge firewall's marked refusal, which is retried rather than believed."""
-        if exc.code != 403:
-            return False
-        headers = {
-            str(name).lower(): str(value).strip().lower()
-            for name, value in (exc.headers or {}).items()
-        }
-        return any(name in headers for name in EDGE_MITIGATION_HEADERS)
+    @classmethod
+    def _http_diagnostics(cls, headers: Any) -> str:
+        """Expose only routing evidence, never cookies or verification tokens."""
+        values = cls._response_headers(headers)
+        return "".join(
+            f"; {name}={' '.join(values[name].splitlines())}"
+            for name in HTTP_DIAGNOSTIC_HEADERS if name in values
+        )
 
     def _failure_message(
         self,
@@ -441,7 +462,10 @@ class HttpClient:
                 detail += " (anti-bot challenge)"
             elif mitigated:
                 detail += " (edge mitigation)"
-            return f"{category} by {host} after {attempts} attempt(s): {detail}; source: {url}"
+            return (
+                f"{category} by {host} after {attempts} attempt(s): "
+                f"{detail}{self._http_diagnostics(exc.headers)}; source: {url}"
+            )
         detail = str(exc).strip() or type(exc).__name__
         reason = getattr(exc, "reason", None)
         timed_out = (
@@ -470,7 +494,8 @@ class HttpClient:
         return (
             f"request deferred by {host} after {attempts} attempt(s): "
             f"HTTP {exc.code} Retry-After requested {delay:g}s, above the "
-            f"{self.retry_after_cap:g}s wait limit; source: {url}"
+            f"{self.retry_after_cap:g}s wait limit"
+            f"{self._http_diagnostics(exc.headers)}; source: {url}"
         )
 
     def get_text(self, url: str) -> str:

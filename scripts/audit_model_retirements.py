@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from model_price.core import HttpClient
+from model_price.documents import DocumentClient
 from model_price.lifecycle import retired_model_ids
 from model_price.lifecycle_sources import read_events
 from model_price.providers import ALL_PROVIDERS
@@ -75,7 +75,7 @@ def main() -> int:
         as_of = datetime.now(timezone.utc).astimezone(ZoneInfo(args.timezone))
     except ZoneInfoNotFoundError as exc:
         raise SystemExit(f"unknown timezone: {args.timezone}") from exc
-    client = HttpClient(args.timeout)
+    client = DocumentClient(args.timeout)
     selected = list(dict.fromkeys(args.provider or PROVIDERS))
     reports = [audit_provider(provider_id, client, as_of) for provider_id in selected]
     print(

@@ -1,0 +1,250 @@
+# OpenAI 数据源、边缘校验与解析审计
+
+第 1–7 节保留实施前的审计结果；后续修复与验证记录见第 8 节。
+
+审计日期：2026-10-16，北京时间。项目已从 `75c43c8` 快进到
+`653d76ab12b7e61eb42444fae5d3c9b28b7fd844`。本次只新增审计记录，没有修改运行代码，
+没有提交或推送，没有运行会改写现有基线的线上扫描。已有的未跟踪笔记保持原样。
+
+结论：`challenge` 漏重试已经修复，但重试无法保证通过持续的边缘安全校验。
+下一步应增加官方文档读取通道、控制同一失败通道的重复尝试，并修复实际官方正文暴露出的
+解析遗漏。Docs MCP 对本次价格和退役样本可用；模型介绍的两种正文格式需要分别适配。
+
+## 1. 最新代码确认了什么
+
+- [core.py](/Users/moqi/code/moqi/model-price/scripts/model_price/core.py:50)
+  现在按 `x-vercel-mitigated` 头是否存在识别带标记的 403，不再只认 `deny`。
+  `challenge` 和未来其他值都会进入最多三次的安全请求重试。
+- [重试分支](/Users/moqi/code/moqi/model-price/scripts/model_price/core.py:244)
+  尊重不超过 30 秒的 `Retry-After`；超过上限会暂停该主机本轮请求。
+  Cloudflare 校验和持续 429 也会暂停主机，但耗尽重试的 Vercel 403 不会。
+  [现有测试](/Users/moqi/code/moqi/model-price/tests/test_http_client.py:274)
+  明确要求耗尽边缘拦截后，同主机第二份文档仍然可以读取。这是现行策略，不是遗漏了调用。
+- 同一 URL 的失败在本轮复用，不会无限重试；不同 URL 仍各有自己的尝试。
+  默认同主机总预算为 20 次，包含重定向。价格、退役和介绍共用一个 `HttpClient`。
+- [delta.py](/Users/moqi/code/moqi/model-price/scripts/model_price/delta.py:133)
+  在读取失败或目录为空时不会写价格基线。
+  退役、公告也各自保留失败前的历史。应继续保留这些行为。
+- 本地完整离线测试结果：690 个测试通过。下面的新问题不在现有 fixture 的覆盖范围内。
+
+用户提供的日志与旧版漏重试问题一致。对于之后持续的 403，现有证据能确认边缘安全校验，
+但不能单凭响应头锁定为仅针对 IP 的封禁，也不能排除请求特征、会话或访问行为的影响。
+两次请求若实际仍使用同一公网出口，不能作为不同出口的独立对照。
+
+## 2. 官方来源与本机实测
+
+依据 [OpenAI Docs MCP 官方说明](https://developers.openai.com/learn/docs-mcp)，
+OpenAI 提供公开的只读文档 MCP，地址为 `https://developers.openai.com/mcp`，
+支持文档搜索和页面内容读取。官方也说明可以在文档 URL 后添加 `.md`。
+这是文档服务，不是替用户调用推理 API，也不是专门返回价格 JSON 的业务接口。
+
+本机 2026-10-16 14:42 起的低频读取结果如下。每个直接读取探针只尝试一次，未使用凭据。
+
+| 入口 | 实测 | 含义 |
+| --- | --- | --- |
+| [价格 Markdown](https://developers.openai.com/api/docs/pricing.md) | HTTP 200；23,225 字符；`text/markdown` | 当前适配器的主来源可读 |
+| [退役 Markdown](https://developers.openai.com/api/docs/deprecations.md) | HTTP 200；40,798 字符；`text/markdown` | 当前退役来源可读 |
+| [模型介绍样本](https://developers.openai.com/api/docs/models/gpt-6.1-sol.md) | HTTP 200；4,434 字符 | 当前介绍来源可读，但解析有遗漏 |
+| [价格规范 URL](https://developers.openai.com/api/docs/pricing)，请求 `Accept: text/markdown` | HTTP 200；正文 SHA-256 与 `.md` 完全相同 | 本次支持内容协商；同域的另一种表现形式，不是独立网络来源 |
+| [旧价格 URL](https://platform.openai.com/docs/pricing) | 重定向到当前 `developers.openai.com` 价格页，最终为 HTML | 不能用作独立备用站点 |
+| 官方 Docs MCP | 直接从本机用标准库完成初始化、工具枚举、页面读取 | 本次原始 HTTP 接入成功，不只是宿主工具成功 |
+| [根索引](https://developers.openai.com/llms.txt)、[API 索引](https://developers.openai.com/api/llms.txt) | HTTP 200 | 提供文档导航；API 索引还列出全量导出地址 |
+
+MCP 实测返回 `openai-docs-mcp` 服务信息，并暴露 `fetch_openai_doc` 等工具。
+价格、退役和介绍均通过原始 JSON-RPC 读取成功，页面读取结果也被正常解析。
+本次没有使用 MCP SDK，因此标准库方案在技术上可行。
+
+这些结果只证明审计时开发机的可达性。没有在客户机器执行探针，也没有在本机同时出现
+持续 403 的条件下证明 MCP 一定仍可读。直接访问的 MCP 和 Markdown 仍使用同一主机名；
+不能承诺它能避开客户环境的所有边缘策略。
+
+本次未验证营销价格页、第三方价格聚合或新闻 RSS 的线上可达性，不把它们列为已验证替代源。
+
+## 3. 交叉验证：可读不等于完整解析
+
+价格比较使用现有 `OpenAIAdapter`，按模型 ID 比较完整的 `offers` 和 `pricing_notes`。
+直接 `.md`、内容协商、宿主 Docs MCP 和本机原始 Docs MCP 的解析结果一致：
+
+- 79 个模型；241 个独立报价方案；692 个价格项。
+- 抽查 `gpt-6.1-sol` 的 Standard：短上下文输入、缓存读、缓存写、输出分别为
+  2.00、0.10、2.50、10.00；长上下文分别为 4.00、0.20、5.00、15.00，单位均为美元/百万 token。
+- 退役正文经现有 reader 解析为 114 个事件、112 个不同 ID；直接 Markdown 与两种 MCP 读取一致。
+  这是该 reader 的解析结果，不代表声称官网只有这些历史事件。
+
+进一步逐项对照官方正文，发现以下遗漏。它们说明“两个通道经同一解析器得到一致结果”
+仍不能单独证明解析完整。
+
+### 3.1 当前线上正文的促销句被软换行截断
+
+官方价格正文把 GPT-5.6 Sol 的促销说明换成两行，第二行是 `November 21, 2026.`。
+正确保留的完整句子应为：
+
+> GPT-5.6 Sol’s promotional pricing is available at least through November 21, 2026.
+
+实际 `pricing_notes` 却停在 `through`，后面的日期丢失。
+原因是 [_sentences()](/Users/moqi/code/moqi/model-price/scripts/model_price/parsing.py:1274)
+先逐物理行拆分，再识别句子；第二行既没有模型名，也没有促销词，不能回到第一行的备注。
+直接 Markdown 与 MCP 都保留这个软换行，因此仅切换通道不能修复它。
+
+建议先恢复段落内的软换行，再按句子边界提取。段落、列表项、表格和 HTML 块的边界必须保留，
+不能把相邻模型的条件拼在一起。完整措辞继续作为 `pricing_notes`，不能把 “at least through”
+转换成确定的 `effective_until`。当前代码没有错误地推导到期日，这一点应保留。
+
+### 3.2 当前 Markdown 介绍漏掉规格
+
+`gpt-6.1-sol.md` 明确写出 1,050,000 的上下文窗口、922,000 的最大输入、128,000 的最大输出，
+以及知识截止日期。但当前解析结果只有输入、输出模态。
+
+原因是 [markdown_specifications()](/Users/moqi/code/moqi/model-price/scripts/model_price/descriptions/parsing.py:130)
+主要识别 `标签: 值` 的列表项；当前网页也使用 `数值 context window`、
+`数值 max output tokens`、`日期 knowledge cutoff` 等表达。
+最大输入的两种标签 `Maximum input tokens` 和 `Max input` 也没有映射。
+
+建议按官方标签和结构支持这些表达，保留原值与单位，不根据模型名推断规格。
+新增测试应覆盖真实页面的换行和顺序，而不只覆盖人工整理的 `标签: 值` 格式。
+
+### 3.3 MCP 介绍是另一种结构，不能直接假定与 `.md` 等价
+
+同一模型的 MCP 正文为 2,393 字符，规格写成带冒号的列表，因此当前 reader 能读到部分规格。
+但能力列表写在 `Supported features: ...` 的一行中；当前
+[markdown_capabilities()](/Users/moqi/code/moqi/model-price/scripts/model_price/descriptions/parsing.py:109)
+只支持对应章节下的列表或能力表，因此得到空能力列表。
+
+| 同一个模型 | 当前能力解析 | 当前规格解析 |
+| --- | --- | --- |
+| 直接 `.md` | 7 项 | 仅输入、输出模态 |
+| MCP 页面内容 | 0 项 | 上下文、最大输出、知识截止、输入/输出模态；仍漏最大输入 |
+
+MCP 介绍还有价格说明，但并未返回该 `.md` 中的金额表，不能拿它代替完整目录价格页。
+即使给 `fetch_openai_doc` 传入带 `.md` 的模型 URL，本次也得到同样的 MCP 结构。
+
+因此：先验证价格和退役的备选读取；介绍需要先适配两种明确结构，并分别测试字段完整性。
+每次仍选取该渠道、该模型的一份官方正文，不跨渠道拼接介绍。
+
+## 4. 两个传输层问题
+
+### 4.1 HTTP 200 的 Vercel 校验页尚未识别
+
+[_challenge_page()](/Users/moqi/code/moqi/model-price/scripts/model_price/core.py:400)
+覆盖了 Cloudflare 标记与标题，没有覆盖 Vercel Security Checkpoint。
+离线构造 HTTP 200、HTML 正文和 `x-vercel-mitigated: challenge` 后：
+
+- `HttpClient` 把校验 HTML 当成成功正文，写入本轮响应缓存。
+- 价格适配器得到空目录，随后扫描会报告 `empty_scan`。
+- 介绍 reader 得到 `None`，可能表现为 `not_found`，而不是来源被校验。
+
+空目录保护仍能阻止价格基线被覆盖，但错误分类和诊断会失真。
+这是离线证明的条件性缺陷；本次真实站点样本没有出现 HTTP 200 校验，不能说它导致了客户这次 403。
+
+建议在正文进入成功缓存前，联合可信响应头、HTML 类型与明确的 Vercel 校验标识识别。
+同时覆盖有头和无头的校验正文，避免把正常文档中提到安全校验的文字误判为校验页。
+
+### 4.2 持续校验时，不同文档重复耗尽等待
+
+用离线时钟模拟价格与退役两份文档都持续返回带 `Retry-After: 30` 的 Vercel 403：
+当前代码发出 6 次请求，累计模拟等待 121 秒，同主机仍未暂停。
+三次失败的结果只会阻止同一 URL 重读，不能阻止下一份文档重走同样的等待。
+
+建议将“识别为边缘响应”与“是否值得继续重试”分开：保留有上限的退避，对连续校验增加
+本轮通道状态，及时转向已验证的官方读取方式。不能简单暂停整个主机后再调用同域 MCP，
+否则现有主机暂停逻辑会把备选入口一起拦住。也不能因为某一页失败就假定整个站点不可读。
+
+不建议把重试次数放大到几十次或把进程挂住二十分钟。公开只读数据源长期不可达时，应明确
+报告来源错误并保留旧基线，下一轮重新判断。
+
+## 5. OpenAI 官方的程序化退役接口
+
+[官方退役说明](https://developers.openai.com/api/docs/deprecations)明确推荐通过
+`GET /v1/models` 的可选 `shutdown_date` 字段监测关闭日期；单模型查询也提供该字段。
+本次还核对了官方 OpenAPI 的 List models 示例，确有这个字段，不能沿用“模型 API 只有 ID”
+的旧认知。字段为日期字符串或 `null`；字段缺失或 `null` 都不能当成保证不会退役。
+
+但 [List models](https://developers.openai.com/api/reference/resources/models/methods/list)
+需要 Bearer API key，范围也受凭据权限影响；它不能提供完整目录价格、完整历史公告与替代建议。
+仓库的不变量 18 要求无凭据，因此本轮不建议把它接入默认运行链路。
+若未来另行建设经明确授权的账号审计工具，可将它用于退役日期交叉验证，并保留公众文档证据。
+
+官方端点目录没有发现公开、无凭据的完整目录价格 JSON 接口。
+[Costs API 的官方示例](https://developers.openai.com/cookbook/examples/completions_usage_api)
+要求管理员 key，提供实际用量与费用，不能作为公共标价来源。
+价格继续以官方价格文档为准。
+
+## 6. 建议的实现顺序与落点
+
+1. 先修复已复现的数据遗漏与校验误分类：软换行促销句、两种介绍结构、HTTP 200 Vercel 校验。
+   各自添加离线回归 fixture，仍保持无网络测试。
+2. 增加 OpenAI 官方文档读取层，由价格、退役、介绍共用。价格/退役保留 `.md` 主路径，
+   用 `Accept: text/markdown` 作为可验证的同站表现形式，Docs MCP 作为另一条官方读取通道。
+   不必每次顺序打完所有入口；识别连续校验后及时选择通道，并在本轮共享选择结果。
+   内容协商的长期稳定性未在已读官方说明中找到保证，不应把它当成独立可用性承诺。
+3. MCP 若内置到脚本，标准库可实现 HTTP/JSON-RPC 和事件流；生产实现仍需完成协议初始化、
+   错误检查、会话复用与正文验证。仅明确只读的文档调用可声明 POST 幂等，不能改变一般 POST 策略。
+   MCP 初始化等请求也需计入预算，避免新通道反而耗尽介绍读取预算。
+4. 另一种部署方式是由宿主 agent 调用已连接的 Docs MCP，再经明确的完整文档输入接口交给解析器。
+   仅在 `SKILL.md` 增加“使用 MCP”不会改变 Python 脚本里的 `urllib` 调用。
+   输入必须保留规范 URL、抓取时间、完整正文、哈希与获取通道；拒绝搜索摘要或模型自行改写的价格。
+   历史导出不能冒充本次新读取成功，更不能把旧资料重新写成当前基线。
+5. 增加受限的诊断字段：有效 URL、HTTP 状态、尝试次数、等待时长、校验头值，以及可用时的
+   Vercel 请求 ID。不要记录 Cookie、校验 token 或完整拦截页。
+   HTTP `Last-Modified` 可用于传输诊断，不应自动变成厂商标注的 `source_updated_at`。
+6. 保留所有失败与基线约束：价格、介绍、退役、公告独立；新通道失败仍报 `source_error`；
+   不静默回退过期缓存，不改价格单位或报价范围，不以目录缺失断言 API 退役。
+
+对应代码位置：
+
+| 内容 | 修改落点 |
+| --- | --- |
+| 校验识别、受限诊断、重试通道策略 | [core.py](/Users/moqi/code/moqi/model-price/scripts/model_price/core.py) 与 OpenAI 专用文档读取层 |
+| 段落和完整促销句 | [parsing.py](/Users/moqi/code/moqi/model-price/scripts/model_price/parsing.py) |
+| 模型介绍结构 | [介绍解析器](/Users/moqi/code/moqi/model-price/scripts/model_price/descriptions/parsing.py)；必要时使用 OpenAI 来源策略 |
+| 价格/退役/介绍接入文档层 | [价格适配器](/Users/moqi/code/moqi/model-price/scripts/model_price/providers/openai.py)、[退役来源](/Users/moqi/code/moqi/model-price/scripts/model_price/lifecycle_sources.py)、[介绍来源](/Users/moqi/code/moqi/model-price/scripts/model_price/descriptions/sources.py) |
+| 来源与兼容说明 | [source-notes.md](/Users/moqi/code/moqi/model-price/references/source-notes.md)、[schema.md](/Users/moqi/code/moqi/model-price/references/schema.md) |
+
+来源或解析变化后，将 `CACHE_SCHEMA_VERSION` 从当前 34 升级，使旧的缺字段结果失效。
+若价格基线的形状和比较语义未变，不必仅因新增通道升级 `SNAPSHOT_SCHEMA_VERSION`；
+退役、公告也保持各自的兼容门槛。
+
+## 7. 实施后的验收重点
+
+- 真实结构的两套介绍 fixture 都保留明确发布的能力和规格，且不读取 `Unsupported features`。
+- 促销句跨行仍完整；相邻段落或列表的条件不串到别的模型；不推导确定到期日。
+- Vercel 校验无论 HTTP 200 还是 403 都不进入成功缓存；普通 403、正常 HTML 与不安全 POST
+  保持原有语义。
+- 主路径失败后，价格和退役通过完整的官方 MCP 正文可产生同范围结果；MCP 的错误、空正文、
+  摘要或不兼容结构不写成功基线。
+- 通道切换只发生有限次数；同一逻辑文档及失败链本轮复用；暂停直接读取不会误伤同域备选。
+- 完整离线套件通过后，在客户机器的相同运行环境各做一次低频探针，记录有效出口与诊断信息。
+  以客户环境下实际成功获取和解析为上线依据，不能用开发机的 HTTP 200 代替。
+
+本次审计已完成代码核对、官方文档与协议核对、线上低频读取、离线缺陷复现和 690 项回归测试。
+客户网络恢复、备选通道在客户被拦截期间的可用性，以及上述修复的上线效果尚未验证。
+
+## 8. 后续实施与验证
+
+同日按用户授权完成以下本地修复：
+
+- `DocumentClient` 统一 OpenAI 官方文档读取，供查询、扫描和退役审计使用。
+  默认读取 Markdown，耗尽明确的边缘拦截后，本轮改用官方 Docs MCP。
+  没有再增加同域内容协商的重试链；普通永久 4xx 仍保持原语义。
+- MCP 用标准库实现初始化、初始化通知和只读 `fetch_openai_doc`；处理 JSON/SSE，
+  验证协议、响应 ID、错误、内容结构及目录表头。连接/协议失败在本轮复用，
+  单份文档工具错误不阻止其他文档。所有调用共用原 HTTP 预算和暂停规则。
+- HTTP 200 的 Vercel HTML 校验页不再进入成功缓存。
+  HTTP 错误的状态与校验类型在失败复用时保留；仅输出受限的路由诊断头，不输出 Cookie 或 token。
+- 促销句与介绍列表共用段落/列表块解析，保留软换行并隔离段落、列表、表格与代码。
+  两套官方介绍样本的上下文、输入/输出上限、知识截止和能力均可解析。
+- JSON 保留成功读取的通道、实际端点、时间和正文哈希；快照保留相同证据但不据此比较变化。
+  缓存版本升到 35；价格、退役基线比较语义和兼容版本保持原样。
+- 移除被统一校验识别取代的旧检测函数，复用正文块解析，CLI 入口只替换客户端构造。
+
+验证结果：
+
+- 完整离线套件 714 项通过，含新增的校验页、协议、错误复用、文档范围和基线保护测试。
+  MCP 服务地址的 404 保持来源错误；目标模型页的直接 404 仍是 `not_found`。
+- 15:30 在开发机给直接读取注入故障，真实调用官方 MCP：成功解析 79 个模型、241 个报价方案、
+  692 个价格项和 114 个退役事件；样本介绍保留 7 项能力及全部 6 项已发布规格。
+- 真实 MCP 正文的 GPT-5.6 Sol 促销备注完整保留至 November 21, 2026，未推导确定到期日。
+- 正常命令入口另用临时缓存验证，读取及解析成功；现有价格/退役基线未参与线上验证或被改写。
+
+以上证明本地实现可工作，包括主路径失败后的真实备选服务调用。
+故障注入不等于复现客户出口的边缘策略；客户机器在持续拦截期间的实际可达性仍需验证。

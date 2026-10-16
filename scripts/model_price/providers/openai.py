@@ -15,6 +15,7 @@ import re
 from typing import Any, Iterator
 
 from ..core import PriceSource, now_iso
+from ..documents import document_evidence
 from ..models import model_family, normalize_model, without_trailing_parenthetical
 from ..parsing import (
     cell_rates,
@@ -313,7 +314,7 @@ class OpenAIAdapter(PriceSource):
                 for note in self._notes().get(row["model_id"], [])
             )
         )
-        return make_record(
+        record = make_record(
             self.provider_id,
             self.provider_name,
             first["model_id"],
@@ -331,6 +332,8 @@ class OpenAIAdapter(PriceSource):
             # rather than an empty one: the report prints a note where there is one.
             **({"pricing_notes": notes} if notes else {}),
         )
+        record["source"].update(document_evidence(self.client, OPENAI_MARKDOWN_URL))
+        return record
 
     def list_models(self, prefix: str = "") -> list[str]:
         models = {row["model_id"] for row in self._rows()}

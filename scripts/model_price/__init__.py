@@ -5,6 +5,7 @@ Responsibility split:
 - ``paths``        filesystem anchors (skill dir, cache, snapshots) and cache policy
 - ``errors``       the errors a price source or the updater raises
 - ``core``         HTTP access and the ``PriceSource`` contract
+- ``documents``    shared official-document retrieval and OpenAI Docs MCP fallback
 - ``parsing``      document readers (HTML tables, Markdown tables, price headers)
 - ``text``         normalisation of text scraped out of vendor documents
 - ``pricing``      price and record shapes

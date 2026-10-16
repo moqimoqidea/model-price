@@ -26,6 +26,19 @@ or failed introduction never falls back to another channel or the model creator.
 When no price record matches the query, `model_descriptions` still contains an
 honest status entry for the requested name on each queried channel.
 
+An OpenAI document read through `DocumentClient` additionally keeps
+`source.retrieval`: `document_url` is the canonical official page, `transport` is
+`markdown` or `docs_mcp`, `transport_url` is the actual Markdown/MCP endpoint,
+`document_sha256` hashes the complete decoded UTF-8 document, and `retrieved_at`
+is this run's successful capture time. Price records, introductions, and retirement
+sources use the same optional evidence. Price snapshots retain the unique captures
+under `source.documents[]`; retirement archives retain `source.retrieval`.
+These fields do not participate in price/notice comparisons and never supply an
+official update time. The original `source.url` and existing `source_api` remain
+the public evidence page and logical document URL. Optional retrieval evidence
+does not change price snapshot version 4 or lifecycle version 2; parsed caches
+use version 35 so older incomplete introductions/notes are not served.
+
 ## Tencent console mirror
 
 The checked-in Tencent mirror uses `schema_version: 2`; schema-1 mirrors remain

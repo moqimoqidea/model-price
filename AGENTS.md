@@ -46,8 +46,9 @@ Standard library only, Python 3, no install step, no build step.
 │   └── model_price/             the implementation
 │       ├── __init__.py          the responsibility split, restated for a reader
 │       ├── paths.py             filesystem anchors, cache TTL, schema versions
-│       ├── errors.py            SourceError, SkillUpdateError
+│       ├── errors.py            SourceError, typed HTTP routing failures, SkillUpdateError
 │       ├── core.py              HttpClient, the PriceSource contract, atomic JSON writes
+│       ├── documents.py         shared document retrieval and OpenAI's public Docs MCP fallback
 │       ├── text.py              normalisation of text scraped out of vendor documents
 │       ├── models.py            model identity: normalisation, aliases, family matching
 │       ├── pricing.py           price and record shapes, the unit vocabulary, rescaling
@@ -115,6 +116,13 @@ delta
   ├── descriptions.resolve_many(changed models only)
   └── messages.scan_message(payload)
 ```
+
+The CLI and retirement audit construct `DocumentClient`, an `HttpClient` subtype.
+It shares OpenAI's logical-document cache, bounded fallback state, and public
+Docs MCP connection across price, introduction, and notice readers. Vendor
+parsers still consume text and do not implement transport fallback themselves.
+Both transports use the same HTTP host budget and pause rules. Retrieval evidence
+is optional metadata and never participates in catalogue or notice comparisons.
 
 The output layer reads the domain layer; the domain layer never reads the output
 layer. `messages` formats nothing itself — it asks `reporting` for each value and
@@ -372,6 +380,7 @@ even when the tests still pass.
 | Change release archives, access comparisons, or literal identity joins | `announcements/core.py`, plus `references/schema.md` and its own version in `paths.py` |
 | Audit current official retirement evidence | `scripts/audit_model_retirements.py`; keep vendor readers in `lifecycle_sources.py` |
 | Change retries, timeouts, request budgets, or HTTP diagnostics | `core.py`, plus the network policy in `references/source-notes.md` |
+| Change OpenAI document transport or Docs MCP fallback | `documents.py`, plus `references/source-notes.md`; keep price and introduction parsers independent |
 | Refresh the Tencent mirror | `scripts/update_tencent_model_mirror.py` |
 | Change the CLI surface | `query_model_prices.py` — and `SKILL.md` and `README.md`, which both document it |
 

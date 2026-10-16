@@ -189,6 +189,46 @@ Model ID: `gpt-test`
         self.assertEqual(result["specifications"]["context_window"], "200,000")
         self.assertEqual(result["lifecycle"], "active")
 
+    def test_openai_official_markdown_and_mcp_keep_all_published_details(self):
+        for fixture, context, maximum, cutoff, input_limit in (
+            ("openai-model.md", "1,050,000", "128,000", "Apr 30, 2026", "922,000"),
+            ("openai-model-mcp.md", "1,050,000 tokens", "128,000 tokens", "2026-04-30", "922,000 tokens"),
+        ):
+            with self.subTest(fixture=fixture):
+                document = (Path(__file__).with_name("fixtures") / fixture).read_text()
+                url = "https://developers.openai.com/api/docs/models/gpt-6.1-sol.md"
+                result = OpenAIDescriptionSource(MappingClient({url: document})).describe("gpt-6.1-sol")
+                self.assertEqual(result["specifications"], {
+                    "context_window": context,
+                    "input_token_limit": input_limit,
+                    "max_output": maximum,
+                    "knowledge_cutoff": cutoff,
+                    "input_modalities": "text, image",
+                    "output_modalities": "text",
+                })
+                self.assertEqual(result["capabilities"], [
+                    "streaming", "structured_outputs", "function_calling", "file_search",
+                    "image_input", "web_search", "prompt_caching",
+                ])
+
+    def test_openai_inline_features_exclude_unsupported_features_and_tools(self):
+        url = "https://developers.openai.com/api/docs/models/gpt-test.md"
+        document = """# GPT Test
+
+Built for research.
+
+- Supported features: streaming, structured_outputs,
+  function_calling
+- Unsupported features: fine_tuning
+
+## Supported tools
+- computer_use
+"""
+        result = OpenAIDescriptionSource(MappingClient({url: document})).describe("gpt-test")
+        self.assertEqual(result["capabilities"], [
+            "streaming", "structured_outputs", "function_calling",
+        ])
+
     def test_anthropic_uses_the_official_index_link_for_dotted_versions(self):
         page = "https://platform.claude.com/docs/en/models/opus-5-5/overview"
         index = f"""## Compare models

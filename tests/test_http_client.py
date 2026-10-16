@@ -488,6 +488,52 @@ class HttpClientTests(unittest.TestCase):
         opener = SequenceOpener(Response(body))
         self.assertEqual(self.client(opener).get_text("https://example.test/a"), body.decode())
 
+    def test_http_200_vercel_checkpoints_never_enter_the_success_cache(self):
+        for headers, body in (
+            ({"x-vercel-mitigated": "challenge"}, b"<html>Verify your browser</html>"),
+            ({}, b"<html><title>Vercel Security Checkpoint</title></html>"),
+        ):
+            with self.subTest(headers=headers):
+                opener = SequenceOpener(*(
+                    Response(body, headers=headers) for _ in range(3)
+                ))
+                client = self.client(opener)
+                for _ in range(2):
+                    with self.assertRaisesRegex(SourceError, "HTTP 200.*edge mitigation"):
+                        client.get_text("https://example.test/a")
+                self.assertFalse(client._responses)
+                self.assertEqual(len(opener.requests), 3)
+
+    def test_a_vercel_article_and_valid_markdown_are_not_verification_pages(self):
+        for body in (
+            b"<html><title>Model news</title><p>Vercel Security Checkpoint</p></html>",
+            b"# Vercel Security Checkpoint\n\nA guide to verification.",
+        ):
+            with self.subTest(body=body):
+                opener = SequenceOpener(Response(body))
+                self.assertEqual(self.client(opener).get_text("https://example.test/a"), body.decode())
+
+    def test_cached_http_errors_keep_routing_metadata_and_safe_diagnostics(self):
+        opener = SequenceOpener(*(
+            http_error(403, "Forbidden", headers={
+                "X-Vercel-Mitigated": "challenge",
+                "X-Vercel-Id": "test-request-id",
+                "Set-Cookie": "private-session=secret",
+                "X-Vercel-Challenge-Token": "secret-token",
+            }) for _ in range(3)
+        ))
+        client = self.client(opener)
+        for _ in range(2):
+            with self.assertRaises(SourceError) as caught:
+                client.get_text("https://example.test/a")
+            error = caught.exception
+            self.assertEqual(getattr(error, "status", None), 403)
+            self.assertEqual(getattr(error, "verification", None), "edge")
+            self.assertIn("x-vercel-mitigated=challenge", str(error))
+            self.assertIn("x-vercel-id=test-request-id", str(error))
+            self.assertNotIn("secret", str(error))
+        self.assertEqual(len(opener.requests), 3)
+
     def test_supported_compression_is_decoded_and_truncated_gzip_is_retried(self):
         for encoding, encode in (("gzip", gzip.compress), ("deflate", zlib.compress)):
             with self.subTest(encoding=encoding):

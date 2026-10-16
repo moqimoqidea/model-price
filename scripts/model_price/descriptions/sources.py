@@ -16,7 +16,8 @@ from ..deepseek_updates import (
     entry_model_label,
     read_updates,
 )
-from ..errors import SourceError
+from ..documents import document_evidence
+from ..errors import HttpSourceError, SourceError
 from ..models import normalize_model
 from ..mistral_catalogue import MISTRAL_MODELS_URL, model_url, read_catalogue
 from ..parsing import headed_document_tables, markdown_tables
@@ -76,6 +77,12 @@ VOLCENGINE_MODELS_URL = "https://console.volcengine.com/ark/region:cn-beijing/mo
 
 
 def _not_found_error(exc: Exception) -> bool:
+    if isinstance(exc, HttpSourceError):
+        return exc.status == 404
+    # A chained error may describe a missing fallback endpoint, not this model.
+    # Keep plain fixture/legacy errors readable without searching wrapped failures.
+    if exc.__cause__ is not None:
+        return False
     text = str(exc).lower()
     return "404" in text or "not found" in text
 
@@ -140,7 +147,7 @@ class MarkdownDetailSource(DescriptionSource):
         lifecycle = lifecycle_from_text(section(text, "Availability"))
         if lifecycle == UNKNOWN:
             lifecycle = ACTIVE
-        return description_record(
+        description = description_record(
             model_id,
             display_name or model_id,
             summary,
@@ -151,6 +158,8 @@ class MarkdownDetailSource(DescriptionSource):
             lifecycle=lifecycle,
             specifications=markdown_specifications(text),
         )
+        description["source"].update(document_evidence(self.client, url))
+        return description
 
 
 class OpenAIDescriptionSource(MarkdownDetailSource):
