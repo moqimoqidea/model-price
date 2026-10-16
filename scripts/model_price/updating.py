@@ -22,6 +22,7 @@ from .core import (
 )
 from .errors import SkillUpdateError
 from .paths import SKILL_DIR
+from .privacy import safe_diagnostic
 from .text import clean_text
 
 SELF_UPDATE_ENV = "MODEL_PRICE_SELF_UPDATE_RESULT"
@@ -117,9 +118,12 @@ class GitSkillUpdater:
                     raise
                 self._sleep(exponential_backoff(attempt, uniform=self._uniform))
 
-    def update(self) -> dict[str, Any]:
+    def update(self, *, require_current: bool = False) -> dict[str, Any]:
         checked_at = now_iso()
-        result: dict[str, Any] = {"status": "check_failed", "checked_at": checked_at}
+        result: dict[str, Any] = {
+            "status": "check_failed", "checked_at": checked_at,
+            "skill_directory": str(self.skill_dir),
+        }
         try:
             repository = Path(
                 self._git("rev-parse", "--show-toplevel").stdout.strip()
@@ -137,17 +141,23 @@ class GitSkillUpdater:
             after = self._git("rev-parse", "@{upstream}").stdout.strip()
             result.update({"from_revision": before, "to_revision": after})
 
-            skill_changed = self._git(
-                "diff",
-                "--quiet",
-                f"{before}..{after}",
-                "--",
-                skill_path,
-                allowed_codes=(0, 1),
-            ).returncode == 1
-            if not skill_changed:
-                result["status"] = "up_to_date"
-                return result
+            if require_current:
+                if self._git("status", "--porcelain").stdout.strip():
+                    result.update(
+                        status="update_skipped", reason="working tree has local changes"
+                    )
+                    return result
+                if before == after:
+                    result.update(status="up_to_date", verified_revision=before)
+                    return result
+            else:
+                skill_changed = self._git(
+                    "diff", "--quiet", f"{before}..{after}", "--", skill_path,
+                    allowed_codes=(0, 1),
+                ).returncode == 1
+                if not skill_changed:
+                    result["status"] = "up_to_date"
+                    return result
 
             can_fast_forward = self._git(
                 "merge-base", "--is-ancestor", before, after, allowed_codes=(0, 1)
@@ -159,7 +169,10 @@ class GitSkillUpdater:
                 )
                 return result
 
-            if self._git("status", "--porcelain").stdout.strip():
+            if (
+                not require_current
+                and self._git("status", "--porcelain").stdout.strip()
+            ):
                 result.update(
                     status="update_skipped",
                     reason="working tree has local changes",
@@ -167,25 +180,36 @@ class GitSkillUpdater:
                 return result
 
             self._git("merge", "--ff-only", upstream)
+            if require_current:
+                verified = self._git("rev-parse", "HEAD").stdout.strip()
+                if verified != after:
+                    raise SkillUpdateError(
+                        "HEAD does not match the fetched upstream after fast-forward"
+                    )
+                if self._git("status", "--porcelain").stdout.strip():
+                    raise SkillUpdateError("working tree has local changes after fast-forward")
+                result["verified_revision"] = verified
             result["status"] = "updated"
             return result
         except (SkillUpdateError, ValueError) as exc:
-            result["reason"] = str(exc)
+            result["reason"] = safe_diagnostic(exc)
             return result
 
 
-def update_skill_before_refresh(refresh: bool) -> dict[str, Any] | None:
-    """Update before source I/O and restart once when the skill changed."""
+def update_skill_before_refresh(
+    refresh: bool, *, require_current: bool = False,
+) -> dict[str, Any] | None:
+    """Restart into updated code; strict runs recheck the checkout after restarting."""
     if not refresh:
         return None
-    carried = os.environ.get(SELF_UPDATE_ENV)
-    if carried:
+    carried = os.environ.pop(SELF_UPDATE_ENV, None)
+    if carried and not require_current:
         try:
             return json.loads(carried)
         except json.JSONDecodeError:
             pass
 
-    result = GitSkillUpdater().update()
+    result = GitSkillUpdater().update(require_current=require_current)
     if result["status"] == "updated":
         environment = os.environ.copy()
         environment[SELF_UPDATE_ENV] = json.dumps(result, ensure_ascii=False)

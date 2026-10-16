@@ -20,7 +20,7 @@ be summarized before it goes out.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from .budget import DEFAULT_MAX_CHARS, overage
 from .changes import announcement_facts
@@ -345,7 +345,9 @@ def description_lines(descriptions: list[dict[str, Any]]) -> list[str]:
     )
 
 
-def description_fields(description: dict[str, Any]) -> list[str]:
+def description_fields(
+    description: dict[str, Any], *, introduction: str | None = None,
+) -> list[str]:
     """What an introduction states, or why there was none to state.
 
     A vendor's announcement can run past what one message may carry, and it is
@@ -364,8 +366,11 @@ def description_fields(description: dict[str, Any]) -> list[str]:
     lifecycle = description.get("lifecycle", "unknown")
     lines = [
         field(
-            summary_label(description),
-            sentence_text(description.get("summary") or NO_SUMMARY),
+            "用途与能力" if introduction is not None else summary_label(description),
+            sentence_text(
+                introduction if introduction is not None
+                else description.get("summary") or NO_SUMMARY
+            ),
         ),
     ]
     # A newly listed model being active is implicit. Exceptional states remain
@@ -375,12 +380,13 @@ def description_fields(description: dict[str, Any]) -> list[str]:
         lines.append(
             field("生命周期", sentence_text(LIFECYCLE_LABELS.get(lifecycle, lifecycle)))
         )
-    if description.get("capabilities"):
+    if introduction is None and description.get("capabilities"):
         lines.append(
             field("主打能力", sentence_text("、".join(description["capabilities"])))
         )
-    if specs := specification_text(description.get("specifications") or {}):
-        lines.append(field("规格", sentence_text(specs)))
+    if introduction is None:
+        if specs := specification_text(description.get("specifications") or {}):
+            lines.append(field("规格", sentence_text(specs)))
     lines.append(field("来源", description_source_text(description)))
     return lines
 
@@ -420,19 +426,25 @@ def source_status_text(check: dict[str, Any]) -> str:
     return f"{status}（{error}）" if error else status
 
 
-def scan_message(payload: dict[str, Any], *, max_chars: int = DEFAULT_MAX_CHARS) -> str:
+def scan_message(
+    payload: dict[str, Any], *, max_chars: int = DEFAULT_MAX_CHARS,
+    introductions: Mapping[tuple[str, str], str] | None = None,
+) -> str:
     """Render a scan with model capabilities, standard prices, and outcomes."""
-    return finalize(scan_blocks(payload), max_chars)
+    return finalize(scan_blocks(payload, introductions=introductions), max_chars)
 
 
-def scan_blocks(payload: dict[str, Any]) -> list[list[str]]:
+def scan_blocks(
+    payload: dict[str, Any], *,
+    introductions: Mapping[tuple[str, str], str] | None = None,
+) -> list[list[str]]:
     """Group capabilities and notice changes by channel, then prices and outcomes."""
     reports = payload.get("providers", [])
     comparison = baseline_selection_text(payload)
     subject = f"{SCAN_SUBJECT}（{comparison}）" if comparison else SCAN_SUBJECT
     return [
         header(SCAN_TITLE, subject, payload),
-        section("模型能力", scan_capability_lines(reports)),
+        section("模型能力", scan_capability_lines(reports, introductions=introductions)),
         section("模型价格", changed_blocks(reports)),
         section("渠道结论", channel_conclusion(payload)),
     ]
@@ -541,7 +553,10 @@ def channel_conclusion(payload: dict[str, Any]) -> list[str]:
     return lines
 
 
-def scan_capability_lines(reports: list[dict[str, Any]]) -> list[str]:
+def scan_capability_lines(
+    reports: list[dict[str, Any]], *,
+    introductions: Mapping[tuple[str, str], str] | None = None,
+) -> list[str]:
     """Show all causes per channel model, with one item for bulk price moves."""
     blocks = []
     for report in reports:
@@ -549,14 +564,20 @@ def scan_capability_lines(reports: list[dict[str, Any]]) -> list[str]:
         batched_ids = (
             {normalize_model(name) for name in batch["model_ids"]} if batch else set()
         )
-        details = []
-        for model in changed_model_details(report):
-            if (
+        models = [
+            model for model in changed_model_details(report)
+            if not (
                 model["change_kinds"] == [PRICE_CHANGE_FIELD]
                 and normalize_model(model["model_id"]) in batched_ids
-            ):
-                continue
-            details.extend(scan_model_entry(model))
+            )
+        ]
+        details, grouped = scan_description_groups(models)
+        for model in models:
+            key = (report["provider"]["id"], model["model_id"])
+            details.extend(scan_model_entry(
+                model, include_description=model["model_id"] not in grouped,
+                introduction=(introductions or {}).get(key),
+            ))
         if batch:
             details.append(bullet(price_batch_text(batch), FIELD))
         if details:
@@ -564,12 +585,35 @@ def scan_capability_lines(reports: list[dict[str, Any]]) -> list[str]:
     return stacked(blocks)
 
 
-def scan_model_entry(model: dict[str, Any]) -> list[str]:
+def scan_description_groups(models: list[dict[str, Any]]) -> tuple[list[str], set[str]]:
+    """State identical introduction absences once, with every affected literal ID."""
+    groups: dict[tuple[str, ...], list[str]] = {}
+    for model in models:
+        description = model["description"]
+        if description.get("status") != DESCRIPTION_AVAILABLE:
+            key = tuple(description_fields(description))
+            groups.setdefault(key, []).append(model["model_id"])
+    lines: list[str] = []
+    grouped: set[str] = set()
+    for fields, names in groups.items():
+        if len(names) < 2:
+            continue
+        grouped.update(names)
+        lines.append(bullet(f"模型介绍（{'、'.join(names)}）", FIELD))
+        lines.extend(f"{INDENT}{line}" for line in fields)
+    return lines, grouped
+
+
+def scan_model_entry(
+    model: dict[str, Any], *, include_description: bool = True,
+    introduction: str | None = None,
+) -> list[str]:
     """Keep simultaneous billing and notice changes beside the correct introduction."""
     fields: list[str] = []
     if text := model_offer_changes_text(model):
         fields.append(field("计费变化", sentence_text(text)))
-    fields.extend(description_fields(model["description"]))
+    if include_description:
+        fields.extend(description_fields(model["description"], introduction=introduction))
     announcements = {
         change["event"]["source_url"]: change["event"]
         for change in model["announcement_changes"]

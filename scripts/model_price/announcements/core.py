@@ -14,6 +14,7 @@ from typing import Any
 from ..descriptions.core import description_record, unavailable_description
 from ..models import normalize_model
 from ..paths import ANNOUNCEMENT_SCHEMA_VERSION
+from ..privacy import safe_diagnostic
 from ..snapshots import BaselineSelection, SnapshotStore
 from .sources import read_publications
 
@@ -124,7 +125,7 @@ def scan_announcements(
                 if discovery["status"] == "source_error"
                 else "no_announcements"
             ),
-            "error": "；".join(discovery.get("errors") or []),
+            "error": safe_diagnostic("；".join(discovery.get("errors") or [])),
             "models": [],
         }
     if previous:
@@ -157,7 +158,7 @@ def scan_announcements(
         return {
             **result,
             "status": "source_error",
-            "error": "；".join(discovery["errors"]),
+            "error": safe_diagnostic("；".join(discovery["errors"])),
             "model_count": len(known),
             "models": list(known.values()),
             "changes": changes,

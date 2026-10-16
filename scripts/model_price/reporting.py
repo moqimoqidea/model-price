@@ -609,7 +609,11 @@ def changed_model_details(report: dict[str, Any]) -> list[dict[str, Any]]:
 def model_title(model: dict[str, Any]) -> str:
     """Name the channel's literal ID beside its display name in every section."""
     model_id = model.get("model_id", "")
-    return f"{model.get('display_name') or model_id}（{model_id}）"
+    display_name = model.get("display_name") or model_id
+    return (
+        f"{display_name}（{model_id}）"
+        if model_id and display_name != model_id else display_name
+    )
 
 
 def model_change_title(model: dict[str, Any]) -> str:

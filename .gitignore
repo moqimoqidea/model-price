@@ -28,6 +28,19 @@ htmlcov/
 # Logs & temp
 *.log
 .env
+.env.*
+!.env.example
+!.env.template
+
+# Private captures, credentials, and delivery records
+*.har
+*.pem
+*.key
+*.p12
+*.pfx
+.credentials/
+.sessions/
+private/
 
 # Agent workspace (local memory, notes, sample reports)
 .workbuddy/

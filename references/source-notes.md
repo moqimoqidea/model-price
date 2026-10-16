@@ -558,7 +558,10 @@ Diagnostics retain the effective source URL and distinguish timeout, connection
 failure, rejected requests, verification pages, and server errors. HTTP failures
 retain typed status/verification facts through run-local reuse. Only cf-mitigated,
 x-vercel-mitigated, x-vercel-id, and Retry-After headers enter diagnostic prose;
-cookies and challenge tokens do not.
+cookies and challenge tokens do not. Public diagnostics additionally redact
+credentials, personal identifiers, private paths, and sensitive URL parameters;
+generic source exceptions use the same rule. See [privacy.md](privacy.md) for
+capture validation and local-artifact boundaries.
 
 The self-updater's idempotent Git fetch uses the same UA and browser identity
 headers while Git owns its protocol's Accept/content headers. It inherits system

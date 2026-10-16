@@ -21,6 +21,7 @@ if __package__ in (None, ""):
 from model_price.documents import DocumentClient
 from model_price.lifecycle import retired_model_ids
 from model_price.lifecycle_sources import read_events
+from model_price.privacy import safe_diagnostic
 from model_price.providers import ALL_PROVIDERS
 
 PROVIDERS = {provider.provider_id: provider for provider in ALL_PROVIDERS}
@@ -50,7 +51,7 @@ def audit_provider(provider_id: str, client: Any, as_of: datetime) -> dict[str, 
             report["image_only_dates"] = image_only_dates
         return report
     except Exception as exc:
-        return {"provider": provider_id, "status": "source_error", "error": str(exc)}
+        return {"provider": provider_id, "status": "source_error", "error": safe_diagnostic(exc)}
 
 
 def build_parser() -> argparse.ArgumentParser:

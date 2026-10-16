@@ -11,6 +11,7 @@ from .core import HttpClient, PriceSource, now_iso
 from .descriptions import DescriptionResolver, query_targets
 from .models import normalize_model
 from .paths import DEFAULT_CACHE_DIR
+from .privacy import safe_diagnostic
 from .providers import ALL_PROVIDERS, DOMESTIC_PROVIDERS, OVERSEAS_PROVIDERS
 
 DOMESTIC_PROVIDER_IDS = tuple(adapter.provider_id for adapter in DOMESTIC_PROVIDERS)
@@ -53,7 +54,7 @@ def source_status(
         },
     }
     if error:
-        item["error"] = error
+        item["error"] = safe_diagnostic(error)
     cache_status = getattr(adapter, "cache_status", None)
     if cache_status and cache_status != "unused":
         item["cache"] = {

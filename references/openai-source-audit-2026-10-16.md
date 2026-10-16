@@ -12,17 +12,17 @@
 
 ## 1. 最新代码确认了什么
 
-- [core.py](/Users/moqi/code/moqi/model-price/scripts/model_price/core.py:50)
+- [core.py](../scripts/model_price/core.py)
   现在按 `x-vercel-mitigated` 头是否存在识别带标记的 403，不再只认 `deny`。
   `challenge` 和未来其他值都会进入最多三次的安全请求重试。
-- [重试分支](/Users/moqi/code/moqi/model-price/scripts/model_price/core.py:244)
+- [重试分支](../scripts/model_price/core.py)
   尊重不超过 30 秒的 `Retry-After`；超过上限会暂停该主机本轮请求。
   Cloudflare 校验和持续 429 也会暂停主机，但耗尽重试的 Vercel 403 不会。
-  [现有测试](/Users/moqi/code/moqi/model-price/tests/test_http_client.py:274)
+  [现有测试](../tests/test_http_client.py)
   明确要求耗尽边缘拦截后，同主机第二份文档仍然可以读取。这是现行策略，不是遗漏了调用。
 - 同一 URL 的失败在本轮复用，不会无限重试；不同 URL 仍各有自己的尝试。
   默认同主机总预算为 20 次，包含重定向。价格、退役和介绍共用一个 `HttpClient`。
-- [delta.py](/Users/moqi/code/moqi/model-price/scripts/model_price/delta.py:133)
+- [delta.py](../scripts/model_price/delta.py)
   在读取失败或目录为空时不会写价格基线。
   退役、公告也各自保留失败前的历史。应继续保留这些行为。
 - 本地完整离线测试结果：690 个测试通过。下面的新问题不在现有 fixture 的覆盖范围内。
@@ -82,7 +82,7 @@ MCP 实测返回 `openai-docs-mcp` 服务信息，并暴露 `fetch_openai_doc` �
 > GPT-5.6 Sol’s promotional pricing is available at least through November 21, 2026.
 
 实际 `pricing_notes` 却停在 `through`，后面的日期丢失。
-原因是 [_sentences()](/Users/moqi/code/moqi/model-price/scripts/model_price/parsing.py:1274)
+原因是 [_sentences()](../scripts/model_price/parsing.py)
 先逐物理行拆分，再识别句子；第二行既没有模型名，也没有促销词，不能回到第一行的备注。
 直接 Markdown 与 MCP 都保留这个软换行，因此仅切换通道不能修复它。
 
@@ -95,7 +95,7 @@ MCP 实测返回 `openai-docs-mcp` 服务信息，并暴露 `fetch_openai_doc` �
 `gpt-6.1-sol.md` 明确写出 1,050,000 的上下文窗口、922,000 的最大输入、128,000 的最大输出，
 以及知识截止日期。但当前解析结果只有输入、输出模态。
 
-原因是 [markdown_specifications()](/Users/moqi/code/moqi/model-price/scripts/model_price/descriptions/parsing.py:130)
+原因是 [markdown_specifications()](../scripts/model_price/descriptions/parsing.py)
 主要识别 `标签: 值` 的列表项；当前网页也使用 `数值 context window`、
 `数值 max output tokens`、`日期 knowledge cutoff` 等表达。
 最大输入的两种标签 `Maximum input tokens` 和 `Max input` 也没有映射。
@@ -107,7 +107,7 @@ MCP 实测返回 `openai-docs-mcp` 服务信息，并暴露 `fetch_openai_doc` �
 
 同一模型的 MCP 正文为 2,393 字符，规格写成带冒号的列表，因此当前 reader 能读到部分规格。
 但能力列表写在 `Supported features: ...` 的一行中；当前
-[markdown_capabilities()](/Users/moqi/code/moqi/model-price/scripts/model_price/descriptions/parsing.py:109)
+[markdown_capabilities()](../scripts/model_price/descriptions/parsing.py)
 只支持对应章节下的列表或能力表，因此得到空能力列表。
 
 | 同一个模型 | 当前能力解析 | 当前规格解析 |
@@ -125,7 +125,7 @@ MCP 介绍还有价格说明，但并未返回该 `.md` 中的金额表，不能
 
 ### 4.1 HTTP 200 的 Vercel 校验页尚未识别
 
-[_challenge_page()](/Users/moqi/code/moqi/model-price/scripts/model_price/core.py:400)
+[_challenge_page()](../scripts/model_price/core.py)
 覆盖了 Cloudflare 标记与标题，没有覆盖 Vercel Security Checkpoint。
 离线构造 HTTP 200、HTML 正文和 `x-vercel-mitigated: challenge` 后：
 
@@ -194,11 +194,11 @@ MCP 介绍还有价格说明，但并未返回该 `.md` 中的金额表，不能
 
 | 内容 | 修改落点 |
 | --- | --- |
-| 校验识别、受限诊断、重试通道策略 | [core.py](/Users/moqi/code/moqi/model-price/scripts/model_price/core.py) 与 OpenAI 专用文档读取层 |
-| 段落和完整促销句 | [parsing.py](/Users/moqi/code/moqi/model-price/scripts/model_price/parsing.py) |
-| 模型介绍结构 | [介绍解析器](/Users/moqi/code/moqi/model-price/scripts/model_price/descriptions/parsing.py)；必要时使用 OpenAI 来源策略 |
-| 价格/退役/介绍接入文档层 | [价格适配器](/Users/moqi/code/moqi/model-price/scripts/model_price/providers/openai.py)、[退役来源](/Users/moqi/code/moqi/model-price/scripts/model_price/lifecycle_sources.py)、[介绍来源](/Users/moqi/code/moqi/model-price/scripts/model_price/descriptions/sources.py) |
-| 来源与兼容说明 | [source-notes.md](/Users/moqi/code/moqi/model-price/references/source-notes.md)、[schema.md](/Users/moqi/code/moqi/model-price/references/schema.md) |
+| 校验识别、受限诊断、重试通道策略 | [core.py](../scripts/model_price/core.py) 与 OpenAI 专用文档读取层 |
+| 段落和完整促销句 | [parsing.py](../scripts/model_price/parsing.py) |
+| 模型介绍结构 | [介绍解析器](../scripts/model_price/descriptions/parsing.py)；必要时使用 OpenAI 来源策略 |
+| 价格/退役/介绍接入文档层 | [价格适配器](../scripts/model_price/providers/openai.py)、[退役来源](../scripts/model_price/lifecycle_sources.py)、[介绍来源](../scripts/model_price/descriptions/sources.py) |
+| 来源与兼容说明 | [source-notes.md](source-notes.md)、[schema.md](schema.md) |
 
 来源或解析变化后，将 `CACHE_SCHEMA_VERSION` 从当前 34 升级，使旧的缺字段结果失效。
 若价格基线的形状和比较语义未变，不必仅因新增通道升级 `SNAPSHOT_SCHEMA_VERSION`；

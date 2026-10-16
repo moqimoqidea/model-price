@@ -5,110 +5,135 @@ description: Find and compare major AI models by purpose, capabilities, specific
 
 # Model Price
 
-Run the bundled script before answering. Keep the model-introduction section it returns: it states what the model is for, its main capabilities and specifications, any exceptional lifecycle state, and its official source. An active lifecycle is implicit and omitted from the message; preview, legacy, retired, and unknown states remain visible. The introduction opens the message before the conclusion and every price, because a reader needs the model's role and strengths to judge the available services and cost. Show every returned provider, version, service mode, region, price condition, official source, and source status — and when a price is split by time of day, the window it covers. A price keeps the unit the vendor billed in — per million tokens, per image, per second of video, per ten-thousand characters, per song, per call — so never restate one in another unit: a per-image rate is not a token rate, and converting it would quote a number no vendor charges.
+Query public official model catalogues, introductions, prices, releases, and
+retirement notices without credentials. Use the bundled script for the facts;
+never answer a current price or change question from memory.
 
-For `delta`, use the default presentation described below: multiple-model standard price adjustments are linked batches in both sections, while all prices and conditions that the message actually displays remain complete. Do not expand those batches merely to repeat every JSON detail.
+For **daily IM reports**, read [references/daily-workflow.md](references/daily-workflow.md)
+before acting. It owns installed-version verification, a single scan, concise
+report preparation, staged delivery, and the separate repair/publish gates.
+Apply recipients, timezone, baseline, and confirmation tokens from the user's
+request; a request to inspect a report does not authorize sending it.
+
+Read [references/reporting.md](references/reporting.md) when composing or forwarding
+a message. It owns report order, protected facts, batching, and summarization.
+Produce the finished concise report directly; do not offer an optional second
+compression pass.
+
+## Choose the command
+
+Run from the actual installed skill directory; resolve symlinks to its Git clone.
+A development checkout or temporary copy is not the installed skill.
 
 ```bash
-# Search domestic providers. Named overseas families also add their first-party provider.
+# Named-model questions: domestic channels, plus an inferred first-party vendor.
 python3 scripts/query_model_prices.py compare MODEL --format message
-
-# Query selected providers, require an exact ID, or include all overseas providers.
 python3 scripts/query_model_prices.py compare MODEL --provider PROVIDER --provider PROVIDER
 python3 scripts/query_model_prices.py compare MODEL --exact
 python3 scripts/query_model_prices.py compare MODEL --include-overseas
 
-# Query or list one provider.
+# One hosting channel.
 python3 scripts/query_model_prices.py provider PROVIDER MODEL --format message
 python3 scripts/query_model_prices.py list PROVIDER --prefix PREFIX
 
-# Scan every catalogue against the previous or a historical baseline.
-python3 scripts/query_model_prices.py delta --format message
-python3 scripts/query_model_prices.py delta --provider PROVIDER --format json
-python3 scripts/query_model_prices.py delta --since yesterday
-python3 scripts/query_model_prices.py delta --since yesterday-first --timezone Asia/Shanghai --include-overseas
-python3 scripts/query_model_prices.py delta --since last-month
-python3 scripts/query_model_prices.py delta --since 2026-09-19T23:59:59+08:00
+# A catalogue scan, with an artifact for later offline editing.
+python3 scripts/query_model_prices.py delta --format message --save-payload RUN/scan.json
+
+# Render that same run; no network, self-update, cache or baseline writes.
+python3 scripts/query_model_prices.py render RUN/scan.json
+python3 scripts/query_model_prices.py render RUN/scan.json --introductions RUN/introductions.json
 ```
 
-Provider IDs: `aliyun`, `volcengine`, `tencent`, `baidu`, `deepseek`, `kimi`, `zhipu`, `minimax`, `xiaomi`, `kling`, `ant-ling`, `openai`, `anthropic`, `google`, `xai`, `mistral`, `openrouter`, `google-cloud`, `aws-bedrock`, `azure`.
+Use `--format message` for a person or any IM delivery, and `--format json`
+for machine consumption. `delta` defaults to message; named-model queries
+default to JSON. `--save-payload` saves the full scan JSON alongside either
+output format and refuses an existing path. Use a unique run directory under
+`cache/reports/` or outside the repository. Never rerun a scan to get another
+format or a shorter report.
 
-`ant-ling` is a domestic first-party channel. Read its CNY pricing and independent deprecation page; partner prices printed on the same page belong to those partners. Its promotion prose stays verbatim, with no guessed expiry. No introduction or independent release reader is registered yet, so report `not_found` introductions and `catalogue_only` announcement coverage.
+Provider IDs:
+`aliyun`, `volcengine`, `tencent`, `baidu`, `deepseek`, `kimi`,
+`zhipu`, `minimax`, `xiaomi`, `kling`, `ant-ling`, `openai`,
+`anthropic`, `google`, `xai`, `mistral`, `openrouter`, `google-cloud`,
+`aws-bedrock`, `azure`.
 
-Pick the format by where the answer is going, not by preference: `--format message` whenever the result will be sent to a person over an instant messenger — DingTalk, WeChat, Feishu, or any other — and `--format json` otherwise. A request to send, forward, push, notify, or 「发给我」 over IM is a request for a message, so pass `--format message` for it without being asked to. `compare` and `provider` default to `json` because their usual consumer is another program; `delta` defaults to `message` because its usual consumer is a channel.
+Default scope is domestic. A named OpenAI/GPT, Anthropic/Claude,
+Google/Gemini, xAI/Grok, or Mistral family adds its first-party provider for
+`compare` only. Names never imply an aggregator or reseller. Select those
+with `--provider`; `--include-overseas` includes all 20 channels and is
+appropriate when the user asks for all channels. AWS reads large public price
+lists, so avoid an unsolicited whole-catalogue scan for a named-model question.
 
-Two lengths are limited, and neither limit is met by cutting — go under it by summarizing, never by dropping.
+Use family matching unless the user needs a literal ID (`--exact`). Report the
+actual returned ID; documentation footnotes and vendor spellings may normalize,
+but never merge generations, hosting modes, regions, currencies, or billing tiers.
 
-A model introduction carries at most 300 characters. A vendor publishes an announcement rather than a summary (one DeepSeek page opens with a whole press release), so an introduction that runs past the limit is flagged `summary_needs_condensing` in the payload and its 用途 line carries a label naming its length and the limit instead of a plain one. Write that summary yourself before sending: at most 300 characters, the same meaning, the same 来源 line, and the label goes with the original it described. The vendor's words stay whole in `--format json`, because the tool cannot summarize — it takes no credentials and has no model to ask — and it will not cut, because a sentence that stops mid-clause reads as the vendor's complete wording.
+## Freshness and baselines
 
-A message carries at most `--max-chars` characters, 3000 by default. `compare`, `provider`, and `delta` all stop there. An over-long message is the whole rendered report plus one closing line saying how far over it is. Summarize it before sending, keeping its title, model capabilities, every displayed standard price with its billing conditions, and every channel's status, including failures. For `compare` and `provider`, keep every displayed offer and source. Condense prose rather than cutting a line mid-amount. A channel-specific delivery contract may impose a larger transport ceiling, but that does not change this default budget.
+Lists and queries reuse a 3-hour cache. `--refresh` bypasses it for selected
+providers. `delta` always reads fresh sources, once per document in the run,
+and archives each successful provider result. Failures and empty scans do not
+replace successful history. A listed model without a readable rate remains
+listed with an unknown price; a published zero remains free.
 
-Do not query the overseas providers by default. Add only the relevant provider when the user explicitly mentions GPT/OpenAI, Claude/Anthropic, Gemini/Google, Grok/xAI, or Mistral (including Ministral, Codestral, Devstral, Voxtral, and its other model families); use `--include-overseas` when the user explicitly asks about overseas models generally.
+Baseline choices are per provider:
 
-Five of them are model vendors whose names a query can be inferred from. The other four carry models they did not build — `openrouter` is an aggregator, and `google-cloud`, `aws-bedrock`, and `azure` are clouds that resell other vendors' models — so no model name implies them: reach them with `--include-overseas` or by naming the provider. Prefer naming it. `aws-bedrock` reads two public price lists of about 25 MB together, and a scan that read them for a question about one model would cost that for nothing.
+- Omit `--since`: previous successful scan.
+- `--since yesterday`: yesterday's last successful scan.
+- `--since yesterday-first`: yesterday's first successful scan.
+- `--since last-month`: previous calendar month's last successful scan.
+- `--since YYYY-MM-DD`: that date's last scan.
+- `--since ISO_TIMESTAMP`: last scan at or before that instant.
 
-`mistral` uses literal API identifiers and aliases published in its public docs, including its own introductions for third-party models it hosts. Standard, batch, priority, and regional-inference prices remain distinct offers. OCR, audio transcription, and TTS keep their page/minute/character units; a current model without a price row stays unpriced. Public Preview is a lifecycle state, while public API access is independently quoted from releases. Future weights do not close an already public preview API. Deprecation dates announce retirement; they are not EOM dates or automatic redirects.
+Use `--timezone Asia/Shanghai` for Beijing calendar days and scan timestamps.
+A timestamp without an offset uses the scan timezone. Missing history is
+`baseline_not_found`, never a substitute baseline or “no change”.
 
-`aws-bedrock` and `azure` quote one model in every region they serve it from (thirty-odd for AWS, forty for Azure, and the same charges in most of them). Each is read for **one** region — the American one the vendor lists first — and the record names the region it read, so `region` is part of the answer rather than an assumption: `us-east-1` / `US East (N. Virginia)` for AWS, `us-east` for Azure. Say which region an amount is for when you report it; there is no flag for another region today. `google-cloud` is different: its page groups rates by the region set it publishes (Global, US Multi-Region, EU Multi-Region, and named regions), and those groups are read as the regions they are.
+Explicit refreshes normally try a Git fast-forward and continue with a recorded
+`skill_update` if updating fails. Daily delivery uses `delta --require-current`
+instead: it requires a clean installed checkout at the fetched upstream commit,
+verifies HEAD, and stops before any source read on failure. Update diagnostics
+stay in the saved JSON/session, outside the scan message.
 
-Each provider caches lists and price searches independently under `cache/`. Fresh caches are valid for 3 hours. Add `--refresh` only when the user asks for the latest/current refresh; with `provider` or repeated `--provider`, refresh only those providers. `delta` is the exception — it always reads the sources afresh, because a cache hit would hand the previous scan back as "no change". Fresh means once per source document in that run, never once per model: identical operations and URLs are also reused in memory. Safe reads retry transient connection failures and HTTP 408/425/429/5xx responses with bounded backoff, and a 403 an edge firewall marked as a mitigation rather than a credential answer; non-idempotent POSTs do not retry.
+## Evidence boundaries
 
-Model introductions are scoped to the hosting channel and literal model ID. A Tencent listing uses Tencent's description; an OpenRouter listing uses OpenRouter's description, even when the same model's creator also has a page. Never substitute another channel's introduction, infer a source from the model name, or merge introductions across channels or retired-name aliases. Introduction sources remain independent from price adapters and cache under their own `description` operation. A missing introduction or a channel without a readable introduction source is `not_found`; an unreadable source is `source_error`, and neither status may suppress a valid price result. Keep the channel's own reference URL with an absence rather than inventing capabilities. Tencent TokenHub uses only the checked-in authenticated mirror under `descriptions/data/`; never infer text for a model absent from that mirror.
+- Introductions belong to the **hosting channel and literal model ID**.
+  Never borrow a creator's or another host's prose, even for the same model.
+  Missing (`not_found`) and failed (`source_error`) introductions remain
+  explicit and never suppress a valid price. Tencent's authenticated mirror is
+  the only TokenHub detail source; an absent entry is not permission to infer.
+- Publication, catalogue listing, developer access, and consumer access are
+  independent. Keep published names without guessing API IDs. First observations
+  are not claims that an old release launched today. Retained official releases
+  survive rolling-index omissions; failures preserve their history.
+- Catalogue disappearance proves only that catalogue's withdrawal. It does not
+  establish API shutdown. Keep notice scope, EOM, redirects, EOS, earliest-possible
+  qualifiers, replacements, date precision, and official URLs separately.
+- Preserve the vendor's billing units, currencies, regions, delivery modes,
+  context/time bands, promotions, and quoted terms. An official update time needs
+  official evidence; a scan time is not a vendor update.
+- OpenRouter's adapter excludes scan price and billing-mode movements from the
+  comparison. Never reintroduce its amounts, price batches, or price-change counts
+  during summarization. Its listing/notices/introductions remain visible;
+  named-model queries still show its rates.
+- Prefer the vendor's machine-readable Markdown or public JSON over rendered
+  HTML. Do not request or store credentials. The sole console exception is an
+  explicitly requested offline refresh of Tencent's model-description mirror.
 
-`delta` is the incremental run, for a scheduled or repeated check rather than a question about one model. It takes no model name: it scans each provider's whole catalogue and, by default, compares it with that provider's previous successful scan. It covers domestic providers only unless `--include-overseas` is given, prints a DingTalk-ready message unless `--format json` is asked for, and runs the skill's own Git update check the way any refresh does. A scan takes tens of seconds rather than a moment because it reads every selected official catalogue afresh; Bailian's catalogue remains paged so later growth is not silently cut off.
+## Delivery and maintenance
 
-Every successful provider scan is archived under `snapshots/`. Use `--since yesterday` for yesterday's last baseline, `--since yesterday-first` for yesterday's earliest successful baseline per provider, and `--since last-month` for the previous calendar month's last baseline. When the user says “yesterday” without specifying first or last, use `yesterday`. Relative days use the scan's calendar timezone; add `--timezone Asia/Shanghai` when the user requires Beijing time, regardless of the machine's timezone. A `YYYY-MM-DD` calendar date selects that date's last baseline. An extended ISO calendar timestamp selects the last baseline at or before that instant, which is the form to use for a known release boundary. Week dates and basic dates are rejected rather than silently changing meaning. If a timestamp omits its offset, it is interpreted in the current scan's timezone. A provider with no matching history reports `baseline_not_found` and still archives the successful current scan; it never silently falls back to a different date.
+Read only the selected IM transport contract before sending. DingTalk's sole
+compatibility and delivery contract is [im/dingtalk.md](im/dingtalk.md); do not
+guess an equivalent command. The staged daily state machine lives in
+[daily-workflow.md](references/daily-workflow.md), with personal recipients kept
+in the user's request rather than this repository.
 
-History retention is per provider and hard-capped at 1000 snapshots. Before pruning, reserve the last snapshot of each day in the recent three-month calendar window, then each day's first snapshot while space remains, then fill the remaining slots with the newest scans. This keeps yesterday's first and last baselines and previous-month lookup anchors without letting a high-frequency schedule grow past the cap. Successful scans are archived even when their catalogue is unchanged. Existing `snapshots/<provider>.json` baselines are read in place and migrated on the next successful scan; an unreadable legacy baseline is moved to `snapshots/rejected/` after the new archive succeeds.
+For JSON fields, read [references/schema.md](references/schema.md).
+For source/parser repairs, read [AGENTS.md](AGENTS.md) and
+[references/source-notes.md](references/source-notes.md).
+For official publication coverage limits, read
+[references/announcement-audit.md](references/announcement-audit.md).
 
-Report every scanned provider in 渠道结论, including the ones that did not move. A first default run reports `baseline_created` and how many models it recorded, instead of claiming nothing changed. A historical request with no matching archive reports `baseline_not_found`. A channel with only notice, release, access, or replacement changes still belongs among changed channels; distinguish those changes from an unchanged price catalogue. A failed independent source read is a partial failure, never a fully unchanged channel. Directory prices in 模型价格 select standard offers for models whose `model_availability` is `listed`. A newly listed model without a published price remains in the baseline and 新增模型, with 价格未知 in the message; a later price publication changes its offer rather than listing it again. Removed-model counts still appear in 渠道结论 and JSON. Other catalogue offer prices remain in JSON and baselines but are omitted from the default message; their mode changes can still be named without amounts. A provider that fails (`source_error`) or yields no model (`empty_scan`) is named with its reason and writes no new price archive, so every previous good baseline survives and the change stays visible once the source recovers.
-
-`delta` also reads registered official blogs, research releases, and capability inventories independently of prices and retirement notices. Include `--include-overseas` to cover all 20 channels, including Mistral news; the default remains domestic. Publication, a same-name catalogue match, developer access, and consumer access are separate facts. Do not infer that a model is closed because its price is missing, or that it is publicly usable because a price exists. First-party research evidence proves only what that operator published; third-party hosts require their own release evidence. OpenRouter and Ant Ling remain `catalogue_only` for announcement discovery.
-
-Show newly discovered official models in 模型能力 even before a price row exists. Use the announcement's own introduction, official publication precision, access statements, and HTTPS source; never invent an API ID from the title. A literal published name joins a catalogue ID only through an exact normalized name or display-name match, without family or retirement aliases. On the first release scan use 【官方公布·首次收录】 rather than claiming a historical release happened today; subsequent discoveries use 【新增公布】. Also retain 【开放状态更新】, 【公告报价更新】, and 【公布模型目录状态更新】 alongside other causes. Missing historical announcement baselines report `baseline_not_found` rather than invented differences. First observations absent from the latest archive remain visible once as 【官方公布·首次收录】, separately from the requested historical delta.
-
-Announcement rates appear separately as 公告报价, with every published amount and its original terms. They are not live API billing offers. Preserve introductory and later rates independently; never derive a cached price from a percentage or convert “at least through” into an exact end date. If no readable rate exists, state that the announcement price is unknown. State the documented access audience, including limited or pending developer/consumer access; unknown means the official source did not establish it. News readers discover releases in a 90-day window; current capability inventories have no date cutoff. Retained releases survive rolling-index omissions. Failed or partially unreadable sources keep their previous archive and report `source_error`, while verified index discoveries can still be shown with index evidence. See [references/announcement-audit.md](references/announcement-audit.md) for researched coverage and its limits. Announcement discovery applies to `delta`; `compare`, `provider`, and `list` retain catalogue-based discovery.
-
-The same `delta` run checks official retirement notices independently of prices. Notice additions, corrected dates, replacement revisions, status revisions, and EOM, redirect, or EOS dates reached since the selected baseline are classified under the affected channel's model in 模型能力. The JSON has a separate `lifecycle` status per provider. A missing price row means only catalogue removal, not API shutdown. A confirmed EOS date already reached or an explicit "已下线" notice suppresses that model's displayed prices even when a stale price row remains. Future shutdown plans do not establish retirement; a vendor may keep existing access, automatically route the old ID to a replacement, or publish only an earliest possible shutdown date. Keep the exact hosting provider, model ID, milestone, date precision, replacement, and source URL. A notice whose list was published only as an image, with no readable equivalent, is stated as 部分批次仅图片公告、无可读模型名单 with its batch dates and does not fail the channel's other notices. A failed notice read keeps the last successful notice archive. Zhipu model-page notices and MiniMax legacy tables are partial status evidence; do not invent dates for their undated entries.
-
-The JSON payload retains official source update times and the most recent successful snapshot time. Tencent, Baidu, and Xiaomi expose official stamps; DeepSeek takes the newest date its own update log publishes. Never label a fallback scan time as an official vendor update.
-
-The 「模型能力」 block groups models by the channel whose catalogue, notice, or official publication changed. Classify the actual causes as 【新增上架】, 【目录下架】, 【价格调整】, 【计费模式新增】, 【计费模式移除】, 【替代模型更新】, 【退役公告新增】, 【退役日期更新】, 【官方状态更新】, 【退役信息更新】, or 【退役时间节点】. A channel that reports no price movements carries only the listing, notice, and publication causes; see the OpenRouter rule below. Keep every applicable label on a model with simultaneous changes. Name the billing modes and their conditions; keep notice facts, before/after replacements, and official evidence beside that model. Being currently listed never means it was newly added. 【目录下架】 states a catalogue fact and never establishes EOS. Only changed models are looked up during `delta`; unchanged catalogues must not trigger hundreds of detail-page requests.
-
-OpenRouter is compared and reported on its listing, never on its prices. It rebills whichever upstream endpoint a request routes to, so its catalogue amounts move every day without telling a reader anything they can act on. A scan therefore reports only what it lists, what it withdraws, its expiry notices, and its capability introductions; its price and billing-mode movements are left out of the comparison itself, not merely hidden later. The consequences hold at every stage of the run:
-
-- A day whose only OpenRouter change is a rate or a billing mode reads 无变化 for that channel, and `changes` carries no `price_changes`, `offers_added`, or `offers_removed` for it. The provider report says `reports_price_movements: false`.
-- The channel never appears in 模型价格 — no amounts, no 【价格调整】 batch, no 目录价波动 wording, no 托管方 attribution, and no price-change count in 渠道结论. Do not add a line explaining the omission; the rule belongs here, not in every message.
-- A new listing is shown by its literal ID, its introduction, and its own source, exactly as 模型能力 shows any other new listing, and never by its rates. A withdrawal is 【目录下架】.
-- The message and the JSON agree. Nothing downstream may re-introduce an amount for this channel by expanding, summarizing, or re-counting a block.
-- Amounts are still read and archived: the baseline keeps the full catalogue, and a query that names a model (`compare`, `provider`) still shows OpenRouter's rates, because that answers a question about one model rather than the daily comparison.
-
-Nothing about this rule follows from a provider's name. An adapter declares the policy, and the report carries it; a channel that publishes its movements still reports them under its own ID.
-
-When one channel has standard price movements on at least two distinct listed models, combine those movements into one item in each of 模型能力 and 模型价格. List every affected literal model ID, the number of models and price changes, and that channel's full official HTTPS catalogue URL at line end; let the reader inspect the amounts and conditions there. Price-only models do not need repeated introductions in that item. A model that also changed its billing mode, replacement, listing, or notice still keeps a separate entry for those facts. This rule applies to any channel that reports price movements, regardless of message length. Never combine channels. A single model's several amounts or context tiers remain detailed, as do new-model prices and added/removed standard offers. JSON and snapshots retain all amounts and conditions. Without a usable official HTTPS page, retain detailed prices instead of an untraceable batch.
-
-The scan message follows this order: 模型价格自动检测 with the scan time and selected baseline, 模型能力 (including classified notice changes), 模型价格, 渠道结论. Empty sections drop out. The price section names only changed channels, with standing rates or linked batch adjustments as selected above. The conclusion gives total counts and names every channel by status, with failure reasons. Do not add a separate retirement section, channel overview, channel pricing source list, or Skill update section.
-
-A scan that read every channel and found none of them moved prints its title and 渠道结论, naming the unchanged channels without repeating the catalogue.
-
-Both outputs are plain-text messages, meant to be forwarded into an instant-messaging channel rather than filed as a document. They carry no Markdown markup: hierarchy is carried by numbering and indentation, blocks are separated by blank lines, and a source URL is written last on its line so nothing is dragged into an automatic link. Whenever a source is shown, write its full URL beginning with `https://` so the reader can open it directly. `--format json` gives the same payload for anything that parses rather than reads it.
-
-Before sending, read only the contract for the selected IM channel. For DingTalk, read [im/dingtalk.md](im/dingtalk.md) and follow it exactly; it owns the supported DWS version, the command path, the plain-text preflight, recipient checks, and the transport limit. Do not infer that another DWS command with similar flags is equivalent.
-
-For a scan, keep the title, classified model capabilities, displayed standard prices or linked batch adjustments, and channel outcomes in that order when forwarding or condensing. Preserve every model ID and official URL in a batch; preserve all amounts and conditions that the selected message actually displays. Do not expand a linked batch into individual price or introduction entries when forwarding.
-
-Before any `--refresh` source request, the script fetches the skill repository's configured Git upstream. It fast-forwards and restarts with the updated skill only when the upstream changed this skill, the branch can fast-forward, and the working tree is clean. It otherwise continues with the current code and records `skill_update` as `up_to_date`, `update_skipped`, or `check_failed` in JSON; the scan message omits this operational check. If an overseas source is unreachable and no fresh cache exists, report `source_error` and say its price is unknown.
-
-Use family matching for availability comparisons; use `--exact` only for an exact official ID. Never merge self-deployed, platform-hosted, third-party-hosted, upstream-direct, first-party, Batch, cache, context, service-tier, time-band, promotion, version, currency, or region variants.
-
-Model identity ignores documentation footnote markers (`deepseek-flash(1)` == `deepseek-flash`). Officially retired names are mapped to their live model, so `deepseek-v4-flash` resolves to `deepseek-flash`; always report the `model_id` actually returned. A vendor that files the live model under its own spelling is also matched (`deepseek-v4.1-flash` and `deepseek-v4-1-flash` are the same model, so one query reaches every platform serving it), but that link is one-way: a live model never absorbs the price rows of a superseded generation. `--exact` insists on the literal official id either way. A model that is listed but priced per second, per request, or on a tier the source does not quote produces no price rows — say it is unpriced rather than reporting a price of zero. A model the vendor itself publishes as free is the opposite case: that zero is the published price, and it is reported as free.
-
-Table-driven adapters keep cache-hit and cache-miss prices apart (`输入（未命中缓存）` is regular input pricing, not cached-input pricing), and ignore headers that bill a non-token unit such as audio duration. A header that describes the request rather than a price — a length band like `条件 输入长度：千 token`, or a peak/off-peak label — is a condition, never a price column; reading one as a price silently drops the tier or time band that distinguishes rows. They read only amounts that name their own currency, so a page publishing both CNY and USD tables yields the CNY catalogue. Never relabel one currency as another.
-
-Peak and off-peak hours are set per platform and must never be carried across them. For `deepseek-flash`: DeepSeek's own page, Ark, and Tencent's 原厂直供 series all peak on weekdays 9:00–12:00、14:00–18:00 with everything else — the whole weekend included — off-peak, while Aliyun's model-market detail page says “错峰时段指东八区22点至次日8点，此外为忙时”. The two calendars therefore agree only on weekday mornings/afternoons and late at night; at midday, in the evening, and all weekend Aliyun is the odd one out and costs double. Each window is read from that vendor's own document into `time_bands`, quoted as the vendor wrote it, and printed once per channel under 峰谷时段; a peak/off-peak row names its own band and nothing more, because every offer of one model publishes the same hours. A platform that publishes no window stays empty — never give it another platform's hours. One page can bill two generations on different calendars (Tencent's 0731/0813 self-hosted builds keep peak at weekends, unlike the 原厂直供 series on the same page), so a rule is selected by model name first and by delivery label (原厂直供) second.
-
-Prefer a representation the official page publishes for machines over scraping its rendered markup: the page's own Markdown copy when it publishes one with real Markdown tables, otherwise its public structured JSON. Parse rendered HTML only when the vendor publishes neither. Never ask for or store credentials. The only authenticated-console exception is refreshing the explicit Tencent model-description mirror through a user-owned logged-in session; do not copy account, billing, key, or other private console data into it.
-
-Code layout: `scripts/query_model_prices.py` is the stable CLI entry point; the implementation lives in `scripts/model_price/`, with one price module per vendor under `providers/`, the independent model-introduction package under `descriptions/`, release discovery and evidence under `announcements/`, and shared concerns split into `core` (HTTP + source contract), `parsing` (document readers), `pricing` (record shapes), `models` (identity), `caching`, `updating`, `snapshots` (the baselines `delta` compares against), `diffing` (what moved between two baselines), `delta` (the scan-and-compare run), `reporting` (the shared wording and value formatters), `messages` (the two plain-text messages those values are laid into), `budget` (how far a message overruns the character limit it has to fit), and `registry` (wiring). Add a price provider by writing its module and listing it in `providers/__init__.py`; an adapter that parses its document in one pass overrides `catalog_records()` so a whole-catalogue scan costs one read instead of one query per model. Add introduction sources through `descriptions/sources.py` and keep their provider selection in `descriptions/resolver.py`.
-
-Read [references/schema.md](references/schema.md) when consuming JSON. Read [references/source-notes.md](references/source-notes.md) only when a source or parser needs maintenance.
+Before publishing samples or diagnostics, follow
+[references/privacy.md](references/privacy.md). Personal delivery details and real
+installation paths stay in local run artifacts, outside the public repository.

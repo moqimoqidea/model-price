@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+from .privacy import safe_diagnostic
 
-class SourceError(RuntimeError):
+
+class _PublicDiagnosticError(RuntimeError):
+    """Error text is safe to reuse in a report, not an unfiltered transport log."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(safe_diagnostic(message))
+
+
+class SourceError(_PublicDiagnosticError):
     """A provider's official source could not be fetched or parsed."""
 
 
@@ -19,10 +28,10 @@ class HttpSourceError(SourceError):
         verification: str | None = None,
     ) -> None:
         super().__init__(message)
-        self.url = url
+        self.url = safe_diagnostic(url)
         self.status = status
         self.verification = verification
 
 
-class SkillUpdateError(RuntimeError):
+class SkillUpdateError(_PublicDiagnosticError):
     """The skill could not be fast-forwarded from its Git upstream."""

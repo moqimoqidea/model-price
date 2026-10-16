@@ -10,6 +10,7 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from ..models import normalize_model
+from ..privacy import contains_private_data
 from ..text import clean_text
 from .core import ACTIVE, LEGACY, PREVIEW, RETIRED, UNKNOWN
 
@@ -33,32 +34,10 @@ CONSOLE_LIFECYCLES = {
     "discontinued": LEGACY,
     "offline": RETIRED,
 }
-PRIVATE_CONSOLE_FIELDS = {
-    "csrfcode", "owneruin", "uin", "apikey", "api_key", "cookie", "secretkey",
-}
-PRIVATE_CONSOLE_PATTERN = re.compile(
-    r"sk-[A-Za-z0-9_-]{16,}|[?&](?:csrfCode|ownerUin|uin)="
-)
-
-
-def _has_session_data(value: Any) -> bool:
-    """Reject console session secrets while admitting official placeholder examples."""
-    if isinstance(value, dict):
-        return any(
-            str(key).lower() in PRIVATE_CONSOLE_FIELDS or _has_session_data(item)
-            for key, item in value.items()
-        )
-    if isinstance(value, list):
-        return any(_has_session_data(item) for item in value)
-    return isinstance(value, str) and bool(
-        PRIVATE_CONSOLE_PATTERN.search(value)
-    )
 
 
 def _console_cards(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Keep each console API ID and its own specification/capability evidence."""
-    if _has_session_data(payload):
-        raise ValueError("console capture must not contain credentials or account data")
     cards = payload["model_cards"]
     if not isinstance(cards, list) or not cards:
         raise ValueError("model_cards must be a non-empty list")
@@ -264,6 +243,8 @@ def build_tencent_mirror(
     catalogue: Iterable[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     """Normalize captured cards and add public catalogue model-id aliases."""
+    if contains_private_data(payload):
+        raise ValueError("console capture must not contain credentials or account data")
     models = _merge_cards(
         _console_cards(payload) if "model_cards" in payload else payload.get("models") or []
     )
@@ -321,7 +302,7 @@ def validate_tencent_mirror(payload: dict[str, Any]) -> None:
     if not isinstance(payload, dict):
         raise ValueError("mirror must be an object")
     errors: list[str] = []
-    if _has_session_data(payload):
+    if contains_private_data(payload):
         errors.append("credentials or account data are forbidden")
     if payload.get("schema_version") not in (1, TENCENT_MIRROR_SCHEMA_VERSION):
         errors.append("schema_version must be 1 or 2")

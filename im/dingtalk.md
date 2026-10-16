@@ -2,7 +2,7 @@
 
 Read this file only when a model-price message will be sent through DingTalk.
 It is the single source of truth for DingTalk transport compatibility; keep the
-report's content and summarization rules in `SKILL.md` and keep DWS-specific
+report's content and summarization rules in [reporting.md](../references/reporting.md) and keep DWS-specific
 versions, commands, and verification here.
 
 ## Delivery contract
@@ -17,8 +17,11 @@ versions, commands, and verification here.
   `--identity user`, `--msg-type text`, and `--text`. Do not substitute
   `chat message send` (without `+`) or `chat +dm`: both can use the Markdown
   transport even when their surface looks equivalent.
-- Resolve the recipient to a stable ID before sending. Never select the first
-  display-name match. If the only match is the authenticated DWS user, disclose
+- Verify the authenticated sender and resolve each recipient's exact name to a
+  stable ID before sending. When the user supplies an ID, verify that it belongs
+  to that exact person and the intended internal/external record. Never select
+  the first display-name match. Pause for ambiguous, misspelled, or unverifiable
+  identities. If the only match is the authenticated DWS user, disclose
   that the destination is the sender's own direct chat when that is not already
   explicit in the request.
 - A successful send receipt proves acceptance, not rendering. When delivery
@@ -57,6 +60,11 @@ shaped like `{"content":"A\nB\n\n- C\n- D"}`. If it reports `markdown`, do not
 send and do not disguise the transport problem by inserting a blank line after
 every source line. Report the version and the exact command path instead.
 
+Before delivering the final report, dry-run the exact target and final text too.
+Check the same `msgType` field and the complete literal multiline content, not
+just the shortcut's surface flags. A harmless preview is diagnostic only; it is
+not evidence that a later, different command or body was checked.
+
 ## Send
 
 For a direct chat:
@@ -79,6 +87,14 @@ The quoted command substitution preserves the report's internal line breaks;
 the generated reports do not rely on a trailing newline. Use `-y` only after the
 recipient and final message have been authorized.
 
+Keep a delivery ledger per recipient: verified identity, exact sent text, receipt,
+message ID, and delivery state. Check each outcome before proceeding to the next
+recipient. A send receipt alone is not proof of final delivery. Before retrying,
+query the original message by its ID and inspect its delivery state; when the
+state cannot be determined, pause instead of sending again or advancing. Never
+use a probe message to test a real recipient. For staged authorization and frozen
+report text, follow [daily-workflow.md](../references/daily-workflow.md).
+
 ## Rendering and limits
 
 DingTalk's Markdown transport parses a single newline as a space. It preserves a
@@ -88,7 +104,7 @@ transport must also be `text`.
 
 A DingTalk text message accepts at most 5120 characters. Model-price defaults to
 `--max-chars 3000` to leave room for growth and last-mile edits. If the report
-marks itself over budget, summarize it according to [SKILL.md](../SKILL.md)
+marks itself over budget, summarize it according to [reporting.md](../references/reporting.md)
 before sending: shorten prose while retaining every channel status and every
 price and condition displayed by the selected message format.
 

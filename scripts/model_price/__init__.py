@@ -4,6 +4,7 @@ Responsibility split:
 
 - ``paths``        filesystem anchors (skill dir, cache, snapshots) and cache policy
 - ``errors``       the errors a price source or the updater raises
+- ``privacy``      safe diagnostics and rejection of private console capture data
 - ``core``         HTTP access and the ``PriceSource`` contract
 - ``documents``    shared official-document retrieval and OpenAI Docs MCP fallback
 - ``parsing``      document readers (HTML tables, Markdown tables, price headers)
@@ -22,6 +23,7 @@ Responsibility split:
 - ``delta``        the scan-every-catalogue-and-compare run
 - ``reporting``    the shared wording and single-value formatters
 - ``messages``     the plain-text messages those formatted values are laid into
+- ``rendering``    saved scan reading and source-scoped presentation summaries
 - ``budget``       how far a message overruns the character limit it has to fit
 - ``registry``     wiring and cross-provider queries
 

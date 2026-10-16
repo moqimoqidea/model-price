@@ -7,8 +7,8 @@ module stays a thin, stable CLI entry point so existing invocations keep working
     python3 scripts/query_model_prices.py compare deepseek-flash --format message
     python3 scripts/query_model_prices.py delta --format message
 
-``message`` is a plain-text message a DingTalk channel can carry as it stands;
-``json`` is the same payload for anything that parses rather than reads it.
+``message`` is a complete plain-text rendering; hosts may supply concise
+introductions offline before delivery. ``json`` preserves the original payload.
 """
 
 from __future__ import annotations
@@ -24,12 +24,13 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from model_price.budget import DEFAULT_MAX_CHARS
-from model_price.core import now_iso
+from model_price.core import now_iso, write_json
 from model_price.delta import scan_providers
 from model_price.descriptions import build_description_resolver
 from model_price.documents import DocumentClient
 from model_price.messages import comparison_message, scan_message
 from model_price.paths import DEFAULT_CACHE_DIR, DEFAULT_SNAPSHOT_DIR
+from model_price.privacy import safe_diagnostic
 from model_price.registry import (
     build_adapters,
     catalog_payload,
@@ -38,6 +39,7 @@ from model_price.registry import (
     select_compare_providers,
     source_status,
 )
+from model_price.rendering import render_saved_scan
 from model_price.snapshots import (
     BaselineSelection,
     SnapshotStore,
@@ -47,7 +49,7 @@ from model_price.updating import update_skill_before_refresh
 
 PROVIDER_OPTION_HELP = "query only this provider; repeat to compare selected providers"
 
-FORMAT_HELP = "json for machines, message for a DingTalk channel"
+FORMAT_HELP = "json for machines, plain-text message for a person or IM channel"
 
 MAX_CHARS_HELP = (
     "character budget for message output; an overrun is reported without truncation"
@@ -64,7 +66,7 @@ def baseline_argument(value: str) -> BaselineSelection:
     try:
         return parse_baseline_selection(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(str(exc)) from exc
+        raise argparse.ArgumentTypeError(safe_diagnostic(exc)) from exc
 
 
 def timezone_argument(value: str) -> ZoneInfo:
@@ -129,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument(
         "--include-overseas",
         action="store_true",
-        help="also query OpenAI, Anthropic, Google, and xAI",
+        help="also query all overseas channels",
     )
     compare.add_argument(
         "--refresh",
@@ -168,13 +170,21 @@ def build_parser() -> argparse.ArgumentParser:
     delta.add_argument(
         "--include-overseas",
         action="store_true",
-        help="also scan OpenAI, Anthropic, Google, and xAI",
+        help="also scan all overseas channels",
     )
     delta.add_argument("--since", type=baseline_argument, help=SINCE_HELP)
     delta.add_argument(
         "--timezone",
         type=timezone_argument,
         help="calendar timezone for the scan and relative baselines, e.g. Asia/Shanghai",
+    )
+    delta.add_argument(
+        "--require-current", action="store_true",
+        help="stop before scanning unless the clean checkout matches its fetched upstream",
+    )
+    delta.add_argument(
+        "--save-payload", type=Path,
+        help="also save the complete JSON payload for offline report editing",
     )
     add_message_options(delta, default_format="message")
     delta.add_argument(
@@ -184,16 +194,51 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
 
+    render = subparsers.add_parser(
+        "render", help="render a saved scan without source reads or baseline writes"
+    )
+    render.add_argument("payload", type=Path)
+    render.add_argument(
+        "--introductions", type=Path,
+        help="channel-scoped introduction summaries in JSON",
+    )
+    render.add_argument(
+        "--max-chars", type=int, default=DEFAULT_MAX_CHARS, help=MAX_CHARS_HELP
+    )
+
     return parser
 
 
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    if args.command == "render":
+        try:
+            print(render_saved_scan(
+                args.payload, introductions=args.introductions, max_chars=args.max_chars,
+            ), end="")
+        except (OSError, ValueError) as exc:
+            parser.error(safe_diagnostic(exc))
+        return 0
+    if args.command == "delta" and args.save_payload and args.save_payload.exists():
+        parser.error(
+            f"scan artifact already exists; choose a new path or render it offline: {args.save_payload}"
+        )
     # A scan answers "did anything move", so it must read the sources afresh: a
     # cache hit would serve the previous scan's data back as "no change".
     refresh = args.command == "delta" or getattr(args, "refresh", False)
-    skill_update = update_skill_before_refresh(refresh)
+    if getattr(args, "require_current", False):
+        skill_update = update_skill_before_refresh(refresh, require_current=True)
+        if (
+            not skill_update
+            or skill_update.get("status") not in {"up_to_date", "updated"}
+            or not skill_update.get("verified_revision")
+            or skill_update["verified_revision"] != skill_update.get("to_revision")
+        ):
+            reason = (skill_update or {}).get("reason") or skill_update
+            parser.error(f"skill version verification failed: {reason}")
+    else:
+        skill_update = update_skill_before_refresh(refresh)
     client = DocumentClient(args.timeout)
     adapters = build_adapters(client, cache_dir=args.cache_dir, refresh=refresh)
     descriptions = build_description_resolver(
@@ -260,6 +305,8 @@ def main() -> int:
 
     if skill_update:
         payload["skill_update"] = skill_update
+    if args.command == "delta" and args.save_payload:
+        write_json(args.save_payload, payload, indent=2)
     if args.format == "json":
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:

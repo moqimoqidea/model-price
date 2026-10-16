@@ -6,6 +6,7 @@ from typing import Any, Iterable
 
 from ..caching import CacheStore
 from ..models import normalize_model
+from ..privacy import safe_diagnostic
 from .core import (
     NOT_FOUND,
     SOURCE_ERROR,
@@ -84,7 +85,7 @@ class DescriptionResolver:
                 )
             except Exception as exc:
                 status = SOURCE_ERROR
-                error = str(exc)
+                error = safe_diagnostic(exc)
                 note = (
                     f"该渠道的模型介绍来源暂时无法读取；价格结果不受影响。原因：{error}"
                 )

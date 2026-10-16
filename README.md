@@ -8,6 +8,10 @@
 面向人的说明在这个文件；面向 Agent 的执行规则在 [SKILL.md](SKILL.md)，
 改代码用的项目结构与约束说明在 [AGENTS.md](AGENTS.md)。
 
+日报的更新核验、单次扫描、精简整理、分阶段投递及后续修复/提交流程统一维护在
+[日报流程](references/daily-workflow.md)。个人提示词只需指定范围、时区、基线、
+收件人与触发词；姓名和联系人 ID 不写入公共仓库。
+
 仓库同时发布到两个地址：
 
 - GitHub（`origin`）：https://github.com/moqimoqidea/model-price
@@ -218,6 +222,25 @@ dry-run 判断标准、收件人核对和字符上限，其他文档不再复制
 本工具不调用模型、也不带任何凭据，所以它只负责量出超限并把话说明白，「取重点写短」这一步
 交给发送方。`--max-chars` 只在目标渠道的上限与钉钉不同时才需要改。
 
+**扫描一次，离线整理。** `delta --save-payload 路径` 在输出消息的同时保存完整 JSON，
+已有文件会被拒绝覆盖。之后可反复离线渲染，不访问来源、不更新代码、不写缓存或基线：
+
+```bash
+python3 scripts/query_model_prices.py delta --require-current \
+  --since yesterday-first --timezone Asia/Shanghai --include-overseas \
+  --format message --save-payload cache/reports/RUN_ID/scan.json
+python3 scripts/query_model_prices.py render cache/reports/RUN_ID/scan.json \
+  --introductions cache/reports/RUN_ID/introductions.json
+```
+
+`RUN_ID` 每次取新值。发送方根据该次官方原文写简短中文介绍；`introductions.json`
+以渠道和完整模型 ID 指定介绍，只能替换用途、关键能力与规格的叙述。
+金额、条件、变化原因、生命周期、来源、渠道状态和基线仍由原始结果渲染，原始 JSON 保持完整。
+同一渠道相同的介绍缺失说明合并一次并列出全部 ID，显示名与 ID 相同时只写一次。
+工具检查摘要的范围、字段和长度；摘要是否忠实于原文仍由发送方核对。
+字段和整理规则见 [报告准备](references/reporting.md)。不必为 JSON、消息或进一步精简重跑扫描，
+也不应再向用户追问是否“再压一档”。
+
 **delta 的正文依次是「模型能力」「模型价格」「渠道结论」**，抬头仍为「模型价格自动检测」。
 模型能力按渠道组织，并标明实际变化：【新增上架】、【目录下架】、【价格调整】、
 【计费模式新增】、【计费模式移除】、【替代模型更新】以及退役公告、日期、状态和时间节点变化。
@@ -344,6 +367,17 @@ OpenRouter 说明，同名模型在不同渠道分别保留介绍；不再优先
 完整元数据保留在 JSON 的 `console_metadata`，消息只显示规格与能力，不打印示例代码。
 旧格式仍可导入。字段说明见 [JSON schema](references/schema.md#tencent-console-mirror)。
 
+## 隐私与发布
+
+公共文档使用仓库相对链接，个人收件人、联系人 ID、回执和本机路径只放在本地运行记录中。
+异常进入报告前统一脱敏，旧扫描结果离线渲染时也会清理诊断中的凭据和个人信息；
+价格、计费条件、公开来源及失败状态保持不变。腾讯镜像的两种导入格式均拒绝凭据、
+账号和联系方式，官方 API 占位符示例仍可保留。
+
+本地扫描 JSON 的版本核验信息有意保留安装目录，不应未经检查直接对外分享。
+私有环境文件、浏览器网络导出及密钥容器已加入忽略规则；已跟踪文件仍需核对暂存差异。
+检查范围、历史记录边界和防护方式见 [隐私说明](references/privacy.md)。
+
 ## 网络读取
 
 一次运行内，同一官方文档只下载一次，整份目录也只解析一次；`delta` 的“强制刷新”表示
@@ -381,6 +415,10 @@ OpenAI 公告直接访问官方规范地址，避免逐篇重定向。Google 公
 
 任一条件不满足就继续用当前代码，并把结果写进报告里的 `skill_update`：
 `updated` / `up_to_date` / `update_skipped` / `check_failed`，从不静默隐瞒。
+
+日报投递使用 `delta --require-current`：要求实际安装目录工作区干净，快进到刚拉取的
+上游提交并核对 HEAD，即使远端只改了大仓库中的其他目录也须一致。失败会在读取任何渠道
+之前退出；核验路径、上游和提交号保留在扫描 JSON，消息正文不额外打印更新检查。
 
 ## 运行时状态
 

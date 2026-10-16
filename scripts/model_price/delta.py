@@ -24,6 +24,7 @@ from .diffing import (
     compare_snapshots,
 )
 from .models import normalize_model
+from .privacy import safe_diagnostic
 from .lifecycle import scan_lifecycle
 from .snapshots import (
     BaselineSelection,
@@ -288,7 +289,7 @@ def failed(
     return {
         "provider": {"id": adapter.provider_id, "name": adapter.provider_name},
         "status": status,
-        "error": error,
+        "error": safe_diagnostic(error),
         "baseline_at": (previous or {}).get("captured_at"),
         "last_successful_at": (latest or {}).get("captured_at"),
         "captured_at": captured_at,

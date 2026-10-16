@@ -9,6 +9,9 @@ This file deliberately does not restate the other documents.
 | --- | --- |
 | `README.md` | you need what the skill does, how to install it, or why the report is shaped the way it is (for a person) |
 | `SKILL.md` | you are **using** the skill at runtime and need to pick a command, a provider set, and a format |
+| `references/daily-workflow.md` | you are changing daily run, staged delivery, repair, or publication procedures |
+| `references/reporting.md` | you are changing report preparation or source-scoped introduction summarization |
+| `references/privacy.md` | you are changing public diagnostics, private captures, or publication safeguards |
 | `im/dingtalk.md` | you are delivering through DingTalk or changing its DWS compatibility contract |
 | `references/schema.md` | you are consuming or changing the JSON payload |
 | `references/source-notes.md` | you are touching one vendor's source or parser |
@@ -47,6 +50,7 @@ Standard library only, Python 3, no install step, no build step.
 │       ├── __init__.py          the responsibility split, restated for a reader
 │       ├── paths.py             filesystem anchors, cache TTL, schema versions
 │       ├── errors.py            SourceError, typed HTTP routing failures, SkillUpdateError
+│       ├── privacy.py           diagnostic redaction and private-capture validation
 │       ├── core.py              HttpClient, the PriceSource contract, atomic JSON writes
 │       ├── documents.py         shared document retrieval and OpenAI's public Docs MCP fallback
 │       ├── text.py              normalisation of text scraped out of vendor documents
@@ -70,6 +74,7 @@ Standard library only, Python 3, no install step, no build step.
 │       │   └── sources.py       each channel's own public discovery policy
 │       ├── reporting.py         the shared wording: one value, written once
 │       ├── messages.py          the two plain-text messages those values are laid into
+│       ├── rendering.py         offline scan artifacts and validated introduction summaries
 │       ├── budget.py            how much of a message fits the channel carrying it
 │       ├── registry.py          wiring, provider selection, cross-provider queries
 │       ├── providers/           one module per vendor, registered in its __init__.py
@@ -180,6 +185,15 @@ model to ask. So the code marks the overrun and the summarization is done by
 whoever writes the message out. `budget` exposes `overage(text, limit)` and
 `fits_within(text, limit)` for that measurement, and nothing that selects a
 shorter rendering.
+
+The host may supply a source-scoped introduction summary through the offline
+`render` command. `rendering` validates the exact provider/literal model identity,
+available source, fields, and existing introduction length limit; `messages`
+substitutes that prose for purpose/capability/specification repetition while
+retaining lifecycle, sources, and all other facts. The original payload is never
+modified. Identical missing-introduction fields may share one channel-local block
+with every affected ID, independently of the message budget. Summary fidelity is
+the host's responsibility; Python does not infer or evaluate semantic claims.
 
 Adding a block means adding one entry to the block list in `messages.py`, not an
 `if` inside a renderer. A block that renders to nothing drops out by itself
@@ -370,6 +384,9 @@ even when the tests still pass.
 | Change whether one channel's price movements are compared | that adapter's `reports_price_movements`, then `diffing.py` and `messages.changed_blocks` |
 | Change how catalogue and notice changes are grouped by model | `changes.py`; keep labels in `reporting.py` |
 | Change how a message is laid out | `messages.py` |
+| Change offline artifact reading or introduction-summary validation | `rendering.py`, plus `references/reporting.md` |
+| Change diagnostic privacy or private-capture rejection | `privacy.py`, plus `references/privacy.md`; never rewrite official price evidence |
+| Change daily installed-version, delivery, repair, or publish gates | `references/daily-workflow.md`; transport-specific facts stay in `im/` |
 | Change which blocks a density keeps, or what opens a message | the section list in `messages.py` (`comparison_sections` / `scan_sections`) |
 | Change the character budget or how a density is chosen | `budget.py`, plus `DEFAULT_MAX_CHARS` callers in `query_model_prices.py` |
 | Change a DingTalk version, command, target check, or delivery recommendation | `im/dingtalk.md`; keep `SKILL.md` and `README.md` as links to that contract |
@@ -446,6 +463,10 @@ Parse rendered HTML only when the vendor publishes neither.
 - Chinese text belongs only in strings a person reads: report wording, `region`
   values, and vendor-facing labels. Identifiers, comments, and docstrings are
   English.
+- Committed documentation and examples use repository-relative links, portable
+  installation locations, or placeholders. Never embed a developer's absolute
+  checkout, home, temporary folder, or private session path. Real installation
+  paths belong only in local runtime artifacts and diagnostics.
 - `query_model_prices.py` stays thin and its invocation surface stays stable:
   argument parsing, provider selection, rendering, exit code.
 
@@ -488,6 +509,10 @@ pushed, and the other fast-forwards.
   `delta`: it fetches upstream, checks whether the incoming commits actually
   touched this skill, and only then fast-forwards and re-executes itself. A dirty
   working tree there turns the update into `update_skipped`.
+- Daily `delta --require-current` instead requires a clean tree and exact HEAD
+  equality with the fetched upstream, including changes outside the skill path.
+  Verification failure stops before constructing any source reader. Offline
+  `render` bypasses Git, source clients, caches, and snapshot stores entirely.
 - **Never install by copying.** A copy has no `.git`, so every refresh reports
   `check_failed`. A symlink to a real clone resolves to the repository and is fine.
 - `snapshots/` history is not in git. A fresh clone has no baselines, so its first

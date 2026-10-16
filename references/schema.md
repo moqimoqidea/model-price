@@ -1,5 +1,32 @@
 # JSON output
 
+## Saved scan artifacts and presentation summaries
+
+`delta --save-payload PATH` saves the same complete `command: "delta"` payload
+as JSON while retaining the requested stdout format. It refuses an existing path.
+`render PATH` reads it offline without source/Git requests or cache/baseline
+writes. This is a run artifact, not a snapshot schema, and includes all original
+introductions, offers, changes, source statuses, and baseline timestamps.
+
+`render --introductions PATH` accepts a JSON list of objects containing exactly
+`provider` (provider ID), `model_id` (literal changed-model ID), and `summary`
+(one nonempty plain-text paragraph, at most 300 characters). Keys are the exact
+provider/ID pair; aliases, cross-provider matches, unavailable introductions,
+duplicates, extra fields, and overlong/multiline text are rejected. The ordinary
+message renderer uses this prose in place of purpose, capabilities, and
+specification repetition, but retains lifecycle and original source. Overrides
+for price-only IDs already covered by linked batches do not expand the batch.
+No field in the saved payload, cache, or snapshot is changed, so their compatibility
+versions do not change. Semantic fidelity must be checked by the host agent.
+
+Successful strict `delta --require-current` adds `skill_directory` (resolved
+installation path) and `verified_revision` to the existing `skill_update` metadata.
+The latter must equal `to_revision`, the fetched upstream commit. The clean-tree
+and revision check happens before source reads. See
+[daily-workflow.md](daily-workflow.md) and [reporting.md](reporting.md).
+
+## Model descriptions
+
 Prices are strings. A comparison contains `query`, `match_mode`, `retrieved_at`,
 `model_descriptions`, `results`, and `source_checks`.
 
@@ -37,7 +64,8 @@ These fields do not participate in price/notice comparisons and never supply an
 official update time. The original `source.url` and existing `source_api` remain
 the public evidence page and logical document URL. Optional retrieval evidence
 does not change price snapshot version 4 or lifecycle version 2; parsed caches
-use version 35 so older incomplete introductions/notes are not served.
+use version 36 so older incomplete introductions/notes and results preceding
+the private-capture validation are not served.
 
 ## Tencent console mirror
 

@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlsplit
 from .errors import SourceError
 from .models import normalize_model
 from .parsing import headed_document_tables
+from .privacy import safe_diagnostic
 from .text import clean_text
 
 MISTRAL_MODELS_URL = "https://docs.mistral.ai/models"
@@ -117,7 +118,7 @@ def model_entries(bundle: str) -> list[dict[str, Any]]:
                             raise
                         # An unreadable introduction or notice property must
                         # not suppress independently readable price identities.
-                        entry.setdefault("field_errors", {})[value] = str(exc)
+                        entry.setdefault("field_errors", {})[value] = safe_diagnostic(exc)
         description = re.search(
             r"\bdescription:\w+\.text\(\s*(" + STRING_LITERAL + ")", body
         )

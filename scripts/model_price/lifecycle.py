@@ -13,6 +13,7 @@ from typing import Any, Iterable
 from .documents import document_evidence
 from .lifecycle_sources import read_events
 from .paths import LIFECYCLE_SCHEMA_VERSION, SNAPSHOT_SCHEMA_VERSION
+from .privacy import safe_diagnostic
 from .snapshots import BaselineSelection, SnapshotStore, require_moment
 
 MILESTONES = ("eom_at", "redirect_at", "eos_at")
@@ -136,7 +137,7 @@ def _failed(
 ) -> dict[str, Any]:
     return {
         "status": "source_error",
-        "error": error,
+        "error": safe_diagnostic(error),
         "source": (latest or {}).get("source"),
         "baseline_at": (latest or {}).get("captured_at"),
         "last_successful_at": (latest or {}).get("captured_at"),
