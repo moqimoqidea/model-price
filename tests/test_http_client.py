@@ -231,6 +231,46 @@ class HttpClientTests(unittest.TestCase):
             self.client(opener).get_text("https://example.test/a")
         self.assertEqual(len(opener.requests), 3)
 
+    def test_a_vercel_security_checkpoint_is_retried_like_any_edge_mitigation(self):
+        # Vercel serves its Security Checkpoint as a 403 marked
+        # x-vercel-mitigated: challenge. It is the edge's decision, not the
+        # origin's answer, so a safe read retries it rather than believing it.
+        opener = SequenceOpener(
+            http_error(403, "Forbidden", headers={"x-vercel-mitigated": "challenge"}),
+            http_error(403, "Forbidden", headers={"x-vercel-mitigated": "challenge"}),
+            Response(b"price table"),
+        )
+        client = self.client(opener)
+
+        self.assertEqual(client.get_text("https://example.test/a"), "price table")
+        self.assertEqual(self.timer.delays, [2.0, 4.0])
+        self.assertEqual(len(opener.requests), 3)
+
+    def test_a_persistent_vercel_checkpoint_reports_its_attempts_as_a_mitigation(self):
+        opener = SequenceOpener(
+            *[
+                http_error(403, "Forbidden", headers={"x-vercel-mitigated": "challenge"})
+                for _ in range(3)
+            ]
+        )
+        with self.assertRaisesRegex(
+            SourceError, r"request rejected.*3 attempt\(s\).*HTTP 403.*edge mitigation"
+        ):
+            self.client(opener).get_text("https://example.test/a")
+        self.assertEqual(len(opener.requests), 3)
+
+    def test_any_vercel_mitigation_value_marks_the_refusal_as_an_edge_decision(self):
+        # The header's presence, not its value, is the signal, so a value
+        # Vercel may add later cannot silently turn into a permanent refusal.
+        opener = SequenceOpener(
+            http_error(403, "Forbidden", headers={"x-vercel-mitigated": "blocked"}),
+            Response(b"price table"),
+        )
+        client = self.client(opener)
+
+        self.assertEqual(client.get_text("https://example.test/a"), "price table")
+        self.assertEqual(len(opener.requests), 2)
+
     def test_an_exhausted_edge_mitigation_leaves_the_rest_of_the_host_readable(self):
         opener = SequenceOpener(
             *[

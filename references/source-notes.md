@@ -505,10 +505,12 @@ on an error response is a minimum delay, never a replacement that shortens this
 backoff. A requested wait above 30 seconds stops that host for the run; exhausted
 429 retries do the same. Persistent verification pages, including those served
 with HTTP 200, get at most one retry before that host stops. A 403 an edge
-firewall marked as a mitigation (`x-vercel-mitigated: deny`) is an edge decision
-rather than a credential answer, so it is retried on the same backoff; the host is
+firewall mitigation header (`x-vercel-mitigated`, whose value is `deny` or
+`challenge`) is an edge decision rather than a credential answer, so it is retried
+on the same backoff; the header's presence is the signal rather than its value, so a
+value Vercel adds later cannot become a permanent refusal; the host is
 not stopped, because the next document on it may still be served. A 403 without
-that marker is an ordinary permanent error and fails immediately. Ordinary
+that header is an ordinary permanent error and fails immediately. Ordinary
 permanent 4xx errors do not close other public documents on that host.
 Other hosts continue normally.
 

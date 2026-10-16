@@ -48,9 +48,12 @@ BROWSER_HEADERS = {
 }
 AUTHENTICATION_HOSTS = frozenset({"accounts.google.com", "login.microsoftonline.com"})
 # An edge firewall can refuse a request it would serve a moment later. Vercel marks
-# those refusals with a mitigation header; a 403 without one is a permanent answer,
-# so only the marked form is retried.
-EDGE_MITIGATION_MARKERS = (("x-vercel-mitigated", "deny"),)
+# those refusals with an x-vercel-mitigated header — "deny" when it blocks outright,
+# "challenge" when it serves its Security Checkpoint. The header's presence, not its
+# value, is the signal: both are the edge's decision rather than the origin's answer,
+# so listing values would let a new one silently become a permanent refusal. A 403
+# without the header is a permanent answer, so only the marked form is retried.
+EDGE_MITIGATION_HEADERS = frozenset({"x-vercel-mitigated"})
 CHALLENGE_MARKERS = (
     b"/cdn-cgi/challenge-platform/",
     b"window._cf_chl_opt",
@@ -414,7 +417,7 @@ class HttpClient:
             str(name).lower(): str(value).strip().lower()
             for name, value in (exc.headers or {}).items()
         }
-        return any(headers.get(name) == value for name, value in EDGE_MITIGATION_MARKERS)
+        return any(name in headers for name in EDGE_MITIGATION_HEADERS)
 
     def _failure_message(
         self,
