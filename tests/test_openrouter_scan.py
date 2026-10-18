@@ -30,6 +30,7 @@ from model_price.messages import scan_message
 from model_price.pricing import make_record, price_item
 from model_price.providers.openrouter import (
     OPENROUTER_MODELS_URL, OPENROUTER_VIDEOS_URL, OpenRouterAdapter,
+    openrouter_video_prices,
 )
 from model_price.snapshots import SnapshotStore
 
@@ -225,6 +226,21 @@ class OpenRouterScanTests(unittest.TestCase):
             self.assertEqual(
                 set(client.requests), {OPENROUTER_MODELS_URL, OPENROUTER_VIDEOS_URL}
             )
+
+
+class VideoSkuTests(unittest.TestCase):
+    def test_reference_duration_and_image_skus_get_a_readable_unit(self):
+        prices = openrouter_video_prices({
+            "pricing_skus": {
+                "reference_duration_seconds_2k": 18,
+                "reference_input_images": 4,
+                "reference_images": 3,
+            }
+        })
+        by_label = {price["label"]: price for price in prices}
+        self.assertEqual(by_label["参考时长（2k）"]["unit"], "USD_per_second")
+        self.assertEqual(by_label["参考输入图"]["unit"], "USD_per_image")
+        self.assertEqual(by_label["参考图"]["unit"], "USD_per_image")
 
 
 class PolicySource:

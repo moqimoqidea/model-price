@@ -49,6 +49,8 @@ from model_price.updating import update_skill_before_refresh
 
 PROVIDER_OPTION_HELP = "query only this provider; repeat to compare selected providers"
 
+TIMEOUT_HELP = "network timeout in seconds for each request attempt"
+
 FORMAT_HELP = "json for machines, plain-text message for a person or IM channel"
 
 MAX_CHARS_HELP = (
@@ -75,6 +77,16 @@ def timezone_argument(value: str) -> ZoneInfo:
         return ZoneInfo(value)
     except ZoneInfoNotFoundError as exc:
         raise argparse.ArgumentTypeError(f"unknown timezone: {value}") from exc
+
+
+def add_timeout_option(parser: argparse.ArgumentParser) -> None:
+    """Accept --timeout after a subcommand as well as before it.
+
+    ``default=SUPPRESS`` leaves the global value in place when the switch is not
+    repeated, so one option has one meaning whichever side of the command it is
+    written on.
+    """
+    parser.add_argument("--timeout", type=int, default=argparse.SUPPRESS, help=TIMEOUT_HELP)
 
 
 def add_message_options(
@@ -104,11 +116,11 @@ def build_parser() -> argparse.ArgumentParser:
             "and prices with sources"
         )
     )
+    parser.add_argument("--timeout", type=int, default=30, help=TIMEOUT_HELP)
     parser.add_argument(
-        "--timeout",
-        type=int,
-        default=30,
-        help="network timeout in seconds for each request attempt",
+        "--no-update",
+        action="store_true",
+        help="skip the automatic Git update check for this run",
     )
     parser.add_argument(
         "--cache-dir", type=Path, default=DEFAULT_CACHE_DIR, help=argparse.SUPPRESS
@@ -138,6 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="ignore fresh caches for selected providers",
     )
+    add_timeout_option(compare)
     add_message_options(compare)
 
     provider = subparsers.add_parser(
@@ -149,6 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--exact", action="store_true", help="disable model-family matching"
     )
     provider.add_argument("--refresh", action="store_true", help="ignore fresh cache")
+    add_timeout_option(provider)
     add_message_options(provider)
 
     listing = subparsers.add_parser("list", help="list model IDs from one provider")
@@ -156,6 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--prefix", default="")
     listing.add_argument("--refresh", action="store_true", help="ignore fresh cache")
     listing.add_argument("--format", choices=("json",), default="json")
+    add_timeout_option(listing)
 
     delta = subparsers.add_parser(
         "delta",
@@ -186,6 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--save-payload", type=Path,
         help="also save the complete JSON payload for offline report editing",
     )
+    add_timeout_option(delta)
     add_message_options(delta, default_format="message")
     delta.add_argument(
         "--snapshot-dir",
@@ -227,6 +243,8 @@ def main() -> int:
     # A scan answers "did anything move", so it must read the sources afresh: a
     # cache hit would serve the previous scan's data back as "no change".
     refresh = args.command == "delta" or getattr(args, "refresh", False)
+    if args.no_update and getattr(args, "require_current", False):
+        parser.error("--no-update cannot be combined with --require-current")
     if getattr(args, "require_current", False):
         skill_update = update_skill_before_refresh(refresh, require_current=True)
         if (
@@ -237,6 +255,8 @@ def main() -> int:
         ):
             reason = (skill_update or {}).get("reason") or skill_update
             parser.error(f"skill version verification failed: {reason}")
+    elif args.no_update:
+        skill_update = None
     else:
         skill_update = update_skill_before_refresh(refresh)
     client = DocumentClient(args.timeout)

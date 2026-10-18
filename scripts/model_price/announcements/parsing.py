@@ -60,6 +60,28 @@ TOKEN_RATE = re.compile(
     r"(?P<charge>(?:cached\s+)?input|output|输入|输出)\s*tokens?",
     re.I,
 )
+# A release page often prints its price as a label/amount card rather than a
+# sentence: ``Input (/M tokens)  $1.36``.  The label and the amount arrive as
+# separate paragraphs, so they are joined before the clause is read.
+PRICE_CARD = re.compile(
+    r"(?P<charge>cached\s+input|input|output|缓存输入|输入|输出)\s*"
+    r"(?:[（(])?\s*/?\s*(?P<scale>m|1m|million|百万)\s*tokens?\s*(?:[)）])?\s*"
+    r"[:：]?\s*(?P<currency>\$|USD|¥|￥|CNY|元)\s*"
+    r"(?P<amount>\d+(?:\.\d+)?)",
+    re.I,
+)
+MONEY_ONLY = re.compile(r"^[\s$¥￥]*\d+(?:\.\d+)?[\s]*$")
+PRICE_CARD_LABEL = re.compile(
+    r"(?:cached\s+input|input|output|缓存输入|输入|输出).{0,24}tokens?",
+    re.I,
+)
+PRICE_UNCHANGED = re.compile(r"\bunchanged\b|保持不变|价格不变|维持原价", re.I)
+FREE_PRICE = re.compile(r"\bfree\b|免费|不收费|no charge", re.I)
+PRICE_TERM_PROSE = re.compile(
+    r"promotion|promotional|discount|at least through|through \d|starting \d|"
+    r"effective|限时|优惠|折扣|活动价",
+    re.I,
+)
 ACCESS_PRIORITY = {"unknown": 0, "pending": 1, "limited": 2, "public": 3}
 NON_SERVICE_AVAILABILITY = re.compile(
     r"\b(?:weights?|data(?:sets?)?|scores?|scripts?|technical (?:details|report)|"
@@ -490,8 +512,49 @@ def access_state(clause: str) -> str:
     return "public" if PUBLIC_WORDS.search(clause) else "unknown"
 
 
+def merge_price_cards(paragraphs: list[str]) -> list[str]:
+    """Join a money-only paragraph to the label paragraph it belongs to."""
+    merged: list[str] = []
+    for paragraph in paragraphs:
+        text = clean_text(paragraph)
+        if MONEY_ONLY.fullmatch(text) and merged and PRICE_CARD_LABEL.search(merged[-1]):
+            merged[-1] = f"{merged[-1]} {text}"
+        else:
+            merged.append(paragraph)
+    return merged
+
+
+def _price_kind(charge: str) -> str:
+    lowered = charge.lower()
+    if "cached" in lowered or "缓存" in lowered:
+        return "cache_hit"
+    return "input" if lowered in ("input", "输入") else "output"
+
+
+def _price_currency(marker: str) -> str:
+    return "USD" if marker.upper() in ("$", "USD") else "CNY"
+
+
+def _card_prices(clause: str) -> list[dict[str, Any]]:
+    prices = []
+    for match in PRICE_CARD.finditer(clause):
+        kind = _price_kind(match["charge"])
+        currency = _price_currency(match["currency"])
+        prices.append(
+            price_item(
+                kind,
+                {"input": "输入", "output": "输出", "cache_hit": "缓存输入"}[kind],
+                match["amount"],
+                f"{currency}_per_million_tokens",
+                display=match.group(),
+            )
+        )
+    return prices
+
+
 def release_facts(name: str, names: list[str], paragraphs: list[str]) -> dict[str, Any]:
     """Scope access and price claims to one model, keeping the official evidence."""
+    paragraphs = merge_price_cards(paragraphs)
     access = {
         "status": "unknown",
         "developers": "unknown",
@@ -562,7 +625,6 @@ def release_facts(name: str, names: list[str], paragraphs: list[str]) -> dict[st
                         if re.search(words, clause, re.I):
                             access[audience] = state
             if PRICE_WORDS.search(clause):
-                pricing_notes.append(clean_text(clause))
                 prices = []
                 for match in TOKEN_RATE.finditer(clause):
                     charge = match["charge"].lower()
@@ -571,9 +633,7 @@ def release_facts(name: str, names: list[str], paragraphs: list[str]) -> dict[st
                         if "cached" in charge
                         else "input" if charge in ("input", "输入") else "output"
                     )
-                    currency = (
-                        "USD" if match["currency"].upper() in ("$", "USD") else "CNY"
-                    )
+                    currency = _price_currency(match["currency"])
                     prices.append(
                         price_item(
                             kind,
@@ -587,6 +647,12 @@ def release_facts(name: str, names: list[str], paragraphs: list[str]) -> dict[st
                             display=match.group(),
                         )
                     )
+                prices.extend(_card_prices(clause))
+                unique_prices = {
+                    (price["type"], price["amount"], price["unit"]): price
+                    for price in prices
+                }
+                prices = list(unique_prices.values())
                 if prices:
                     offers.append(
                         {
@@ -595,6 +661,13 @@ def release_facts(name: str, names: list[str], paragraphs: list[str]) -> dict[st
                             "prices": prices,
                         }
                     )
+                if (
+                    prices
+                    or FREE_PRICE.search(clause)
+                    or PRICE_UNCHANGED.search(clause)
+                    or PRICE_TERM_PROSE.search(clause)
+                ):
+                    pricing_notes.append(clean_text(clause))
     access["statements"] = list(dict.fromkeys(access["statements"]))
     return {
         "access": access,

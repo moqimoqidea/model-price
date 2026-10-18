@@ -1121,8 +1121,10 @@ class AnnouncementScanTests(unittest.TestCase):
         self.assertEqual(report["status"], "unchanged")
         self.assertEqual(channel_status(report), "changed")
         self.assertEqual(
-            report["announcements"]["changes"][0]["kind"], "announcement_observed"
+            report["announcements"]["observations"][0]["kind"],
+            "announcement_observed",
         )
+        self.assertEqual(report["announcements"]["changes"], [])
 
     def test_unchanged_release_and_rolling_index_omission_never_reannounce_or_delist(
         self,

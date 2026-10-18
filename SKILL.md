@@ -90,7 +90,8 @@ A timestamp without an offset uses the scan timezone. Missing history is
 `baseline_not_found`, never a substitute baseline or “no change”.
 
 Explicit refreshes normally try a Git fast-forward and continue with a recorded
-`skill_update` if updating fails. Daily delivery uses `delta --require-current`
+`skill_update` if updating fails; `--no-update` skips that check for a run that
+must not touch the checkout. Daily delivery uses `delta --require-current`
 instead: it requires a clean installed checkout at the fetched upstream commit,
 verifies HEAD, and stops before any source read on failure. Update diagnostics
 stay in the saved JSON/session, outside the scan message.

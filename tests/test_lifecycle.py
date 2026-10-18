@@ -17,7 +17,7 @@ if str(SCRIPTS) not in sys.path:
 from model_price.delta import scan_providers
 from model_price.deepseek_updates import update_entries
 from audit_model_retirements import PROVIDERS, audit_provider
-from model_price.lifecycle import retired_model_ids, scan_lifecycle
+from model_price.lifecycle import dates_equivalent, retired_model_ids, scan_lifecycle
 from model_price.lifecycle_sources import (
     anthropic_events,
     baidu_events,
@@ -44,6 +44,23 @@ from model_price.snapshots import (
     parse_baseline_selection,
     require_moment,
 )
+
+
+class DateComparisonTests(unittest.TestCase):
+    def test_a_later_parser_spelling_is_not_a_revision(self):
+        self.assertTrue(
+            dates_equivalent("2026-06-18T10:38:57", "2026-06-18T10:38:57+08:00")
+        )
+        self.assertTrue(dates_equivalent("2026-10-10T00:00:00+08:00", "2026-10-10"))
+        self.assertTrue(
+            dates_equivalent("2026-10-10T00:00:00Z", "2026-10-10T08:00:00+08:00")
+        )
+
+    def test_a_real_date_change_or_a_non_midnight_time_still_reports(self):
+        self.assertFalse(dates_equivalent("2026-10-10", "2026-10-11"))
+        self.assertFalse(
+            dates_equivalent("2026-10-10T01:00:00+08:00", "2026-10-10")
+        )
 
 
 class OfficialSourceTests(unittest.TestCase):

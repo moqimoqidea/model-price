@@ -37,7 +37,7 @@ from model_price.pricing import (
     without_discount_terms,
 )
 from model_price.providers.tencent import TencentAdapter
-from model_price.reporting import amount_with_unit, unit_label
+from model_price.reporting import amount_with_unit, format_price, unit_label
 
 
 class UnitVocabularyTests(unittest.TestCase):
@@ -57,6 +57,8 @@ class UnitVocabularyTests(unittest.TestCase):
             ("元/小时", "CNY_per_hour"),
             ("¥0.5 /小时", "CNY_per_hour"),
             ("元/个", "CNY_per_item"),
+            ("Training Tokens", "CNY_per_million_training_tokens"),
+            ("Input Images", "CNY_per_image"),
             ("元/首", "CNY_per_song"),
             ("元/视频", "CNY_per_video"),
             ("元/页", "CNY_per_page"),
@@ -340,6 +342,27 @@ class CellRateTests(unittest.TestCase):
         )
         rates = cell_rates("¥0.5 /小时", header="输入音频时长", currency="CNY")
         self.assertEqual([(rate.amount, rate.unit_phrase) for rate in rates], [("0.5", "/小时")])
+
+
+class ThousandSeparatorTests(unittest.TestCase):
+    def test_a_comma_inside_a_number_does_not_split_the_unit(self):
+        rates = cell_rates(
+            "$0.000125 / 1,000 count", header="Price (USD)", currency="USD"
+        )
+        self.assertEqual(
+            [(rate.amount, rate.unit_phrase) for rate in rates],
+            [("0.000125", "/ 1,000 count")],
+        )
+
+    def test_an_unrecognised_unit_stays_as_the_page_wrote_it(self):
+        self.assertEqual(
+            format_price({
+                "amount": "0.000125",
+                "unit": "/ 1,000 count",
+                "display": "$0.000125 / 1,000 count",
+            }),
+            "$0.000125 / 1,000 count",
+        )
 
 
 class CreditNoteTests(unittest.TestCase):

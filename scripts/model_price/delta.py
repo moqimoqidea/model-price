@@ -20,7 +20,10 @@ from .diffing import (
     BASELINE_NOT_FOUND,
     CHANGED,
     CHANGE_FIELDS,
+    EMPTY_SCAN,
+    SOURCE_ERROR,
     UNCHANGED,
+    channel_status,
     compare_snapshots,
 )
 from .models import normalize_model
@@ -34,11 +37,9 @@ from .snapshots import (
     require_moment,
 )
 
-SOURCE_ERROR = "source_error"
 # An empty catalogue is far more likely to be a parser losing the document than
 # a vendor withdrawing every model. A listed model with no published price is
 # still a model and must survive into the baseline.
-EMPTY_SCAN = "empty_scan"
 STATUSES = (
     CHANGED,
     UNCHANGED,
@@ -219,12 +220,12 @@ def _scan_provider(
         else:
             report["model_descriptions"] = [
                 {
-                    **target["description"],
+                    **(target.get("description") or target.get("fallback_description")),
                     "model_id": target["model_id"],
                     "provider": report["provider"],
                 }
                 for target in targets
-                if target.get("description")
+                if target.get("description") or target.get("fallback_description")
             ]
     return report
 
@@ -269,9 +270,21 @@ def changed_model_targets(
         }
         if announcement:
             target["announcement"] = announcement
-            target["description"] = announcement.get(
-                "description"
-            ) or announcement_description(announcement)
+            if announcement.get("description") is not None:
+                # A source that already resolved this publication's own
+                # introduction is authoritative; never ask a reader to guess it.
+                target["description"] = announcement["description"]
+            elif target.get("record") is None:
+                # A published model with no catalogue row has only its release
+                # prose; there is no API reader to ask for a page it cannot have.
+                target["description"] = announcement_description(announcement)
+            else:
+                # The catalogue introduction is the better "what is this model"
+                # answer; the announcement is the fallback for a host that has
+                # no readable introduction of its own.
+                target["fallback_description"] = announcement_description(
+                    announcement
+                )
         targets.append(target)
     return targets
 
@@ -302,17 +315,38 @@ def failed(
 
 
 def summarize(reports: Iterable[dict[str, Any]]) -> dict[str, Any]:
-    """Count what the run found, per status and per kind of change."""
+    """Count what the run found, per status and per kind of change.
+
+    ``channel_*`` is the combined per-channel outcome the message reports; the
+    bare status keys remain the price-catalogue outcome for machine consumers.
+    The two are different facts and are counted apart rather than reconciled.
+    """
     summary: dict[str, Any] = {
         "providers": 0,
         **{status: 0 for status in STATUSES},
+        **{f"channel_{status}": 0 for status in STATUSES},
         **{field: 0 for field in CHANGE_FIELDS},
+        "amount_moves": 0,
+        "unit_changes": 0,
+        "price_items_added": 0,
+        "price_items_removed": 0,
+        "caption_changes": 0,
     }
     for report in reports:
         summary["providers"] += 1
         summary[report["status"]] = summary.get(report["status"], 0) + 1
+        summary[f"channel_{channel_status(report)}"] += 1
+        changes = report.get("changes") or {}
         for field in CHANGE_FIELDS:
-            summary[field] += len((report.get("changes") or {}).get(field, []))
+            summary[field] += len(changes.get(field, []))
+        for key in (
+            "amount_moves",
+            "unit_changes",
+            "price_items_added",
+            "price_items_removed",
+            "caption_changes",
+        ):
+            summary[key] += int(changes.get(key, 0))
         for name, prefix in (
             ("lifecycle", "lifecycle"),
             ("announcements", "announcement"),

@@ -32,6 +32,7 @@ from model_price.diffing import (
 )
 from model_price.errors import SourceError
 from model_price.models import (
+    display_model_name,
     model_matches,
     normalize_model,
     strip_footnote_markers,
@@ -2292,6 +2293,18 @@ class ModelNameCouplingTests(unittest.TestCase):
         )
         self.assertEqual(normalize_model("deepseek-flash(1)"), "deepseek-flash")
 
+    def test_an_unmatched_trailing_bracket_is_not_part_of_identity(self):
+        self.assertEqual(normalize_model("DeepSeek-V4-Pro）"), "deepseek-v4-pro")
+        self.assertEqual(normalize_model("Claude (100K)"), "claude-(100k)")
+
+    def test_display_labels_are_single_line_and_drop_a_footnote_star(self):
+        self.assertEqual(
+            display_model_name("Kling-Video-v1\n（2026-09-15下线）"),
+            "Kling-Video-v1 （2026-09-15下线）",
+        )
+        self.assertEqual(display_model_name("Gemini 3.8 Flash*"), "Gemini 3.8 Flash")
+        self.assertEqual(normalize_model("Gemini 3.8 Flash*"), "gemini-3.8-flash*")
+
     def test_retired_alias_adds_matches_without_losing_family_expansion(self):
         self.assertTrue(model_matches("deepseek-v4-flash", "deepseek-flash"))
         self.assertTrue(
@@ -2581,6 +2594,17 @@ class MessageBudgetTests(unittest.TestCase):
             ).max_chars,
             1200,
         )
+
+    def test_timeout_is_accepted_on_either_side_of_the_subcommand(self):
+        parser = query_model_prices.build_parser()
+        self.assertEqual(parser.parse_args(["--timeout", "45", "delta"]).timeout, 45)
+        self.assertEqual(parser.parse_args(["delta", "--timeout", "45"]).timeout, 45)
+        self.assertEqual(parser.parse_args(["delta"]).timeout, 30)
+
+    def test_no_update_is_a_global_switch(self):
+        parser = query_model_prices.build_parser()
+        self.assertTrue(parser.parse_args(["--no-update", "delta"]).no_update)
+        self.assertFalse(parser.parse_args(["delta"]).no_update)
 
     def test_delta_accepts_relative_and_exact_historical_baselines(self):
         parser = query_model_prices.build_parser()
@@ -4140,11 +4164,22 @@ class DeltaScanTests(unittest.TestCase):
                     "baseline_not_found": 0,
                     "empty_scan": 0,
                     "source_error": 1,
+                    "channel_changed": 1,
+                    "channel_unchanged": 0,
+                    "channel_baseline_created": 0,
+                    "channel_baseline_not_found": 0,
+                    "channel_empty_scan": 0,
+                    "channel_source_error": 1,
                     "models_added": 0,
                     "models_removed": 0,
                     "offers_added": 0,
                     "offers_removed": 0,
                     "price_changes": 1,
+                    "amount_moves": 1,
+                    "unit_changes": 0,
+                    "price_items_added": 0,
+                    "price_items_removed": 0,
+                    "caption_changes": 0,
                 },
             )
 
@@ -4858,6 +4893,23 @@ Finetuning
         self.assertEqual(price_lookup(record["offers"][1], "output")["amount"], "60.00")
         self.assertEqual(record["offers"][1]["conditions"]["service_tier"], "batch")
 
+
+
+class SnapshotPriceDisplayTests(unittest.TestCase):
+    def test_a_snapshot_keeps_the_vendors_own_price_wording(self):
+        record = make_record(
+            "fake", "假渠道", "m1", "M1", "中国区",
+            [{
+                "name": "standard", "conditions": {},
+                "prices": [price_item(
+                    "input", "输入", "0.000125", "/ 1,000 count",
+                    display="$0.000125 / 1,000 count",
+                )],
+            }],
+            "https://example.test/fake", "test", "2026-09-16T00:00:00+08:00",
+        )
+        price = snapshot_of([record])["models"]["m1"]["offers"][0]["prices"][0]
+        self.assertEqual(price["display"], "$0.000125 / 1,000 count")
 
 
 if __name__ == "__main__":

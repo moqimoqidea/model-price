@@ -11,6 +11,7 @@ from ..text import clean_text
 AVAILABLE = "available"
 NOT_FOUND = "not_found"
 SOURCE_ERROR = "source_error"
+BUDGET_EXHAUSTED = "budget_exhausted"
 
 ACTIVE = "active"
 PREVIEW = "preview"

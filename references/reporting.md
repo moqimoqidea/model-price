@@ -65,6 +65,13 @@ context tiers is not a batch. New listings, single-model adjustments, and
 standard mode additions/removals keep detailed prices. Without a usable official
 HTTPS page, keep details instead of making an untraceable batch.
 
+Only an `amount_changed` entry is a 价格变化. A `unit_changed` entry is a 单位修正;
+a `line_added`/`line_removed` entry is a 计费项变化; a `caption_changed` entry has
+no price consequence and stays in JSON. A mass catalogue removal whose models
+share one official notice is one 【目录下架】 item naming every ID, replacement,
+dates, and notice URL; a removal with another cause or different notice stays
+detailed.
+
 This rule applies only to channels that report price movements. OpenRouter's
 adapter excludes them: no scan amounts, price batches, billing-mode movements,
 or price-change counts may be reconstructed downstream. Its catalogue amounts

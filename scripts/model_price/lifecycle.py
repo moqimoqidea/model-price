@@ -167,7 +167,7 @@ def compare_events(
             continue
         for field in DATE_FIELDS:
             old, new = prior.get(field), item.get(field)
-            if old != new:
+            if not dates_equivalent(old, new):
                 changes.append(
                     {
                         "kind": "date_revised",
@@ -195,6 +195,57 @@ def compare_events(
                     }
                 )
     return changes
+
+
+def dates_equivalent(before: Any, after: Any) -> bool:
+    """Whether two published dates name the same day or instant.
+
+    A parser can add an offset or move from a full timestamp to a date-only
+    value without the vendor changing anything.  Comparing those spellings as
+    strings reports a revision that never happened.  Unparseable values fall
+    back to string equality so an official wording change stays visible.
+    """
+    if before == after:
+        return True
+    try:
+        old = _dated_value(before)
+        new = _dated_value(after)
+    except (TypeError, ValueError):
+        return False
+    if old[0] == "date" and new[0] == "date":
+        return old[1] == new[1]
+    if old[0] == "date" and new[0] == "datetime":
+        return new[1].date() == old[1] and _is_midnight(new[1])
+    if old[0] == "datetime" and new[0] == "date":
+        return old[1].date() == new[1] and _is_midnight(old[1])
+    left, right = old[1], new[1]
+    if left.tzinfo is None and right.tzinfo is not None:
+        left = left.replace(tzinfo=right.tzinfo)
+    elif right.tzinfo is None and left.tzinfo is not None:
+        right = right.replace(tzinfo=left.tzinfo)
+    return left == right
+
+
+def _dated_value(value: Any) -> tuple[str, Any]:
+    """Parse a date-only value or a timestamp, keeping a missing offset visible.
+
+    A naive timestamp is not UTC by assumption here: it is the older parser's
+    spelling of the same local moment, so it borrows the offset of the value it
+    is compared with rather than being shifted by eight hours.
+    """
+    text = str(value or "")
+    if len(text) == 10:
+        return "date", date.fromisoformat(text)
+    return "datetime", datetime.fromisoformat(text.replace("Z", "+00:00"))
+
+
+def _is_midnight(moment: datetime) -> bool:
+    return (
+        moment.hour == 0
+        and moment.minute == 0
+        and moment.second == 0
+        and moment.microsecond == 0
+    )
 
 
 def reached_between(value: str, previous: datetime, current: datetime) -> bool:

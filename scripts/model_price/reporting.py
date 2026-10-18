@@ -15,7 +15,6 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .changes import announcement_facts, changed_model_groups, lifecycle_change_kind
-from .delta import EMPTY_SCAN, SOURCE_ERROR
 from .descriptions.core import AVAILABLE as DESCRIPTION_AVAILABLE
 from .descriptions.core import NOT_FOUND as DESCRIPTION_NOT_FOUND
 from .descriptions.core import SUMMARY_MAX_CHARS
@@ -23,12 +22,14 @@ from .descriptions.core import unavailable_description
 from .diffing import (
     BASELINE_CREATED,
     BASELINE_NOT_FOUND,
-    CHANGE_FIELDS,
     CHANGED,
+    EMPTY_SCAN,
     PRICE_CHANGE_FIELD,
+    SOURCE_ERROR,
     UNCHANGED,
+    channel_status,
 )
-from .models import normalize_model
+from .models import display_model_name, normalize_model
 from .pricing import (
     is_free_amount,
     is_standard_offer,
@@ -97,6 +98,7 @@ UNIT_MEASURE_LABELS = {
     "thousand_characters": "千字符",
     "character": "字符",
     "image": "张",
+    "million_training_tokens": "百万训练 tokens",
     "hundred_images": "百张",
     "frame": "帧",
     "megapixel_second": "百万像素秒",
@@ -152,6 +154,7 @@ DESCRIPTION_STATUS_LABELS = {
     DESCRIPTION_AVAILABLE: "已找到官方介绍",
     DESCRIPTION_NOT_FOUND: "未找到官方独立介绍",
     "source_error": "介绍来源读取失败",
+    "budget_exhausted": "本轮请求预算已用完",
 }
 
 LIFECYCLE_LABELS = {
@@ -203,6 +206,8 @@ DELTA_STATUS_LABELS = {
 }
 
 # Every change a channel can report, in the order a report lists them.
+PRICE_ITEM_CHANGE_LABEL = "计费项变化"
+
 CHANGE_FIELD_LABELS = {
     "models_added": "新增模型",
     "models_removed": "下架模型",
@@ -215,6 +220,7 @@ MODEL_CHANGE_LABELS = {
     "models_added": "新增上架",
     "models_removed": "目录下架",
     PRICE_CHANGE_FIELD: "价格调整",
+    "offer_items_changed": "计费项变化",
     "offers_added": "计费模式新增",
     "offers_removed": "计费模式移除",
     "replacement_updated": "替代模型更新",
@@ -391,6 +397,10 @@ def format_price(item: dict[str, Any] | None) -> str:
         return display
     if amount is None:
         return display or NO_CHANGE
+    if display and unit != UNSTATED_UNIT and unit_parts(unit) is None:
+        # A vendor unit this tool has no code for ("1M TPM Hour", "/ 1,000
+        # count", a credit) is clearer as the page wrote it than as a fragment.
+        return display
     return amount_with_unit(amount, unit)
 
 
@@ -609,7 +619,9 @@ def changed_model_details(report: dict[str, Any]) -> list[dict[str, Any]]:
 def model_title(model: dict[str, Any]) -> str:
     """Name the channel's literal ID beside its display name in every section."""
     model_id = model.get("model_id", "")
-    display_name = model.get("display_name") or model_id
+    display_name = display_model_name(
+        str(model.get("display_name") or model_id)
+    )
     return (
         f"{display_name}（{model_id}）"
         if model_id and display_name != model_id else display_name
@@ -623,7 +635,15 @@ def model_change_title(model: dict[str, Any]) -> str:
         for kind, label in MODEL_CHANGE_LABELS.items()
         if kind in model["change_kinds"]
     ]
-    return f"{''.join(f'【{label}】' for label in dict.fromkeys(labels))}{model_title(model)}"
+    aliases = [
+        alias for alias in model.get("model_aliases") or []
+        if alias != model.get("model_id")
+    ]
+    suffix = f"；API 别名：{'、'.join(aliases)}" if aliases else ""
+    return (
+        f"{''.join(f'【{label}】' for label in dict.fromkeys(labels))}"
+        f"{model_title(model)}{suffix}"
+    )
 
 
 def model_offer_changes_text(model: dict[str, Any]) -> str:
@@ -689,15 +709,39 @@ def announcement_digest(report: dict[str, Any]) -> str:
 
 
 def standard_price_changes(report: dict[str, Any]) -> list[dict[str, Any]]:
-    """Select standing price movements once for both scan sections."""
+    """Select standing amount movements once for both scan sections."""
     return [
         move
         for move in (report.get("changes") or {}).get(PRICE_CHANGE_FIELD) or []
-        if model_availability(report, move["model_id"]) == "listed"
+        if move.get("kind") == "amount_changed"
+        and model_availability(report, move["model_id"]) == "listed"
         and is_standard_offer(
             {"name": move.get("offer"), "conditions": move.get("conditions")}
         )
     ]
+
+
+def price_item_changes(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Select a charge appearing or disappearing inside an existing offer."""
+    return [
+        change
+        for change in (report.get("changes") or {}).get(PRICE_CHANGE_FIELD) or []
+        if change.get("kind") in ("line_added", "line_removed")
+        and model_availability(report, change["model_id"]) == "listed"
+        and is_standard_offer(
+            {"name": change.get("offer"), "conditions": change.get("conditions")}
+        )
+    ]
+
+
+def price_item_change_text(change: dict[str, Any]) -> str:
+    """Read a charge appearing or disappearing without calling it a price move."""
+    model = model_title(change)
+    condition = offering_text(change.get("offer", ""), change.get("conditions", {}))
+    label = change.get("label") or change.get("type", "")
+    action = "新增计费项" if change.get("kind") == "line_added" else "移除计费项"
+    side = change.get("to") or change.get("from") or {}
+    return sentence_text(f"{model}：{condition}；{label} {action}（{format_price(side)}）")
 
 
 def price_change_batch(report: dict[str, Any]) -> dict[str, Any] | None:
@@ -863,12 +907,26 @@ def change_digest(report: dict[str, Any]) -> str:
         changes = report.get("changes") or {}
         counts = [
             f"{CHANGE_FIELD_LABELS[field]} {len(changes.get(field) or [])}"
-            for field in CHANGE_FIELDS
+            for field in ("models_added", "models_removed", "offers_added", "offers_removed")
             if changes.get(field)
         ]
+        if changes.get("amount_moves"):
+            counts.append(f"{CHANGE_FIELD_LABELS[PRICE_CHANGE_FIELD]} {changes['amount_moves']}")
+        item_count = changes.get("price_items_added", 0) + changes.get(
+            "price_items_removed", 0
+        )
+        if item_count:
+            counts.append(f"{PRICE_ITEM_CHANGE_LABEL} {item_count}")
         catalogue = "；".join(counts) or NO_CHANGE
     elif status == BASELINE_CREATED:
-        catalogue = f"记录 {report.get('model_count', 0)} 个模型，下次扫描起参与对比"
+        ids = (
+            f"（{report['api_id_count']} 个 API ID）"
+            if report.get("api_id_count", 0) > report.get("model_count", 0)
+            else ""
+        )
+        catalogue = (
+            f"记录 {report.get('model_count', 0)} 个模型{ids}，下次扫描起参与对比"
+        )
     elif status == BASELINE_NOT_FOUND:
         catalogue = "没有符合请求时间的历史基线；本次扫描已归档"
     elif status in (EMPTY_SCAN, SOURCE_ERROR):
@@ -910,21 +968,6 @@ def partial_catalogue_text(report: dict[str, Any]) -> str:
     )
 
 
-def channel_status(report: dict[str, Any]) -> str:
-    """Count partial failures honestly and include notice-only changes."""
-    if report["status"] in (EMPTY_SCAN, SOURCE_ERROR):
-        return report["status"]
-    independent = [
-        report.get(key) or {}
-        for key in ("lifecycle", "announcements")
-    ]
-    if any(item.get("status") == SOURCE_ERROR for item in independent):
-        return SOURCE_ERROR
-    if any(item.get("changes") or item.get("observations") for item in independent):
-        return CHANGED
-    return report["status"]
-
-
 def all_unchanged(payload: dict[str, Any]) -> bool:
     """Whether every channel was read and none of them moved.
 
@@ -953,9 +996,12 @@ def scan_conclusion(payload: dict[str, Any]) -> list[str]:
     reports = payload.get("providers", [])
     summary = payload.get("summary", {})
     total_models = sum(report.get("model_count") or 0 for report in reports)
+    total_ids = sum(report.get("api_id_count") or 0 for report in reports)
     scope = f"{summary.get('providers', len(reports))} 个渠道"
     if total_models:
         scope += f"共 {total_models} 个模型"
+        if total_ids > total_models:
+            scope += f"（{total_ids} 个 API ID）"
     if all_unchanged(payload):
         return [f"{scope}，全部无变化。"]
     statuses = [channel_status(report) for report in reports]

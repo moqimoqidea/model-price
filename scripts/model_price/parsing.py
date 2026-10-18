@@ -720,12 +720,19 @@ def _tail_parts(value: str) -> tuple[str, str, str]:
     after the amount. Where the amount ends the clause the whole remainder is its
     unit — and a remainder that names no unit at all is the next rate's label.
     """
-    parts = re.split(r"[，,；;、]", clean_text(value), maxsplit=1)
+    # A comma inside a printed number ("$0.000125 / 1,000 count") is a thousands
+    # separator, not the start of the next rate. Splitting there would leave the
+    # unit as "/ 1" and hide what the page actually priced.
+    parts = re.split(
+        r"(?<!\d)[，,；;、]|(?<=\d)[，,；;、](?!\d)",
+        clean_text(value),
+        maxsplit=1,
+    )
     unit = parts[0].strip()
     carry = CONNECTOR_WORDS.sub("", parts[1]).strip() if len(parts) > 1 else ""
     brackets = " ".join(match.group(0) for match in PARENTHETICAL_RE.finditer(unit))
     unit = PARENTHETICAL_RE.sub(" ", unit).strip()
-    if not carry and unit_measure(unit) is None:
+    if not carry and unit_measure(unit) is None and not unit.startswith("/"):
         return "", brackets, CONNECTOR_WORDS.sub("", unit).strip()
     return unit, brackets, carry
 

@@ -37,7 +37,7 @@ from model_price.descriptions.tencent_mirror import (
     validate_tencent_mirror,
 )
 from model_price.deepseek_updates import DEEPSEEK_UPDATES_URL
-from model_price.errors import SourceError
+from model_price.errors import RequestBudgetExceeded, SourceError
 from model_price.pricing import make_record, price_item
 from model_price.providers.openrouter import (
     OPENROUTER_MODELS_URL,
@@ -384,7 +384,7 @@ Built for long-running agentic coding and knowledge work.
         self.assertEqual(result["specifications"]["input_modalities"], "Text、Image")
         self.assertEqual(result["source"]["url"], qianwen_model_url("qwen/test"))
 
-    def test_aliyun_description_fallback_searches_the_public_catalogue(self):
+    def test_aliyun_description_reads_the_public_catalogue_once(self):
         client = QianwenDescriptionClient(
             [
                 {
@@ -403,13 +403,25 @@ Built for long-running agentic coding and knowledge work.
         self.assertEqual(fields["product"], "AliyunDeliveryService")
         self.assertEqual(fields["action"], "ListModelSeries")
         self.assertNotIn("sec_token", fields)
-        self.assertEqual(params["Query"], "qwen3.8-flash")
+        self.assertNotIn("Query", params)
         self.assertEqual(params["Language"], "zh-CN")
         self.assertEqual(result["display_name"], "Qwen3.8-Flash")
         self.assertEqual(result["specifications"]["max_output_tokens"], 131072)
         self.assertEqual(
             result["source"]["url"], qianwen_model_url("qwen3.8-flash")
         )
+
+    def test_aliyun_description_reuses_one_catalogue_index(self):
+        client = QianwenDescriptionClient(
+            [
+                {"Model": "qwen-a", "Name": "Qwen A", "Description": "模型 A。"},
+                {"Model": "qwen-b", "Name": "Qwen B", "Description": "模型 B。"},
+            ]
+        )
+        source = AliyunDescriptionSource(client)
+        self.assertEqual(source.describe("qwen-a")["summary"], "模型 A。")
+        self.assertEqual(source.describe("qwen-b")["summary"], "模型 B。")
+        self.assertEqual(len(client.requests), 1)
 
 
 class TencentMirrorTests(unittest.TestCase):
@@ -667,6 +679,39 @@ class ResolverTests(unittest.TestCase):
                 self.assertEqual(result["provider"]["id"], "tencent")
                 self.assertEqual(result["reference_url"], "https://channel.test/models")
                 self.assertEqual(vendor.calls, [])
+
+    def test_a_request_budget_is_not_reported_as_a_source_failure(self):
+        class BudgetSource(FakeDescriptionSource):
+            def describe(self, *args, **kwargs):
+                raise RequestBudgetExceeded("request budget exceeded for example.test")
+
+        result = DescriptionResolver({"tencent": BudgetSource("tencent", "")}).resolve([
+            {"model_id": "m1", "provider_id": "tencent"}
+        ])
+        self.assertEqual(result["status"], "budget_exhausted")
+        self.assertIn("请求预算", result["note"])
+        self.assertEqual(result["attempted_sources"][0]["status"], "budget_exhausted")
+
+    def test_an_announcement_fallback_is_used_only_without_a_catalogue_introduction(self):
+        fallback = description_record(
+            "m1", "M1", "公告简介", "https://example.test/news",
+            "official_model_announcement", source_name="发布",
+        )
+        missing = DescriptionResolver({"fake": FakeDescriptionSource("fake", "")})
+        missing.sources["fake"].describe = lambda *args, **kwargs: None
+        result = missing.resolve([{
+            "model_id": "m1", "provider_id": "fake",
+            "fallback_description": fallback,
+        }])
+        self.assertEqual(result["summary"], "公告简介")
+        self.assertEqual(result["source"]["url"], "https://example.test/news")
+
+        catalogue = DescriptionResolver({"fake": FakeDescriptionSource("fake", "目录介绍")})
+        result = catalogue.resolve([{
+            "model_id": "m1", "provider_id": "fake",
+            "fallback_description": fallback,
+        }])
+        self.assertEqual(result["summary"], "目录介绍")
 
     def test_a_direct_resolution_rejects_mixed_channels(self):
         with self.assertRaises(ValueError):

@@ -191,7 +191,10 @@ source, without guessing a per-model API documentation URL.
   `Description`, `Capabilities`, `Features`, context limits, modalities, and
   scheduled withdrawal are normalized by one shared helper. The introduction's
   source is the model's public `qianwenai.com/models/<id>` page; older documentation
-  URLs carried in catalogue metadata are not used.
+  URLs carried in catalogue metadata are not used. The description source reads
+  the paged catalogue once and indexes it by model id, rather than issuing one
+  `Query` request per changed model; a mass withdrawal must not exhaust the
+  per-host budget or turn the tool's own limit into a source error.
 - Xiaomi's public HTML is parsed only because it publishes no Markdown variant.
   Model capability and quick-selection tables are combined.
 - Volcengine's public Model Square page is used only when its server-rendered
@@ -212,7 +215,8 @@ than its API. This is runtime report metadata, not part of snapshot identity.
   series in `Data[]` and independently priced models in each series' `Items[]`.
   Requests made without cookies, `sec_token`, or any authorization header return
   the full catalogue. A page size of 200 currently reads every series at once, and
-  the adapter retains pagination so later catalogue growth is not cut off.
+  the adapter retains pagination so later catalogue growth is not cut off. The
+  introduction source reuses one paged read for every model in the run.
   `Prices[]` carries direct prices and `MultiPrices[]` carries input-length or other
   tiers, each of which remains a separate offer. `Discount` is a multiplier: the
   effective amount is `Price × Discount`, while `Price` and `Discount` remain as
@@ -422,12 +426,18 @@ every application bundle, or call the authenticated `/v1/models` endpoint.
 asset, changed data layout, ambiguous literal API identity, or inconsistent price
 link is a source error; it cannot overwrite a successful baseline.
 
-Price rows join their explicitly linked detail-page slugs to that data and retain
-every published API identifier separately. Current API listings missing from the
-price table remain unpriced; old detail-page figures are not current catalogue
-offers. Models with no API identifiers, such as a weights-only research model,
-do not become invented API listings. Explicitly hosted third-party rows remain
-on `mistral` with `third_party_hosted` delivery.
+Price rows join their explicitly linked detail-page slugs to that data and keep
+one record per catalogue entry, with every published API identifier in
+`model_aliases`; `query`/`search` accept any alias, so an alias is not a second
+model. Current API listings missing from the price table remain unpriced; old
+detail-page figures are not current catalogue offers. Models with no API
+identifiers, such as a weights-only research model, do not become invented API
+listings. Explicitly hosted third-party rows remain on `mistral` with
+`third_party_hosted` delivery.
+
+The launch article prints its rate as a label/amount card (`Input (/M tokens)`
+then `$1.36`). The two paragraphs are joined and read as an announcement offer;
+price prose without a rate is not kept as a note.
 
 The price page's own hashed `/inference/pricing/page-*.js` asset publishes its
 controls: standard, batch, priority, and a regional-inference multiplier. Parse
@@ -448,6 +458,11 @@ remain zero prices; free moderation's unstated meter is `provider_defined`.
 An absent rate remains unknown. Release dates never become
 price-page update times. Reduced captures and integration checks live in
 `tests/test_mistral.py` and `tests/fixtures/mistral-*`.
+
+The HTTP client allows 60 attempts per host per run. That is a safety bound, not
+a rate: the one-second-per-host pacing still applies. A read stopped by the bound
+raises `RequestBudgetExceeded`; the description subsystem reports it as
+`budget_exhausted`, never as a broken source.
 
 ### Special prices, and where each vendor states them
 

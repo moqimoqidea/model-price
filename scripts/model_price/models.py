@@ -54,7 +54,7 @@ TRAILING_PARENTHETICAL_RE = re.compile(r"[（(]([^（()）]*)[）)]\s*$")
 
 def split_trailing_parenthetical(value: str) -> tuple[str, str]:
     """Separate a label's trailing parenthetical from the name it annotates."""
-    text = clean_text(value)
+    text = clean_text(strip_unmatched_closing_brackets(value))
     match = TRAILING_PARENTHETICAL_RE.search(text)
     if not match:
         return text, ""
@@ -71,8 +71,33 @@ def trailing_parenthetical(value: str) -> str:
     return split_trailing_parenthetical(value)[1]
 
 
+def strip_unmatched_closing_brackets(value: str) -> str:
+    """Drop a trailing closing bracket the page never opened.
+
+    Baidu published ``DeepSeek-V4-Pro）`` in one version cell.  Keeping the
+    unmatched mark would make one model a removed id plus a new one, so the
+    spelling a person reads and the identity a query uses both lose the mark.
+    Balanced parentheses, such as ``Claude (100K)``, are untouched.
+    """
+    text = value.rstrip()
+    pairs = {"）": "（", ")": "("}
+    while text and text[-1] in pairs:
+        closer = text[-1]
+        opener = pairs[closer]
+        if text.count(closer) <= text.count(opener):
+            break
+        text = text[:-1].rstrip()
+    return text
+
+
+def display_model_name(value: str) -> str:
+    """One single-line display label, without a trailing footnote star."""
+    text = clean_text(strip_unmatched_closing_brackets(value))
+    return re.sub(r"\s*\*+\s*$", "", text).strip() or text
+
+
 def normalize_model(value: str) -> str:
-    value = strip_footnote_markers(html.unescape(value))
+    value = strip_unmatched_closing_brackets(strip_footnote_markers(html.unescape(value)))
     value = value.strip().lower().replace("_", "-")
     value = re.sub(r"\s+", "-", value)
     return re.sub(r"-+", "-", value)

@@ -20,9 +20,10 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from model_price.announcements.sources import read_publications
-from model_price.announcements.parsing import mentions_model
+from model_price.announcements.parsing import mentions_model, release_facts
 from model_price.caching import CacheStore, CachedPriceSource
 from model_price.delta import scan_provider
+from model_price.diffing import compare_snapshots
 from model_price.descriptions import DescriptionResolver
 from model_price.descriptions.sources import MistralDescriptionSource
 from model_price.errors import SourceError
@@ -115,7 +116,8 @@ class MistralPricingTests(unittest.TestCase):
         records = adapter.catalog_records()
         for record in records:
             self.assertEqual(adapter.query(record["model_id"])[0]["offers"], record["offers"])
-        self.assertEqual(len(records), len(models))
+        self.assertEqual(len(records), 18)
+        self.assertEqual(len(models), 37)
         self.assertEqual(adapter.list_models("ministral-14b"), ["ministral-14b-2512", "ministral-14b-latest"])
         self.assertEqual(set(client.requests), {MISTRAL_PRICING_URL, MISTRAL_MODELS_URL, MODEL_DATA_URL, CONTROLS_URL})
         self.assertEqual(len(client.requests), 4)
@@ -184,9 +186,9 @@ class MistralPricingTests(unittest.TestCase):
     def test_family_queries_also_match_official_display_names_without_guessing_ids(self) -> None:
         adapter = MistralAdapter(DocumentClient())
         records = adapter.search("Ministral 3 14B")
-        self.assertEqual([record["model_id"] for record in records], ["ministral-14b-2512", "ministral-14b-latest"])
+        self.assertEqual([record["model_id"] for record in records], ["ministral-14b-2512"])
         self.assertEqual(adapter.search("Ministral 3 14B", exact=True), [])
-        self.assertEqual(len(adapter.search("Mistral Medium 3.5")), 3)
+        self.assertEqual(len(adapter.search("Mistral Medium 3.5")), 1)
 
     def test_only_the_published_currency_is_read(self) -> None:
         prices = PRICES.replace("$", "€")
@@ -324,6 +326,28 @@ class MistralEvidenceTests(unittest.TestCase):
         self.assertEqual(model["identity_kind"], "published_name")
         self.assertNotIn("https://mistral.ai/news/mistral-makes-sovereign-open-weight-ai-to-frontier/", client.requests)
 
+    def test_a_price_card_is_a_rate_but_price_prose_without_a_rate_is_not_a_note(self) -> None:
+        card = release_facts(
+            "Mistral Large 4",
+            ["Mistral Large 4"],
+            ["Input (/M tokens)", "$1.36", "Output (/M tokens)", "$4.18"],
+        )
+        self.assertEqual(
+            [(price["type"], price["amount"]) for offer in card["announced_offers"] for price in offer["prices"]],
+            [("input", "1.36"), ("output", "4.18")],
+        )
+        self.assertEqual(card["pricing_notes"], ["Input (/M tokens) $1.36", "Output (/M tokens) $4.18"])
+
+        prose = release_facts(
+            "Qwen3.8-Max",
+            ["Qwen3.8-Max"],
+            [
+                "The model must autonomously make full-chain decisions, including dynamic pricing, and returns handling.",
+                "Pricing",
+            ],
+        )
+        self.assertEqual(prose["pricing_notes"], [])
+
     def test_sentence_punctuation_does_not_hide_a_model_or_admit_a_sibling(self) -> None:
         self.assertTrue(mentions_model("Introducing Mistral Large 4.", "Mistral Large 4"))
         self.assertFalse(mentions_model("Introducing Mistral Large 4.1.", "Mistral Large 4"))
@@ -365,19 +389,87 @@ class MistralIntegrationTests(unittest.TestCase):
             self.assertIn("mistral", ids(select_compare_providers(adapters, "mistral-large-4")))
             self.assertEqual(ids(select_compare_providers(adapters, "mistral-large-4", requested=["mistral"])), {"mistral"})
 
+    def test_a_legacy_alias_baseline_pairs_with_the_grouped_record(self) -> None:
+        entry = {
+            "model_id": "mistral-large-4",
+            "display_name": "Mistral Large 4",
+            "offers": [],
+        }
+        before = {
+            "provider": {"id": "mistral", "name": "Mistral AI"},
+            "captured_at": "2026-09-30T09:00:00+08:00",
+            "source": {},
+            "models": {
+                "mistral-large-4": entry,
+                "mistral-large-4-0": {**entry, "model_id": "mistral-large-4-0"},
+            },
+        }
+        after = {
+            **before,
+            "captured_at": "2026-10-01T09:00:00+08:00",
+            "models": {
+                "mistral-large-4": {
+                    **entry,
+                    "model_aliases": ["mistral-large-4", "mistral-large-4-0"],
+                }
+            },
+        }
+        report = compare_snapshots(before, after)
+        self.assertEqual(report["changes"]["models_added"], [])
+        self.assertEqual(report["changes"]["models_removed"], [])
+        self.assertEqual(report["api_id_count"], 2)
+
+    def test_catalogue_records_one_model_per_entry_and_keeps_every_alias(self) -> None:
+        adapter = MistralAdapter(DocumentClient())
+        records = adapter.catalog_records()
+        self.assertEqual(len(records), 18)
+        large = next(record for record in records if record["model_id"] == "mistral-large-4")
+        self.assertEqual(
+            large["model_aliases"], ["mistral-large-4", "mistral-large-4-0"]
+        )
+        self.assertEqual(len(large["offers"]), 6)
+        self.assertEqual(
+            [record["model_id"] for record in adapter.search("mistral-large-4")],
+            ["mistral-large-4"],
+        )
+        self.assertEqual(
+            [record["model_id"] for record in adapter.query("mistral-large-4-0")],
+            ["mistral-large-4"],
+        )
+        self.assertEqual(len(adapter.list_models()), 37)
+
     def test_scan_tracks_sale_rates_modes_unpriced_listings_and_notice_crossings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
             first = self.scan(store, DocumentClient())
             self.assertEqual(first["status"], "baseline_created")
-            self.assertEqual(first["announcements"]["models"][0]["catalog_model_ids"], ["mistral-large-4", "mistral-large-4-0"])
+            self.assertEqual(first["model_count"], 18)
+            self.assertEqual(first["api_id_count"], 37)
+            announcement = first["announcements"]["models"][0]
+            self.assertEqual(announcement["catalog_model_ids"], ["mistral-large-4", "mistral-large-4-0"])
+            self.assertEqual(announcement["catalog_model_id"], "mistral-large-4")
             prices = PRICES.replace("$0.68", "$0.70")
             second = self.scan(store, DocumentClient({MISTRAL_PRICING_URL: prices}), "2026-10-08T12:00:00+08:00")
             self.assertEqual(second["status"], "changed")
-            self.assertEqual({item["model_id"] for item in second["changes"]["price_changes"]}, {"mistral-large-4", "mistral-large-4-0"})
-            self.assertIn("mistral-embed", store.read("mistral")["models"])
+            self.assertEqual({item["model_id"] for item in second["changes"]["price_changes"]}, {"mistral-large-4"})
+            self.assertIn("mistral-embed-2312", store.read("mistral")["models"])
             crossing = self.scan(store, DocumentClient({MISTRAL_PRICING_URL: prices}), "2026-11-01T12:00:00+08:00")
             self.assertTrue(any(item["kind"] == "milestone_reached" and item["event"]["model_id"] == "zai-glm-5-2" for item in crossing["lifecycle"]["changes"]))
+
+    def test_scan_prefers_the_catalogue_introduction_over_the_announcement_blurb(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            report = self.scan(SnapshotStore(Path(directory)), DocumentClient())
+        description = next(
+            item for item in report["model_descriptions"]
+            if item["model_id"] == "mistral-large-4"
+        )
+        self.assertEqual(description["lifecycle"], "preview")
+        self.assertIn("Mixture-of-Experts", description["summary"])
+        self.assertTrue(description["capabilities"])
+        self.assertEqual(
+            description["source"]["url"],
+            "https://docs.mistral.ai/models/mistral-large-4-0",
+        )
 
     def test_failed_reads_preserve_each_independent_successful_archive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -407,6 +499,7 @@ class MistralIntegrationTests(unittest.TestCase):
         message = comparison_message(payload)
         self.assertLess(message.index("【模型介绍】"), message.index("【渠道对比】"))
         self.assertIn("0.68 美元/百万 tokens", message)
+        self.assertIn("API 别名：mistral-large-4-0", message)
         self.assertIn("原价 1.36", message)
         self.assertIn("推理范围=区域推理", message)
         self.assertNotIn("**", message)

@@ -44,6 +44,7 @@ from .reporting import (
     LIFECYCLE_LABELS,
     NO_SUMMARY,
     NO_WINDOW,
+    PRICE_ITEM_CHANGE_LABEL,
     SOURCE_STATUS_LABELS,
     UNKNOWN,
     UNPRICED,
@@ -66,6 +67,7 @@ from .reporting import (
     format_price,
     lifecycle_change_text,
     lifecycle_digest,
+    lifecycle_schedule_text,
     lifecycle_image_only_text,
     model_change_title,
     model_digest,
@@ -75,6 +77,8 @@ from .reporting import (
     offer_condition_text,
     offering_text,
     partial_catalogue_text,
+    price_item_change_text,
+    price_item_changes,
     price_movement,
     price_batch_text,
     price_change_batch,
@@ -246,14 +250,21 @@ def provider_entry(position: int, record: dict[str, Any]) -> list[str]:
     """
     display_name = record.get("display_name") or record.get("model_id", "")
     offers = record.get("offers", [])
+    fields = [
+        field("模型", sentence_text(record.get("model_id", ""))),
+        field("服务方式", sentence_text(delivery_text(record))),
+        field("地域", sentence_text(record.get("region") or UNKNOWN)),
+    ]
+    aliases = [
+        alias for alias in record.get("model_aliases") or []
+        if alias != record.get("model_id")
+    ]
+    if aliases:
+        fields.append(field("API 别名", sentence_text("、".join(aliases))))
     lines = entry(
         position,
         f"{provider_name(record)}｜{display_name}",
-        [
-            field("模型", sentence_text(record.get("model_id", ""))),
-            field("服务方式", sentence_text(delivery_text(record))),
-            field("地域", sentence_text(record.get("region") or UNKNOWN)),
-        ],
+        fields,
     )
     if not offers:
         lines.append(field("价格", sentence_text(pricing_state_text(record))))
@@ -571,11 +582,15 @@ def scan_capability_lines(
                 and normalize_model(model["model_id"]) in batched_ids
             )
         ]
-        details, grouped = scan_description_groups(models)
-        for model in models:
+        groups, grouped_models = bulk_removal_groups(models)
+        details = [line for group in groups for line in bulk_removal_lines(group)]
+        remaining = [model for model in models if model["model_id"] not in grouped_models]
+        description_lines, description_grouped = scan_description_groups(remaining)
+        details.extend(description_lines)
+        for model in remaining:
             key = (report["provider"]["id"], model["model_id"])
             details.extend(scan_model_entry(
-                model, include_description=model["model_id"] not in grouped,
+                model, include_description=model["model_id"] not in description_grouped,
                 introduction=(introductions or {}).get(key),
             ))
         if batch:
@@ -583,6 +598,78 @@ def scan_capability_lines(
         if details:
             blocks.append(entry(len(blocks) + 1, report["provider"]["name"], details))
     return stacked(blocks)
+
+
+REMOVAL_ONLY_CAUSES = frozenset(
+    {"models_removed", "new_notice", "date_revised", "milestone_reached",
+     "replacement_updated", "lifecycle_status_updated", "lifecycle_detail_updated"}
+)
+
+
+def bulk_removal_groups(
+    models: list[dict[str, Any]],
+) -> tuple[list[tuple[tuple[Any, ...], list[dict[str, Any]]]], set[str]]:
+    """Group removal-only models that share one official notice.
+
+    A mass retirement names one notice, one replacement, and one date for dozens
+    of ids.  Repeating the same five lines per id is what makes a scan message
+    unreadable; the group keeps every id and the notice facts once.
+    """
+    groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    for model in models:
+        if "models_removed" not in model["change_kinds"]:
+            continue
+        if set(model["change_kinds"]) - REMOVAL_ONLY_CAUSES:
+            continue
+        notice = next(
+            (change["event"] for change in model["lifecycle_changes"]
+             if change["event"].get("source_url")),
+            None,
+        )
+        if notice is None:
+            continue
+        key = (
+            notice.get("source_url"),
+            notice.get("replacement"),
+            _notice_day(notice.get("eos_at")),
+            _notice_day(notice.get("eom_at")),
+            notice.get("notice_status"),
+            notice.get("scope"),
+        )
+        groups.setdefault(key, []).append(model)
+    selected = [
+        (key, items) for key, items in groups.items() if len(items) > 1
+    ]
+    grouped = {model["model_id"] for _, items in selected for model in items}
+    return selected, grouped
+
+
+def _notice_day(value: Any) -> str | None:
+    """Group a date-only and a midnight spelling of the same notice day."""
+    text = str(value or "").strip()
+    return text[:10] if text else None
+
+
+def bulk_removal_lines(group: tuple[tuple[Any, ...], list[dict[str, Any]]]) -> list[str]:
+    """One notice's removals, with every literal id and the notice's own facts."""
+    _, models = group
+    notice = next(
+        change["event"] for change in models[0]["lifecycle_changes"]
+        if change["event"].get("source_url")
+    )
+    ids = "、".join(sorted({
+        alias
+        for model in models
+        for alias in (model.get("model_aliases") or [model["model_id"]])
+    }))
+    lines = [
+        bullet(f"【目录下架】{len(models)} 个模型（同一公告）：{ids}", FIELD),
+        f"{INDENT}{field('退役安排', sentence_text(lifecycle_schedule_text(notice)))}",
+    ]
+    if scope := notice.get("scope"):
+        lines.append(f"{INDENT}{field('公告范围', sentence_text(scope))}")
+    lines.append(f"{INDENT}{field('公告来源', notice['source_url'])}")
+    return lines
 
 
 def scan_description_groups(models: list[dict[str, Any]]) -> tuple[list[str], set[str]]:
@@ -735,12 +822,13 @@ def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
         details.extend(
             group(
                 f"{CHANGE_FIELD_LABELS[field_name]}（{len(items)}）",
-                bullets((change_text(item) for item in items), ITEM),
+                wrapped_change_bullets(items),
             )
         )
     moves = standard_price_changes(report)
     batch = price_change_batch(report)
-    displayed[PRICE_CHANGE_FIELD] = [] if batch else moves
+    items = price_item_changes(report)
+    displayed[PRICE_CHANGE_FIELD] = [*(moves if not batch else []), *items]
     details.extend(
         group(
             f"{CHANGE_FIELD_LABELS[PRICE_CHANGE_FIELD]}（{len(moves)}）",
@@ -751,8 +839,32 @@ def changed_entry(position: int, report: dict[str, Any]) -> list[str]:
             ),
         )
     )
+    details.extend(
+        group(
+            f"{PRICE_ITEM_CHANGE_LABEL}（{len(items)}）",
+            bullets((price_item_change_text(change) for change in items), ITEM),
+        )
+    )
     details.extend(price_note_lines({"pricing_notes": changed_notes(displayed)}))
     return entry(position, report["provider"]["name"], details) if details else []
+
+
+def wrapped_change_bullets(
+    items: Iterable[dict[str, Any]], *, limit: int = 500,
+) -> list[str]:
+    """Keep a many-offer model on one item without one 7,000-character line."""
+    lines: list[str] = []
+    for item in items:
+        text = change_text(item)
+        if len(text) <= limit or "；" not in text:
+            lines.append(bullet(text, ITEM))
+            continue
+        parts = text.split("；")
+        lines.append(bullet(parts[0], ITEM))
+        for position, part in enumerate(parts[1:]):
+            suffix = "；" if position < len(parts) - 2 else ""
+            lines.append(f"{INDENT * (ITEM + 1)}{part}{suffix}")
+    return lines
 
 
 def change_text(change: dict[str, Any]) -> str:

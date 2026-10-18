@@ -7,6 +7,7 @@ this history or alter a successful price baseline.
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
@@ -19,22 +20,29 @@ from ..snapshots import BaselineSelection, SnapshotStore
 from .sources import read_publications
 
 
-def catalogue_ids(
+def catalogue_join(
     item: dict[str, Any], records: list[dict[str, Any]] | None
-) -> list[str]:
-    """Match literal published names on this host, without family or retired aliases."""
+) -> tuple[list[str], str | None]:
+    """Match literal published names on this host, without family or retired aliases.
+
+    Returns every matching literal API id and, when they all belong to one
+    catalogue model, that model's canonical id.  The aliases stay evidence; the
+    canonical id is what the description resolver can actually look up.
+    """
     keys = {normalize_model(item["model_id"]), normalize_model(item["display_name"])}
-    return sorted(
-        {
-            record["model_id"]
-            for record in records or []
-            if keys
-            & {
-                normalize_model(record["model_id"]),
-                normalize_model(record.get("display_name") or ""),
-            }
-        }
-    )
+    matched: set[str] = set()
+    model_ids: set[str] = set()
+    for record in records or []:
+        names = [
+            record["model_id"],
+            record.get("display_name") or "",
+            *(record.get("model_aliases") or []),
+        ]
+        if keys & {normalize_model(name) for name in names}:
+            matched.update(record.get("model_aliases") or [record["model_id"]])
+            model_ids.add(record["model_id"])
+    canonical = next(iter(model_ids)) if len(model_ids) == 1 else None
+    return sorted(matched), canonical
 
 
 def announcement_description(item: dict[str, Any]) -> dict[str, Any]:
@@ -55,7 +63,15 @@ def announcement_description(item: dict[str, Any]) -> dict[str, Any]:
         item["source_url"],
         "official_model_announcement",
         source_name=item["source_name"],
-        lifecycle="preview" if "preview" in item["display_name"].lower() else "unknown",
+        lifecycle=(
+            "preview"
+            if re.search(
+                r"\bpublic preview\b|公开预览|预览",
+                f"{item['display_name']} {item['summary']}",
+                re.I,
+            )
+            else "unknown"
+        ),
     )
     description["announcement_access"] = item["access"]
     return description
@@ -110,8 +126,11 @@ def scan_announcements(
             continue
         known[model_key] = {**prior, **item}
     for item in known.values():
-        ids = catalogue_ids(item, records)
+        ids, canonical = catalogue_join(item, records)
         item["catalog_model_ids"] = ids
+        item["catalog_model_id"] = canonical
+        if canonical:
+            item["model_aliases"] = ids
         item["catalog_status"] = (
             "unknown" if records is None else "listed" if ids else "not_listed"
         )
@@ -132,21 +151,17 @@ def scan_announcements(
         changes = compare_announcements(previous, known)
         status = "changed" if changes else "unchanged"
     else:
-        changes = (
-            [
-                {"kind": "announcement_observed", "event": item}
-                for item in known.values()
-            ]
-            if selection.is_latest
-            else []
-        )
+        # A first observation is not a launch that happened this scan.  It is
+        # retained as an observation so the summary does not count every known
+        # model as a new announcement on the first run.
+        changes = []
         status = "baseline_created" if selection.is_latest else "baseline_not_found"
-        if not selection.is_latest:
-            result["observations"] = [
-                {"kind": "announcement_observed", "event": known[key]}
-                for key in fresh
-                if key not in ((latest or {}).get("models") or {})
-            ]
+        known_models = (latest or {}).get("models") or {}
+        result["observations"] = [
+            {"kind": "announcement_observed", "event": item}
+            for key, item in known.items()
+            if key not in known_models
+        ]
     snapshot = {
         "announcement_schema_version": ANNOUNCEMENT_SCHEMA_VERSION,
         "captured_at": captured_at,

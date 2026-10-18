@@ -684,10 +684,31 @@ class DeepSeekDescriptionSource(DescriptionSource):
 
 
 class AliyunDescriptionSource(DescriptionSource):
+    """Read the market catalogue once, then resolve every id from that index.
+
+    A full scan can change hundreds of models at once.  One search request per
+    model exhausts the per-host budget and misreports the tool's own limit as a
+    source failure; one paged catalogue read serves every id instead.
+    """
+
     source_id = "aliyun"
     source_name = "阿里云百炼"
     source_url = ALIYUN_MODELS_URL
     source_kind = "anonymous_api"
+
+    def __init__(self, client: Any) -> None:
+        super().__init__(client)
+        self._index: dict[str, dict[str, Any]] | None = None
+
+    def _catalogue_index(self) -> dict[str, dict[str, Any]]:
+        if self._index is None:
+            index: dict[str, dict[str, Any]] = {}
+            for item in qianwen_catalogue(self.client):
+                for name in (item.get("Model"), item.get("Name")):
+                    if name:
+                        index.setdefault(normalize_model(str(name)), item)
+            self._index = index
+        return self._index
 
     def describe(
         self,
@@ -699,16 +720,11 @@ class AliyunDescriptionSource(DescriptionSource):
         metadata = (record or {}).get("model_metadata") or {}
         item: dict[str, Any] = {}
         if not metadata.get("summary"):
-            key = normalize_model(model_id)
-            item = next(
-                (
-                    value
-                    for value in qianwen_catalogue(
-                        self.client, query=model_id, page_size=20
-                    )
-                    if normalize_model(str(value.get("Model") or "")) == key
-                ),
-                {},
+            index = self._catalogue_index()
+            item = (
+                index.get(normalize_model(model_id))
+                or index.get(normalize_model(display_name))
+                or {}
             )
             metadata = qianwen_model_metadata(item) if item else {}
         if not metadata.get("summary"):

@@ -16,6 +16,10 @@ class SourceError(_PublicDiagnosticError):
     """A provider's official source could not be fetched or parsed."""
 
 
+class RequestBudgetExceeded(SourceError):
+    """The run's per-host request budget stopped a read before it was attempted."""
+
+
 class HttpSourceError(SourceError):
     """Keep HTTP routing facts without making callers parse diagnostic prose."""
 

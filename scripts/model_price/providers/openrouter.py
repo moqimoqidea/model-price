@@ -74,6 +74,12 @@ OPENROUTER_NON_RATE_FIELDS = frozenset({"overrides", "discount"})
 # choices stay with the price as its scope. A ``cents_`` figure is published in
 # cents, so its factor converts it into the dollars every other amount is in — a
 # unit conversion rather than a rate derived from two of them.
+OPENROUTER_VIDEO_LABELS = {
+    "reference_duration_seconds": "参考时长",
+    "reference_input_images": "参考输入图",
+    "reference_images": "参考图",
+}
+
 OPENROUTER_VIDEO_SKUS: tuple[tuple[str, str, str, str], ...] = (
     # (SKU prefix, price type, factor applied to the figure, unit phrase)
     (
@@ -90,6 +96,11 @@ OPENROUTER_VIDEO_SKUS: tuple[tuple[str, str, str, str], ...] = (
     ("image_to_video_duration_seconds", "output_video", "1", "/second"),
     ("text_to_video_duration_seconds", "output_video", "1", "/second"),
     ("duration_seconds", "output_video", "1", "/second"),
+    # Reference-media SKUs state the unit in their suffix ("_2k", "_480p").
+    # The suffix becomes the label's scope; the key itself is never a unit.
+    ("reference_duration_seconds", "output_video", "1", "/second"),
+    ("reference_input_images", "input_image", "1", "/image"),
+    ("reference_images", "input_image", "1", "/image"),
     # A video token is the vendor's own measure: priced as if it were a language
     # token it would compare two things the vendor bills apart.
     ("video_tokens", "output_video_token", "1000000", "/million-video-tokens"),
@@ -345,10 +356,11 @@ def openrouter_video_prices(entry: dict[str, Any] | None) -> list[dict[str, Any]
         if amount is None:
             continue
         scope = sku[len(prefix) :].lstrip("_")
+        label = OPENROUTER_VIDEO_LABELS.get(prefix, prefix)
         prices.append(
             price_item(
                 kind,
-                f"{prefix}（{scope}）" if scope else prefix,
+                f"{label}（{scope}）" if scope else label,
                 amount,
                 unit_code(phrase, "USD"),
             )

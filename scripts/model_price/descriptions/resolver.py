@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from ..caching import CacheStore
+from ..errors import RequestBudgetExceeded
 from ..models import normalize_model
 from ..privacy import safe_diagnostic
 from .core import (
+    BUDGET_EXHAUSTED,
     NOT_FOUND,
     SOURCE_ERROR,
     DescriptionSource,
@@ -73,6 +75,7 @@ class DescriptionResolver:
         source = self.sources.get(provider_id)
         attempted: list[dict[str, str]] = []
         description: dict[str, Any] | None = None
+        fallback = head.get("fallback_description")
         status = NOT_FOUND
         note = ""
         error = ""
@@ -83,20 +86,30 @@ class DescriptionResolver:
                 description = source.describe(
                     model_id, display_name, record=head.get("record")
                 )
+            except RequestBudgetExceeded as exc:
+                status = BUDGET_EXHAUSTED
+                error = safe_diagnostic(exc)
+                note = (
+                    "本轮请求预算已用完，未尝试读取模型介绍；价格结果不受影响。"
+                )
             except Exception as exc:
                 status = SOURCE_ERROR
                 error = safe_diagnostic(exc)
                 note = (
                     f"该渠道的模型介绍来源暂时无法读取；价格结果不受影响。原因：{error}"
                 )
+            if description is None and status == NOT_FOUND and fallback:
+                description = dict(fallback)
             attempt = {
                 "name": source.source_name,
                 "url": source.source_url,
                 "status": "available" if description else status,
             }
-            if status == SOURCE_ERROR:
+            if status in (SOURCE_ERROR, BUDGET_EXHAUSTED):
                 attempt["error"] = error
             attempted.append(attempt)
+        elif fallback:
+            description = dict(fallback)
         elif provider_id:
             note = "该渠道尚无可读取的官方模型介绍源；价格结果不受影响。"
         result = (

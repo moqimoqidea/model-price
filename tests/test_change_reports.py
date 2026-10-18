@@ -14,6 +14,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from model_price.delta import scan_providers
+from model_price.diffing import compare_snapshots
 from model_price.descriptions.core import DescriptionSource, description_record
 from model_price.descriptions.resolver import DescriptionResolver
 from model_price.lifecycle_sources import event
@@ -228,6 +229,71 @@ class ChangeClassificationTests(unittest.TestCase):
         self.assertNotIn("99.12345", message)
         self.assertNotIn("【模型价格】", message)
 
+    def test_a_cleaned_legacy_id_is_not_a_catalogue_removal(self) -> None:
+        entry = {
+            "model_id": "deepseek-v4-pro",
+            "display_name": "DeepSeek-V4-Pro",
+            "offers": [],
+        }
+        before = {
+            "provider": {"id": "baidu", "name": "baidu"},
+            "captured_at": "2026-09-30T09:00:00+08:00",
+            "source": {},
+            "models": {"deepseek-v4-pro）": entry},
+        }
+        after = {**before, "captured_at": "2026-10-01T09:00:00+08:00",
+                 "models": {"deepseek-v4-pro": entry}}
+        report = compare_snapshots(before, after)
+        self.assertEqual(report["changes"]["models_added"], [])
+        self.assertEqual(report["changes"]["models_removed"], [])
+
+    def test_a_renamed_caption_is_not_a_price_movement(self) -> None:
+        before, after = model_record("m1"), model_record("m1")
+        after["offers"][0]["prices"][0]["label"] = "Input tokens"
+        payload = scanned_pair([before], [after])
+        report = payload["providers"][0]
+        changes = report["changes"]
+        self.assertEqual(report["status"], "unchanged")
+        self.assertEqual(changes["amount_moves"], 0)
+        self.assertEqual(changes["caption_changes"], 1)
+        self.assertEqual(changes["total"], 0)
+        change = changes["price_changes"][0]
+        self.assertEqual(change["kind"], "caption_changed")
+        self.assertEqual((change["from_label"], change["to_label"]), ("输入", "Input tokens"))
+        message = scan_message(payload, max_chars=100000)
+        self.assertNotIn("价格调整", message)
+        self.assertNotIn("价格变化", message)
+        self.assertIn("全部无变化", message)
+
+    def test_a_unit_correction_is_archived_without_making_a_price_change(self) -> None:
+        before, after = model_record("m1"), model_record("m1")
+        after["offers"][0]["prices"][0]["unit"] = "USD_per_thousand_pages"
+        payload = scanned_pair([before], [after])
+        changes = payload["providers"][0]["changes"]
+        self.assertEqual(changes["amount_moves"], 0)
+        self.assertEqual(changes["unit_changes"], 1)
+        self.assertEqual(changes["total"], 0)
+        self.assertEqual(changes["price_changes"][0]["kind"], "unit_changed")
+        message = scan_message(payload, max_chars=100000)
+        self.assertIn("全部无变化", message)
+        self.assertNotIn("单位修正", message)
+
+    def test_a_price_line_appearing_is_structure_not_a_price_move(self) -> None:
+        before, after = model_record("m1"), model_record("m1")
+        after["offers"][0]["prices"].append(
+            price_item("cache_hit", "缓存输入", "0.05", "USD_per_million_tokens")
+        )
+        payload = scanned_pair([before], [after])
+        changes = payload["providers"][0]["changes"]
+        self.assertEqual(changes["amount_moves"], 0)
+        self.assertEqual(changes["price_items_added"], 1)
+        self.assertEqual(changes["price_changes"][0]["kind"], "line_added")
+        capabilities, prices, _ = report_sections(payload)
+        self.assertIn("【计费项变化】m1", capabilities)
+        self.assertIn("计费项变化（1）", prices)
+        self.assertIn("新增计费项", prices)
+        self.assertNotIn("价格变化（1）", prices)
+
     def test_catalogue_removal_is_distinct_from_confirmed_shutdown(self) -> None:
         message = scan_message(scanned_pair(
             [model_record("removed"), model_record("kept")], [model_record("kept")]
@@ -254,6 +320,53 @@ class ChangeClassificationTests(unittest.TestCase):
         self.assertIn("https://aggregator.example/notices", capabilities)
         self.assertIn("m1、m2", prices)
         self.assertIn("替代模型更新 1", conclusion)
+
+    def test_a_new_model_with_many_offers_is_wrapped_not_one_giant_line(self) -> None:
+        kept = model_record("kept")
+        big = model_record("big")
+        big["offers"] = [
+            {
+                "name": f"offer-{index}",
+                "conditions": {"region": f"r{index}", "tier": f"t{index}"},
+                "prices": [price_item(
+                    "input", f"输入-{index}", "1.25", "USD_per_million_tokens"
+                )],
+            }
+            for index in range(12)
+        ]
+        message = scan_message(scanned_pair([kept], [kept, big]), max_chars=100000)
+        self.assertTrue(all(f"offer-{index}" in message for index in range(12)))
+        self.assertLess(max(len(line) for line in message.splitlines()), 1000)
+
+    def test_a_mass_removal_is_one_notice_item_and_a_singleton_stays_detailed(self) -> None:
+        payload = scanned_pair(
+            [model_record("m1"), model_record("m2"), model_record("m3"), model_record("kept")],
+            [model_record("kept")],
+        )
+        provider = payload["providers"][0]
+        notice = "https://aggregator.example/notices/retire"
+        provider["lifecycle"] = {
+            "status": "changed",
+            "changes": [
+                {"kind": "new_notice", "event": event(
+                    model_id, notice, replacement="m-next", eos_at="2026-10-10"
+                )}
+                for model_id in ("m1", "m2")
+            ] + [
+                {"kind": "new_notice", "event": event(
+                    "m3", "https://aggregator.example/notices/other",
+                    replacement="m-other", eos_at="2026-10-11",
+                )}
+            ],
+        }
+        message = scan_message(payload, max_chars=100000)
+        capabilities = message.split("【模型能力】", 1)[1].split("【渠道结论】", 1)[0]
+        self.assertEqual(capabilities.count("【目录下架】"), 2)
+        self.assertIn("【目录下架】2 个模型（同一公告）：m1、m2", capabilities)
+        self.assertIn("推荐/切换至 m-next", capabilities)
+        self.assertIn(notice, capabilities)
+        self.assertIn("【目录下架】【退役公告新增】m3", capabilities)
+        self.assertIn("m-other", capabilities)
 
     def test_notice_read_failure_is_not_reported_as_an_unchanged_channel(self) -> None:
         payload = scanned_pair([model_record("m1")], [model_record("m1")])

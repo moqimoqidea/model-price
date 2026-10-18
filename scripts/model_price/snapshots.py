@@ -107,7 +107,7 @@ NON_IDENTITY_CONDITIONS = frozenset({"source_section"})
 # the diff compares amounts rather than this tuple and an older baseline reads as
 # ``None`` where the key is absent — and a field dropped here needs none either, for
 # the same reason: a baseline carrying it keeps a key nothing reads.
-PRICE_FIELDS = ("type", "label", "amount", "unit", *PRICE_TERM_FIELDS)
+PRICE_FIELDS = ("type", "label", "amount", "unit", "display", *PRICE_TERM_FIELDS)
 
 
 def offer_identity(offer: dict[str, Any]) -> tuple[Any, ...]:
@@ -167,6 +167,11 @@ def build_snapshot(
             {
                 "model_id": record["model_id"],
                 "display_name": record.get("display_name", record["model_id"]),
+                "model_aliases": list(
+                    dict.fromkeys(
+                        [record["model_id"], *(record.get("model_aliases") or [])]
+                    )
+                ),
                 "delivery_mode": record.get("delivery_mode"),
                 "region": record.get("region"),
                 "currency": record.get("currency"),
@@ -183,6 +188,9 @@ def build_snapshot(
                 dict.fromkeys([*entry.get("pricing_notes", []), *notes])
             )
         entry["offers"].extend(offers)
+        for alias in record.get("model_aliases") or []:
+            if alias not in entry["model_aliases"]:
+                entry["model_aliases"].append(alias)
     for entry in models.values():
         unique = {offer_identity(offer): offer for offer in entry["offers"]}
         # ``sorted`` is stable, so equal-priority context and time bands retain

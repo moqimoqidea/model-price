@@ -140,7 +140,12 @@ UNIT_MEASURES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "hundred_images",
         ("/100images", "/100image", "/100张", "/100图", "/百张"),
     ),
-    ("image", ("/张", "/幅", "/image", "/images", "/图")),
+    ("image", ("/张", "/幅", "/image", "/images", "/图", "inputimage", "inputimages")),
+    (
+        "million_training_tokens",
+        ("milliontrainingtoken", "milliontrainingtokens", "trainingtoken",
+         "百万训练token", "训练token"),
+    ),
     ("frame", ("/帧", "/frame", "/frames")),
     # A video upscaler bills by the area it processes over the time it runs, which
     # is neither a picture nor a second.
@@ -457,7 +462,7 @@ def make_record(
     record = {
         "provider": {"id": provider_id, "name": provider_name},
         "model_id": model_id,
-        "display_name": display_name,
+        "display_name": clean_text(str(display_name or model_id)),
         "region": region,
         "currency": "CNY",
         "offers": offers,

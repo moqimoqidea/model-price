@@ -98,7 +98,9 @@ class MistralAdapter(TabularPricingAdapter):
                 "Mistral price row has no unique documented API identity: "
                 + display_name
             )
-        return entry["identifiers"]["apiNames"]
+        # One model owns one record.  The catalogue's aliases travel on that
+        # record and are matched by query/search, never by a second price row.
+        return [entry["identifiers"]["apiNames"][0]]
 
     def cell_rates(self, cell: str, header: str) -> list[CellRate]:
         # Accessible Original/Sale prefixes sit inside the HTML's del/ins tags.
@@ -128,19 +130,22 @@ class MistralAdapter(TabularPricingAdapter):
             raise SourceError("Mistral's official pricing table was not found")
         known = {row["model_id"] for row in rows}
         for entry in read_catalogue(self.client).current_entries():
-            for model_id in entry["identifiers"]["apiNames"]:
-                if normalize_model(model_id) not in known:
-                    rows.append(
-                        {
-                            "model_id": model_id,
-                            "display_name": entry["name"],
-                            "offer_name": "standard",
-                            "conditions": {},
-                            "prices": [],
-                            "source_url": self.catalog_url,
-                        }
-                    )
-                    known.add(normalize_model(model_id))
+            api_names = entry["identifiers"]["apiNames"]
+            if not api_names:
+                continue
+            model_id = api_names[0]
+            if normalize_model(model_id) not in known:
+                rows.append(
+                    {
+                        "model_id": model_id,
+                        "display_name": entry["name"],
+                        "offer_name": "standard",
+                        "conditions": {},
+                        "prices": [],
+                        "source_url": self.catalog_url,
+                    }
+                )
+                known.add(normalize_model(model_id))
         return rows
 
     def _record_for(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -149,6 +154,7 @@ class MistralAdapter(TabularPricingAdapter):
         if entry is None:
             raise SourceError("Mistral price identity is absent from the official model data")
         record["display_name"] = entry["name"]
+        record["model_aliases"] = list(entry["identifiers"]["apiNames"])
         if "third-party" in (entry.get("tags") or []):
             record["delivery_mode"] = "third_party_hosted"
         if not record["offers"]:
@@ -176,15 +182,45 @@ class MistralAdapter(TabularPricingAdapter):
         ]
         return record
 
+    def list_models(self, prefix: str = "") -> list[str]:
+        """List every published API id, including each alias of one model."""
+        names = {
+            name
+            for entry in read_catalogue(self.client).current_entries()
+            for name in entry["identifiers"]["apiNames"]
+        }
+        if prefix:
+            key = normalize_model(prefix)
+            names = {name for name in names if normalize_model(name).startswith(key)}
+        return sorted(names, key=str.lower)
+
+    def query(self, model: str) -> list[dict[str, Any]]:
+        """Match either the record's canonical id or any documented alias."""
+        key = normalize_model(model)
+        return [
+            record
+            for record in self.catalog_records()
+            if key
+            in {
+                normalize_model(record["model_id"]),
+                *map(normalize_model, record.get("model_aliases") or []),
+            }
+        ]
+
     def search(self, model: str, *, exact: bool = False) -> list[dict[str, Any]]:
-        if exact:
-            return self.query(model)
-        catalogue = read_catalogue(self.client)
-        candidates: list[dict[str, Any]] = []
-        for model_id in self.list_models():
-            entry = catalogue.for_api(model_id)
-            if model_matches(model, model_id) or (
-                entry is not None and model_matches(model, entry["name"])
-            ):
-                candidates.extend(self.query(model_id))
-        return candidates
+        """One record per catalogue model, even when several aliases match.
+
+        ``--exact`` still means an official API id: a display name is family
+        matching and must not make an exact lookup answer.
+        """
+        records = []
+        for record in self.catalog_records():
+            matches = any(
+                model_matches(model, alias, exact=exact)
+                for alias in record.get("model_aliases") or []
+            )
+            if not matches and not exact:
+                matches = model_matches(model, record.get("display_name", ""))
+            if matches:
+                records.append(record)
+        return records

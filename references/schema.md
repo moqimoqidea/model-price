@@ -38,7 +38,7 @@ and retired-name aliases are not merged. Each entry contains:
   the hosting channel's literal spelling rather than a canonical first-party ID
 - `observed_model_ids[]`: spellings of that literal ID within the same provider;
   it is present for available and unavailable introductions
-- `status`: `available`, `not_found`, or `source_error`
+- `status`: `available`, `not_found`, `source_error`, or `budget_exhausted` when the run's per-host request budget stopped the read before it was attempted
 - `summary`, `capabilities[]`, `lifecycle`, and `specifications`
 - for an available introduction, `source.name`, `source.url`, `source.kind`, and
   `source.retrieved_at`
@@ -128,12 +128,15 @@ Each result contains:
   A vendor that actually charges nothing publishes a price of `"0"` instead; the
   two are different facts and are never written the same way
 
-Price fields are `type`, `label`, `amount`, `unit`, and optional `display`,
-`list_amount`, `discount`, or `effective_until`.
+Price fields are `type`, `label`, `amount`, `unit`, `display`, and optional
+`list_amount`, `discount`, or `effective_until`. A snapshot archives `display`
+too (as `null` when the vendor stated no extra wording), so the scan and a live
+query show the same sentence for the same price.
 
 Mistral adds the `thousand_pages` measure for its OCR rates and reads `/M Chars`
-as `million_characters`. Its records retain each literal published API identifier
-and alias separately; displayed model names and detail-page slugs do not create
+as `million_characters`. One catalogue entry owns one record and every literal
+published API identifier travels in `model_aliases`; a query for any alias returns
+that one record. Displayed model names and detail-page slugs do not create
 IDs. An offer's `service_tier` retains its pricing mode, while `inference_scope`
 is `default` or `regional`, distinguishing the vendor's regional surcharge
 without inventing a geographic deployment. Both conditions participate in offer
@@ -143,9 +146,10 @@ has empty `offers`, even if an old model detail still contains a rate.
 
 `unit` is a code built as `<currency>_per_<measure>`, so a new currency or a new measure costs one entry in the vocabulary rather than one entry per combination. The measures read today are `million_tokens`, `million_tokens_per_hour` (cache storage), `thousand_tokens`, `10k_tokens`, `million_characters`, `10k_characters`, `thousand_characters`, `character`, `image`, `frame`, `second`, `minute`, `hour`, `request`, `thousand_requests`, `10k_requests`, `video`, `item`, `song`, `page`,
 `million_video_tokens` (a vendor that bills video by the token, which is not a
-language token rate), `hundred_images` (an amount published for a hundred
-pictures, kept at the scale the page printed it), and `megapixel_second` (a video
-upscaler, billed by the area it processes over the time it runs) — `CNY_per_image` is 元/张, `USD_per_second` is
+language token rate), `million_training_tokens`, `hundred_images` (an amount
+published for a hundred pictures, kept at the scale the page printed it), and
+`megapixel_second` (a video upscaler, billed by the area it processes over the
+time it runs) — `CNY_per_image` is 元/张, `USD_per_second` is
 美元/秒, `CNY_per_million_tokens_per_hour` is cache storage. A vendor that bills in its own credit keeps that credit as the unit (`积分/次`): the amount is a price, and converting it would print a rate the page never published. A price whose vendor stated no unit at all carries `provider_defined`, which is rendered as the amount alone.
 
 Two things a vendor publishes beside an amount decide which of several prices one cell holds. A cell that prices several tiers states each tier's scope in the cell itself, and that scope is `conditions.price_scope` on the offer the amount belongs to — one offer per scope, because merging them would quote one tier's rate for another. A cell that lists several model IDs prices each of them, and each becomes a model of its own rather than a note on the first.
@@ -229,8 +233,14 @@ Explicit refreshes also add `skill_update` before querying official sources:
     "providers": 9,
     "changed": 1, "unchanged": 7, "baseline_created": 1,
     "baseline_not_found": 0, "empty_scan": 0, "source_error": 0,
+    "channel_changed": 2, "channel_unchanged": 6,
+    "channel_baseline_created": 1, "channel_baseline_not_found": 0,
+    "channel_empty_scan": 0, "channel_source_error": 0,
     "models_added": 2, "models_removed": 1,
-    "offers_added": 1, "offers_removed": 0, "price_changes": 3
+    "offers_added": 1, "offers_removed": 0, "price_changes": 3,
+    "amount_moves": 1, "unit_changes": 0,
+    "price_items_added": 1, "price_items_removed": 1,
+    "caption_changes": 0
   },
   "providers": []
 }
@@ -275,6 +285,9 @@ Each publication record carries:
   and later prices remain separate offers. These never join live `offers[]`
 - `pricing_notes[]`: verbatim pricing sentences, including percentages and
   imprecise promotion periods; no derived prices, discounts, or expiry dates
+- `catalog_model_id`: the canonical catalogue model id when every match belongs
+  to one model, otherwise `null`; the description resolver uses it, the aliases
+  below remain evidence
 - `catalog_model_ids[]`: exact normalized literal ID/display-name matches on this
   provider only, with no family/retirement aliases and no inferred variants
 - `catalog_status`: `listed` when an exact match exists, `not_listed` when no
@@ -457,10 +470,12 @@ An adapter whose amounts are routing noise declares
 the key. Nothing infers this from a provider ID.
 
 `summary.changed` and `summary.unchanged` remain catalogue comparison counts;
+`summary.channel_*` is the combined per-channel outcome the message counts, where
+a notice-only change is changed and a failed independent read is incomplete.
 `summary.lifecycle_changes` counts notices separately, and
-`summary.announcement_changes` counts publications and access separately. The message's combined
-channel conclusion also counts notice-only changes as changed and partial notice
-read failures as incomplete, naming the price and notice outcomes independently.
+`summary.announcement_changes` counts publications and access separately.
+`summary.announcement_observations` counts first observations, including the
+first default scan, which does not call them new launches.
 
 `source.updated_at` is official vendor evidence copied into the snapshot; it is
 `null` when the source publishes none. `last_successful_at` retains the fallback
@@ -473,22 +488,35 @@ notice-only changes on a provider whose price status is `unchanged` or
 `source_error`. Providers with none of those changes omit it, so a daily scan
 never walks every detail page merely to repeat unchanged prose.
 
-`model_count` includes listed models with no parseable price. `changes` holds `models_added`, `models_removed`, `offers_added`, `offers_removed`,
-`price_changes`, and their `total`. A channel reporting no price movements fills
-only `models_added` and `models_removed`: its amounts sit in the baseline and in
-`models_added`'s model entries, but no offer or amount movement is compared. A model entry is the snapshot model, offers and
-prices included, so a new model's price is readable without a second query. Each
-model has `price_status` (`published` or `unknown`); `unknown` means the source
-published no price for it at all, so `offers: []`, and it still appears in
-`models_added`. A model the vendor publishes as free is `published`, because a zero
-is a price. When an unpriced model's price is later published, the change
-appears in `offers_added`, not `models_added` again. An
-offer entry is a model plus `offer` (`name`, `conditions`, and `prices`). A price change is a
-model plus `offer`, `conditions`, `type`, `label`, and `from`/`to` — each one the
-billed `{amount, unit}` pair together with any price term that side carried, with
-`null` on the side where the price did not exist. A change is decided by the amount
-alone; the terms travel with it for the reader, so `6 → 4.8` never has to be read
-without `5 折` beside it.
+`model_count` includes listed models with no parseable price. When one catalogue
+model has several published API ids, `model_count` counts the model once and
+`api_id_count` counts every literal id; the message prints both when they differ.
+`changes` holds `models_added`, `models_removed`, `offers_added`,
+`offers_removed`, `price_changes`, and their `total`. A channel reporting no price
+movements fills only `models_added` and `models_removed`: its amounts sit in the
+baseline and in `models_added`'s model entries, but no offer or amount movement is
+compared. A model entry is the snapshot model, offers and prices included, so a
+new model's price is readable without a second query. Each model has
+`price_status` (`published` or `unknown`); `unknown` means the source published no
+price for it at all, so `offers: []`, and it still appears in `models_added`. A
+model the vendor publishes as free is `published`, because a zero is a price.
+When an unpriced model's price is later published, the change appears in
+`offers_added`, not `models_added` again. A model entry also carries
+`model_aliases[]`, the literal published ids that resolve to it; query and search
+accept any of them.
+
+An offer entry is a model plus `offer` (`name`, `conditions`, and `prices`). A
+price change is a model plus `offer`, `conditions`, `type`, `label`, `kind`, and
+`from`/`to` — each side the billed `{amount, unit}` pair together with any price
+term that side carried, `null` on the side where the price did not exist. `kind`
+is `amount_changed` (the only kind the message counts as a 价格变化),
+`unit_changed`, `line_added`, `line_removed`, or `caption_changed` (same type,
+amount, and unit; the label moved, and the two sides also carry `from_label` and
+`to_label`). The top-level counters `amount_moves`, `unit_changes`,
+`price_items_added`, `price_items_removed`, and `caption_changes` count each kind;
+`total` counts only material changes and excludes a caption. The terms travel with
+the amount for the reader, so `6 → 4.8` never has to be read without `5 折` beside
+it.
 
 ### A channel that reports no price movements
 

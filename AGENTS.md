@@ -154,9 +154,11 @@ capability and price sections use one batch item naming all affected IDs and the
 channel's official HTTPS catalogue page. Price-only models need no repeated prose
 in that item; other changes to those models still get their own introductions and
 facts. Single-model movements, new listings, and new/removed standard offers stay
-detailed. Full introductions remain in JSON; full prices remain in JSON and
-snapshots. These presentation choices are made before measuring length, never
-to meet a budget.
+detailed. A mass catalogue removal whose models share one official notice is one
+item naming every literal ID, the notice, the replacement and dates; a removal
+with a different notice or another simultaneous cause stays detailed. Full
+introductions remain in JSON; full prices remain in JSON and snapshots. These
+presentation choices are made before measuring length, never to meet a budget.
 
 An adapter may declare `reports_price_movements = False` — OpenRouter does, because
 it rebills whichever endpoint a route lands on and those amounts move daily without
@@ -252,8 +254,10 @@ even when the tests still pass.
    rule is selected by model name first, delivery label second — one page can bill
    two generations on different calendars.
 9. **A description failure never touches a price result.** A missing, retired, or
-   unreadable introduction is reported as `not_found` or `source_error`; neither
-   status may suppress or alter a price that parsed fine. Introductions are scoped
+   unreadable introduction is reported as `not_found`, `source_error`, or
+   `budget_exhausted` when this run's per-host request budget stopped the read
+   before it was attempted. A budget refusal is never worded as a broken source;
+   neither status may suppress or alter a price that parsed fine. Introductions are scoped
    to the hosting provider and literal model ID. Never infer an introduction source
    from the model name, fall back to its creator, or merge introductions across
    channels or retired-name aliases. A channel without a reader reports absence.
@@ -271,7 +275,10 @@ even when the tests still pass.
 12. **Cache and baseline are different things.** The cache is a 3-hour TTL store of
    responses, reused inside that window. `delta` always reads the sources afresh —
    a cache hit would be handed back as "no change". Successful scans are archived
-   per provider, with a hard limit of 1000 snapshots. Before pruning, reserve the
+   per provider, with a hard limit of 1000 snapshots. One catalogue model owns one
+   record; every published API alias travels in `model_aliases` and is still
+   accepted by `query`/`search`, so an alias rename is not a model removal.
+   Before pruning, reserve the
    last scan of each day in the recent three-month calendar window, then the
    first scan of each day while space remains; fill the rest with the newest scans.
    This preserves yesterday/month lookups and yesterday's first scan
@@ -305,7 +312,8 @@ even when the tests still pass.
     movements uses the linked presentation defined above.
     Its source line is never optional: an unsourced capability claim is not a
     fact. A scan labels every cause: new listing, catalogue removal, price
-    movement, billing-mode addition/removal, replacement revision, notice change,
+    movement (an amount change, never a caption or a unit correction), billing-mode
+    addition/removal, price-item addition/removal, replacement revision, notice change,
     crossed milestone, official publication, access change, or announcement rate
     change — for a channel that reports no price movements, only the listing,
     notice, publication, and capability causes (invariant 24). Simultaneous causes
@@ -382,7 +390,10 @@ even when the tests still pass.
 | Add a model-introduction source | `descriptions/sources.py` and `DESCRIPTION_SOURCE_CLASSES`; routing in `descriptions/resolver.py` |
 | Change how one value reads | `reporting.py` |
 | Change whether one channel's price movements are compared | that adapter's `reports_price_movements`, then `diffing.py` and `messages.changed_blocks` |
+| Change how price lines are classified (amount, unit, line, caption) | `diffing.price_changes` and `diffing.price_change_counts`; wording in `reporting.py` |
+| Change how a mass removal is batched by notice | `messages.bulk_removal_groups`; keep notice facts in `reporting.py` |
 | Change how catalogue and notice changes are grouped by model | `changes.py`; keep labels in `reporting.py` |
+| Change a description source's request budget or catalogue reuse | `descriptions/sources.py`; status wording in `reporting.py` |
 | Change how a message is laid out | `messages.py` |
 | Change offline artifact reading or introduction-summary validation | `rendering.py`, plus `references/reporting.md` |
 | Change diagnostic privacy or private-capture rejection | `privacy.py`, plus `references/privacy.md`; never rewrite official price evidence |

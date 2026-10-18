@@ -24,7 +24,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .errors import HttpSourceError, SourceError
+from .errors import HttpSourceError, RequestBudgetExceeded, SourceError
 from .models import model_matches, normalize_model
 
 
@@ -169,7 +169,7 @@ class HttpClient:
         backoff_cap: float = 30,
         retry_after_cap: float = 30,
         min_request_interval: float = 1,
-        max_requests_per_host: int | None = 20,
+        max_requests_per_host: int | None = 60,
         opener: Callable[..., Any] | None = None,
         sleeper: Callable[[float], None] | None = None,
         uniform: Callable[[float, float], float] | None = None,
@@ -366,7 +366,7 @@ class HttpClient:
             )
         used = self._host_requests.get(host, 0)
         if self.max_requests_per_host is not None and used >= self.max_requests_per_host:
-            raise SourceError(
+            raise RequestBudgetExceeded(
                 f"request budget exceeded for {host}: "
                 f"{self.max_requests_per_host} attempts per run"
             )

@@ -433,9 +433,11 @@ OpenAI 公告直接访问官方规范地址，避免逐篇重定向。Google 公
 ## 开发
 
 ```bash
-python3 -m unittest discover -s tests    # 全量测试
+python3 -m unittest discover -s tests    # 全量测试，离线
 python3 scripts/query_model_prices.py --help
 ```
+
+CI 在 GitHub Actions 上以 Python 3.9 和 3.13 跑同一套离线测试。
 
 改动前请读 [references/source-notes.md](references/source-notes.md)（来源与解析维护要点）；
 消费 JSON 输出时读 [references/schema.md](references/schema.md)。解析按内容识别，
