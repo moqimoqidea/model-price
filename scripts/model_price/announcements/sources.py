@@ -34,6 +34,7 @@ from .parsing import (
     feed_entries,
     markdown_text,
     model_names,
+    model_update_entries,
     official_link,
     page_data,
     published_date,
@@ -56,7 +57,7 @@ QWEN_BLOG_URL = "https://qwen.ai/"
 QWEN_BLOG_API = "https://qwen.ai/api/v2/article/retrieval?type=qwen_ai&language=en-US"
 SEED_MODELS_URL = "https://seed.bytedance.com/en/blog"
 SEED_BLOG_API = "https://seed.bytedance.com/api/get_article_list_v2"
-ZHIPU_UPDATES_URL = "https://docs.z.ai/release-notes/new-released.md"
+ZHIPU_UPDATES_URL = "https://docs.z.ai/release-notes/new-released"
 # Z.ai publishes these articles without a readable blog index or blog sitemap.
 # Register verified article URLs as evidence, never their model names in a parser.
 ZHIPU_BLOG_URL = "https://z.ai/blog/glm-legal"
@@ -640,22 +641,13 @@ def _read_seed_article(client: Any, url: str) -> dict[str, Any]:
 
 
 def _read_zhipu_updates(client: Any, reference: datetime) -> list[dict[str, Any]]:
-    """Use literal subjects and dates from Z.ai's published Update blocks."""
-    text = client.get_text(ZHIPU_UPDATES_URL)
-    blocks = re.findall(r"<Update\s+([^>]+)>(.*?)</Update>", text, re.S)
-    if not blocks:
-        raise SourceError("Z.ai official update log published no readable model updates")
+    """Use card subjects; the Markdown export drops their model-name labels."""
     found = []
-    for attributes, body in blocks:
-        values = dict(re.findall(r'(\w+)="([^"]*)"', attributes))
-        name = markdown_text(values.get("description") or "")
-        when = published_date(values.get("label") or "")
-        if not name or not when:
-            raise SourceError("Z.ai official model update omitted its subject or date")
-        if _recent(when, reference):
+    for item in model_update_entries(client.get_text(ZHIPU_UPDATES_URL)):
+        if _recent(item["published_at"], reference):
             found.append(publication(
-                name, ZHIPU_UPDATES_URL, markdown_summary(body), when,
-                prose_paragraphs(body), [name], source_name="智谱 Z.ai 官方模型更新",
+                item["title"], ZHIPU_UPDATES_URL, item["summary"], item["published_at"],
+                item["paragraphs"], [item["title"]], source_name="智谱 Z.ai 官方模型更新",
             ))
     return found
 

@@ -8,6 +8,8 @@ Responsibility split:
 - ``core``         HTTP access and the ``PriceSource`` contract
 - ``documents``    shared official-document retrieval and OpenAI Docs MCP fallback
 - ``parsing``      document readers (HTML tables, Markdown tables, price headers)
+- ``literals``     data-only JavaScript literals, shared by document readers
+- ``mintlify``     page-owned MDX tables omitted by the Markdown exporter
 - ``text``         normalisation of text scraped out of vendor documents
 - ``pricing``      price and record shapes
 - ``models``       model identity, retired-name aliases, family matching

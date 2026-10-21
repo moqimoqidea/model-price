@@ -11,14 +11,16 @@ import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from html import escape
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 from ..descriptions.parsing import markdown_text, meta_tags
+from ..errors import SourceError
 from ..models import normalize_model
 from ..pricing import price_item
-from ..parsing import date_value
+from ..parsing import date_value, prose_blocks
 from ..text import clean_text
 
 RELEASE_WORDS = re.compile(
@@ -181,6 +183,87 @@ def page_data(text: str, *, exclude_navigation: bool = True) -> PageParser:
     page = PageParser(exclude_navigation=exclude_navigation)
     page.feed(text.replace("\x00", ""))
     return page
+
+
+class ModelUpdateParser(HTMLParser):
+    """Keep each rendered update's subject, date, and body inside its own card."""
+
+    PARTS = {"update-label": "date", "update-description": "title", "update-content": "body"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entries: list[dict[str, str]] = []
+        self.depth = 0
+        self._parts: dict[str, list[str]] = {}
+        self._part = ""
+        self._part_tag = ""
+        self._part_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        is_update = tag == "div" and "update-container" in (attributes.get("class") or "").split()
+        if is_update:
+            if self.depth:
+                raise SourceError("official model updates contain nested cards")
+            self._parts = {}
+            self.depth = 1
+        elif tag == "div" and self.depth:
+            self.depth += 1
+        if not self.depth:
+            return
+        part = self.PARTS.get(attributes.get("data-component-part") or "")
+        if part:
+            if self._part or part in self._parts:
+                raise SourceError("official model update repeats a labelled field")
+            self._part, self._part_tag, self._part_depth = part, tag, 1
+            self._parts[part] = []
+        elif self._part:
+            if tag == self._part_tag:
+                self._part_depth += 1
+            self._parts[self._part].append(self.get_starttag_text())
+
+    def handle_data(self, data: str) -> None:
+        if self._part:
+            self._parts[self._part].append(escape(data))
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._part:
+            if tag == self._part_tag:
+                self._part_depth -= 1
+            if self._part_depth:
+                self._parts[self._part].append(f"</{tag}>")
+            else:
+                self._part = ""
+        if tag == "div" and self.depth:
+            self.depth -= 1
+            if not self.depth:
+                self.entries.append({key: "".join(value) for key, value in self._parts.items()})
+
+
+def model_update_entries(document: str) -> list[dict[str, Any]]:
+    """Read labelled update cards in source MDX or their rendered HTML form."""
+    entries: list[dict[str, str]] = []
+    for attributes, body in re.findall(r"<Update\s+([^>]+)>(.*?)</Update>", document, re.S):
+        values = {key: value for key, _, value in re.findall(r'''(\w+)\s*=\s*(["'])(.*?)\2''', attributes)}
+        entries.append({"title": values.get("description", ""), "date": values.get("label", ""), "body": body})
+    if not entries:
+        parser = ModelUpdateParser()
+        parser.feed(document)
+        parser.close()
+        if parser.depth:
+            raise SourceError("official model update contains an incomplete card")
+        entries = parser.entries
+    if not entries:
+        raise SourceError("Z.ai official update log published no readable model updates")
+    found = []
+    for item in entries:
+        title = markdown_text(item.get("title", ""))
+        when = published_date(markdown_text(item.get("date", "")))
+        paragraphs = [plain for _, value in prose_blocks(item.get("body", "")) if (plain := markdown_text(value))]
+        if not title or not when or not paragraphs:
+            raise SourceError("Z.ai official model update omitted its subject, date, or body")
+        found.append({"title": title, "published_at": when, "summary": paragraphs[0], "paragraphs": paragraphs})
+    return found
 
 
 def official_link(base: str, value: str) -> str | None:

@@ -57,6 +57,8 @@ Standard library only, Python 3, no install step, no build step.
 │       ├── models.py            model identity: normalisation, aliases, family matching
 │       ├── pricing.py           price and record shapes, the unit vocabulary, rescaling
 │       ├── parsing.py           document readers: HTML/Markdown tables, price columns, the rates one cell publishes, time bands
+│       ├── literals.py          shared JavaScript literal decoding, without executing code
+│       ├── mintlify.py          page-owned MDX table data when Markdown export drops components
 │       ├── caching.py           CacheStore and the CachedPriceSource decorator
 │       ├── updating.py          Git fast-forward before an explicit refresh
 │       ├── snapshots.py         archived baselines, retention, and point-in-time selection
@@ -387,6 +389,7 @@ even when the tests still pass.
 | A vendor's page moved or its table changed | that vendor's `providers/*.py` constants, plus `references/source-notes.md` |
 | A unit a vendor bills in reads wrongly, or a new one appears | `pricing.UNIT_MEASURES`, then the wording in `reporting.UNIT_MEASURE_LABELS` |
 | A cell that publishes several rates reads wrongly | `parsing.cell_rates` and the rules it is built from |
+| Read page-owned MDX table data omitted by Markdown export | `mintlify.py`; shared literal-only decoding stays in `literals.py` |
 | Add a model-introduction source | `descriptions/sources.py` and `DESCRIPTION_SOURCE_CLASSES`; routing in `descriptions/resolver.py` |
 | Change how one value reads | `reporting.py` |
 | Change whether one channel's price movements are compared | that adapter's `reports_price_movements`, then `diffing.py` and `messages.changed_blocks` |

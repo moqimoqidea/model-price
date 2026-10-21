@@ -1,4 +1,4 @@
-"""Moonshot Kimi pricing, read from the Markdown documents its index lists."""
+"""Keep Kimi's literal table data when its Markdown exporter drops the rows."""
 
 from __future__ import annotations
 
@@ -7,9 +7,10 @@ from typing import Any
 
 from ..core import HttpClient, PriceSource, now_iso
 from ..errors import SourceError
+from ..mintlify import document_tables
 from ..models import model_family, normalize_model, split_trailing_parenthetical
 from ..parsing import (
-    markdown_doc_tables,
+    headed_document_tables,
     markdown_json_rows,
     monetary_amount,
     price_kind,
@@ -51,7 +52,7 @@ class KimiAdapter(PriceSource):
     provider_id = "kimi"
     provider_name = "月之暗面 Kimi"
     source_url = KIMI_INDEX_URL
-    source_kind = "official_markdown"
+    source_kind = "official_html"
 
     def __init__(self, client: HttpClient) -> None:
         super().__init__(client)
@@ -59,12 +60,16 @@ class KimiAdapter(PriceSource):
 
     def _documents(self) -> list[tuple[str, str]]:
         index = self.document(KIMI_INDEX_URL)
-        urls = KIMI_PRICING_DOC_RE.findall(index)
+        # The Markdown export renders DocTable as an empty table. Read each
+        # indexed page once in its canonical form, which retains the literal data.
+        urls = [url.removesuffix(".md") for url in KIMI_PRICING_DOC_RE.findall(index)]
         return [(url, self.document(url)) for url in dict.fromkeys(urls)]
 
     @staticmethod
-    def _tables(document: str) -> list[list[list[str]]]:
-        tables = markdown_doc_tables(document)
+    def _tables(document: str, url: str) -> list[list[list[str]]]:
+        tables = [table for _, table in headed_document_tables(document)]
+        if not tables or not any(len(table) > 1 for table in tables):
+            tables = document_tables(document, url)
         if tables:
             return tables
         rows = markdown_json_rows(document)
@@ -76,7 +81,7 @@ class KimiAdapter(PriceSource):
             return self._parsed_rows
         parsed: list[dict[str, Any]] = []
         for url, document in self._documents():
-            for table in self._tables(document):
+            for table in self._tables(document, url):
                 headers = [clean_text(header) for header in table[0]]
                 model_index = next(
                     (

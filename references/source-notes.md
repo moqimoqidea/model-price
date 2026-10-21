@@ -11,6 +11,31 @@ record says which. A cloud price without its region is a price for nowhere, and 
 scan of every region is a report nobody reads: the same model, the same charges,
 thirty-five times over.
 
+## Document export changes checked on 2026-10-21
+
+The three reported failures reproduced against fresh official responses. Kimi's
+Markdown contained empty table shells; its canonical pages retained literal MDX
+table data. Z.ai's Markdown kept dates and bullet prose but dropped the model-name
+labels on its update cards. MiniMax converted its legacy accordions and music
+notice into Markdown blockquotes. These were representation changes, not proof
+that the underlying prices or notices had disappeared.
+
+The repaired readers verified 4 Kimi catalogue models, 2 Z.ai releases inside the
+90-day window, and 11 MiniMax notice entries (8 legacy models and 3 free-music API
+shutdowns). Legacy status alone remains distinct from shutdown. The paid-music
+restriction on new users does not become an EOS event for existing users.
+Kimi reads its index and two price pages once each; Z.ai and MiniMax each read
+one document for these sources. No browser session or credentials enter runtime.
+
+Shared literal decoding lives in `literals.py`, replacing the duplicate blog and
+Mistral implementations. `mintlify.py` keeps streamed page ownership and literal
+table decoding separate from price classification. Reduced official responses and
+failure/retention regressions live in
+[`test_source_formats.py`](../tests/test_source_formats.py) and
+[`test_document_literals.py`](../tests/test_document_literals.py). Parsed-cache
+version 39 invalidates old source results; catalogue, retirement, and announcement
+baseline versions are unchanged, and validation uses temporary snapshot stores.
+
 ## Model announcements
 
 `model_price/announcements/` reads official publication evidence independently
@@ -34,7 +59,7 @@ No third-party host inherits its creator's announcement as a hosted listing.
 | Baidu Qianfan | [ERNIE blog RSS](https://ernie.baidu.com/blog/index.xml) | Official model-release subjects and full feed content. Research/Arena previews need not have Qianfan rates. An old feed cannot establish coverage of announcements absent from that feed. |
 | DeepSeek | [Official updates](https://api-docs.deepseek.com/zh-cn/updates/) | Reuse `deepseek_updates.read_updates` and its official dated model entries, shared with introductions and retirement evidence. Do not treat an upcoming benchmark framework as a closed API. |
 | Kimi | [Official research blog](https://www.kimi.ai/blog/) | Read its public Next.js `articleList.items` with literal `title/href/date`, before fetching recent same-host articles. Repeated navigation links do not own article dates, and external papers/repositories are excluded. The former `kimi.com/blog` entry is no longer the registered news index. Upcoming weights and technical reports do not close an already usable Kimi API. |
-| Zhipu | [Model overview Markdown](https://docs.bigmodel.cn/cn/guide/start/model-overview.md), [Z.ai model updates](https://docs.z.ai/release-notes/new-released.md), and the verified [GLM-Legal article](https://z.ai/blog/glm-legal) | Read all three independently. Update blocks publish their literal `description` and date-only `label`. Z.ai's `/blog` and blog sitemap/feed do not supply a readable general index, so unindexed articles require an explicitly verified URL; this is bounded coverage, not a model-name list. Its HTML article shell links a same-host module containing literal MDX JSX prose and `date/title`; read only those literals, never execute JavaScript or borrow the shared runtime's text. Dashed names such as GLM-Legal/GLM-Image need no number. A beta application is limited API-access evidence, not a BigModel listing, a free rate, or general availability. |
+| Zhipu | [Model overview Markdown](https://docs.bigmodel.cn/cn/guide/start/model-overview.md), [Z.ai model updates](https://docs.z.ai/release-notes/new-released), and the verified [GLM-Legal article](https://z.ai/blog/glm-legal) | Read all three independently. The update log's Markdown exporter drops model-name labels, so read the canonical HTML once. Each `update-container` owns its `update-description`, date-only `update-label`, and `update-content`; source MDX `Update` blocks remain readable. Body comparisons never become release subjects. Z.ai's `/blog` and blog sitemap/feed do not supply a readable general index, so unindexed articles require an explicitly verified URL; this is bounded coverage, not a model-name list. Its HTML article shell links a same-host module containing literal MDX JSX prose and `date/title`; read only those literals, never execute JavaScript or borrow the shared runtime's text. Dashed names such as GLM-Legal/GLM-Image need no number. A beta application is limited API-access evidence, not a BigModel listing, a free rate, or general availability. |
 | MiniMax | [Official news](https://www.minimax.io/news) | Official indexed model subjects and their linked first-party pages, including `/news`, `/blog`, and currently named model pages. The site's server response can expose current model navigation without a rendered news grid; undated current subjects remain first observations and do not acquire a launch date. Announced weights and API access remain different claims. |
 | Xiaomi MiMo | [Research blog](https://mimo.xiaomi.com/), [model overview](https://mimo.mi.com/docs/zh-CN/quick-start/summary/model), and [official model release log](https://mimo.mi.com/docs/en-US/updates/model) | Read all three independently. The blog homepage publishes clickable cards without anchors; its explicitly linked Rspress route and deployment manifests locate the `en/index.mdx` bundle on the declared Xiaomi CDN. Read literal `blogs` cards, including the collapsed More list, and article-scoped `frontmatter.date` where present; never run the JavaScript or invent a missing date. The gateway redirects `/index.html` through `/index` to the same directory page, so use that verified canonical path directly. An article shell can link its same-host HTML body through one iframe. Tutorials and old dated posts are excluded. A series heading does not expand into guessed IDs: separately labelled release-log bullets supply their own literal names and summaries. TTS entries without a price row are retained. Absence of prices never becomes a free rate or a claim of closed access. |
 | Kling | [video](https://klingai.com/document-api/guides/capability-map/video.md) and [image](https://klingai.com/document-api/guides/capability-map/image.md) capability maps | Read both capability maps. Its [blog](https://klingai.com/global/blog) index renders server-side, but every `/blog/<slug>` article is a client-rendered shell: no title, no visible text, and the indexed subject is absent from the HTML, so the article-body proof can never be met and the source failed on every run. The blog is no longer registered; Kling's coverage is its capability maps alone. Both named models and officially named billable capabilities keep their literal inventory entries. A body-only Flash variant owns its access statement and cannot assign a pending rollout to the main model. |
@@ -112,7 +137,7 @@ source keeps its last successful notice archive.
 | Azure Foundry | [Model retirements](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/model-retirements) | A table of the literal model name, the version pinning a deployment, and the day its deployments stop. Only dates the vendor states are read: a training date published as a floor ("No earlier than 2027-04-01") is not a day anything happens, so it is not recorded as a milestone. |
 | Kling | [Public documentation index](https://klingai.com/document-api/llms.txt) and [API update log](https://klingai.com/document-api/updates/api.md), checked 2026-10-10 | No public per-model retirement timetable was found in these sources. The log dates effect-template withdrawals and explicitly states that the older API continues without a shutdown plan; neither retires the models named in an upgrade. Console notices require sign-in and third-party reports cannot establish Kling's dates. Retain `no_public_schedule`; the public documentation itself is reachable. |
 | AWS Bedrock | [Model lifecycle (Legacy), official Markdown](https://docs.aws.amazon.com/bedrock/latest/userguide/model-lifecycle-legacy.md) and [current lifecycle policy](https://docs.aws.amazon.com/bedrock/latest/userguide/model-lifecycle.md) | The Legacy document covers models launched before 2026-09-07. Read its scheduled-EOL table and historical labelled Markdown lists, including repeated regional groups. Keep the literal namespaced `Model ID` (including `:0`/`:1`), the stated Regions, and the exception for private extended-access agreements together in `scope`. `Legacy date` is EOM for new adoption, not the announcement date; `EOL date` is EOS, and the historical section explicitly confirms retirement. Public extended access is continued service, not automatic migration or an independently quoted price. Newer models publish their dates on model cards and are outside this central-table reader's coverage; minimum-availability dates and creator-platform notices do not substitute for a Bedrock shutdown. A network or parsing failure is `source_error`, never `no_public_schedule`. |
-| MiniMax | [Official model overview](https://platform.minimax.io/docs/guides/models-intro.md) | `Legacy Models` accordions identify old versions but provide no shutdown date and do not prove service cessation. A separate music notice explicitly discontinues three free music API IDs on 2026-08-20; the paid API restriction applies only to new users and does not retire those models. |
+| MiniMax | [Official model overview](https://platform.minimax.io/docs/guides/models-intro.md) | `Legacy Models` sections identify old versions but provide no shutdown date and do not prove service cessation. Both source MDX `Accordion`/`Note` blocks and the exported quoted tables/`[!NOTE]` blocks retain their own scope. A separate music notice explicitly discontinues three free music API IDs on 2026-08-20; the paid API restriction applies only to new users and does not retire those models. A missing date or unreadable legacy table fails the notice read even when another block remains readable. |
 
 Run `python3 scripts/audit_model_retirements.py` to read registered vendor-specific
 sources fresh and print exact model IDs, milestones, status-only claims, source
@@ -346,7 +371,23 @@ than its API. This is runtime report metadata, not part of snapshot identity.
   retirement audit, and the introductions on one source instead of three. For a
   provider with no official stamp at all, the message uses the previous successful
   snapshot time and labels it 上次更新时间.
-- Kimi: `https://platform.kimi.com/docs/llms.txt` indexes the chat pricing document as `pricing/chat.md`; dated variants such as `chat-k3.md` have also been served, so the whole `chat*` family is matched. The Markdown embeds JSX `DocTable` blocks whose columns are declarations and whose rows are JSON arrays. Prices are mapped by those column titles because K3 inserted two cache-write TTL columns ahead of cache-hit input; assigning by the old positions would turn `20 / 40 / 2` into a false cache/input/output move. Headerless legacy captures still use the former `[model, unit, cache hit, cache miss, output, context]` shape. The sibling documents (`batch`, `tools`, `limits`) are not per-model token tables and must stay out of the catalogue.
+- Kimi: `https://platform.kimi.com/docs/llms.txt` indexes `pricing/chat.md`
+  and `pricing/batch.md`; dated variants such as `chat-k3.md` have also been served,
+  so both families are matched. Read each indexed page once at its canonical URL
+  without `.md`: the 2026-10-21 Markdown export contains empty `DocTable` shells.
+  The page's own streamed data still declares its MDX source and literal table
+  properties. Resolve only the `mdxSource` whose page metadata names the requested
+  path; decode its referenced UTF-8 byte-counted text record, never JavaScript.
+  Ignore resource hints, unrelated records, navigation, and quoted code examples.
+  Incomplete records, dynamic rates, missing table fields, and ambiguous page
+  ownership are source errors, never partial catalogue successes. Source MDX and
+  rendered tables remain readable. Prices map by column title because K3 inserted
+  two cache-write TTL columns ahead of cache-hit input; positional reads would turn
+  `20 / 40 / 2` into a false cache/input/output move. Headerless legacy captures
+  retain the former `[model, unit, cache hit, cache miss, output, context]` shape.
+  Batch rows keep their explicitly published rates as a separate service tier;
+  the prose discount does not generate prices. Tool/account documents stay out of
+  the catalogue.
 - Zhipu BigModel: `https://docs.bigmodel.cn/cn/guide/start/pricing.md`. The anonymous
   config API that used to be read only publishes the five promoted flagship cards,
   while this page carries the whole catalogue, so the Markdown is both simpler and

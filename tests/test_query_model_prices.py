@@ -2116,8 +2116,8 @@ class KimiAdapterTests(unittest.TestCase):
             MappingClient(
                 {
                     KIMI_INDEX_URL: KIMI_INDEX,
-                    "https://platform.kimi.com/docs/pricing/chat.md": document,
-                    "https://platform.kimi.com/docs/pricing/batch.md": batch,
+                    "https://platform.kimi.com/docs/pricing/chat": document,
+                    "https://platform.kimi.com/docs/pricing/batch": batch,
                 }
             )
         )
@@ -4883,8 +4883,8 @@ Finetuning
             MappingClient(
                 {
                     KIMI_INDEX_URL: KIMI_INDEX,
-                    "https://platform.kimi.com/docs/pricing/chat.md": KIMI_CHAT,
-                    "https://platform.kimi.com/docs/pricing/batch.md": KIMI_BATCH,
+                    "https://platform.kimi.com/docs/pricing/chat": KIMI_CHAT,
+                    "https://platform.kimi.com/docs/pricing/batch": KIMI_BATCH,
                 }
             )
         )

@@ -11,7 +11,7 @@ import json
 import re
 from datetime import datetime
 from html.parser import HTMLParser
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
 
@@ -29,7 +29,9 @@ from .parsing import (
     NUMERIC_DATE_RE,
     date_value,
     headed_document_tables,
+    markdown_link_text,
     markdown_tables,
+    prose_blocks,
 )
 from .text import clean_text, clean_zero_width_text
 
@@ -914,25 +916,49 @@ def zhipu_events(pages: dict[str, str]) -> list[LifecycleEvent]:
     return list(found.values())
 
 
+def _minimax_notice_blocks(document: str) -> Iterator[tuple[str, str]]:
+    """An exported quote owns the same scope as its original MDX container."""
+    for match in re.finditer(r"<(Accordion|Note)\b([^>]*)>(.*?)</\1>", document, re.I | re.S):
+        title = re.search(r'''\btitle\s*=\s*(["'])(.*?)\1''', match[2])
+        yield clean_text(title[2]) if title else "", match[3]
+    lines: list[str] = []
+    fence = ""
+    for line in [*document.splitlines(), ""]:
+        marker = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if marker:
+            fence = "" if fence == marker[1][0] else marker[1][0]
+        quote = re.match(r"^\s*> ?(.*)$", line) if not fence and not marker else None
+        if quote:
+            lines.append(quote[1])
+        elif lines:
+            yield clean_text(lines[0]), "\n".join(lines)
+            lines = []
+
+
 def minimax_events(document: str) -> list[LifecycleEvent]:
-    """Legacy tables are status evidence; only explicit API shutdown has a date."""
+    """Legacy stays distinct from shutdown in both MDX and exported Markdown."""
     found: list[LifecycleEvent] = []
-    legacy = False
-    for line in document.splitlines():
-        if '<Accordion title="Legacy Models">' in line:
-            legacy = True
-        elif "</Accordion>" in line:
-            legacy = False
-        elif legacy and line.lstrip().startswith("|"):
-            match = re.search(r"\[([^]]+)\]\([^)]+\)", line.split("|", 2)[1])
-            if match:
-                found.append(
-                    event(
-                        match[1], SOURCES["minimax"], notice_status="legacy",
-                        scope="MiniMax API",
-                    )
+    for title, body in _minimax_notice_blocks(document):
+        if title.lower() == "legacy models":
+            legacy: list[LifecycleEvent] = []
+            for _, table in markdown_tables(body):
+                column = next(
+                    (index for index, header in enumerate(table[0])
+                     if clean_text(header).lower() in ("model", "models")),
+                    None,
                 )
-    for note in re.findall(r"<Note\b[^>]*>(.*?)</Note>", document, re.I | re.S):
+                if column is None:
+                    continue
+                for row in table[1:]:
+                    if len(row) > column and (name := markdown_link_text(row[column])):
+                        legacy.append(event(
+                            name, SOURCES["minimax"],
+                            notice_status="legacy", scope="MiniMax API",
+                        ))
+            if not legacy:
+                raise SourceError("MiniMax legacy section published no readable model table")
+            found.extend(legacy)
+        note = clean_text(" ".join(value for _, value in prose_blocks(body)))
         if "free music generation apis" not in note.lower():
             continue
         music = re.search(
@@ -942,7 +968,8 @@ def minimax_events(document: str) -> list[LifecycleEvent]:
             re.I | re.S,
         )
         eos = date_value(note)
-        if not music or not eos:
+        names = model_ids(music["ids"]) if music else []
+        if not names or not eos:
             raise SourceError("MiniMax free music shutdown notice changed shape")
         found.extend(
             event(
@@ -950,7 +977,7 @@ def minimax_events(document: str) -> list[LifecycleEvent]:
                 end_behavior="unavailable", notice_status="scheduled",
                 scope="MiniMax free music API",
             )
-            for name in model_ids(music["ids"])
+            for name in names
         )
     return found
 

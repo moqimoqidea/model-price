@@ -7,13 +7,13 @@ all consumers share that capture instead of fetching one detail page per model.
 
 from __future__ import annotations
 
-import json
 import re
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 from .errors import SourceError
+from .literals import literal_at
 from .models import normalize_model
 from .parsing import headed_document_tables
 from .privacy import safe_diagnostic
@@ -34,57 +34,12 @@ PRICING_BUNDLE_PATH = re.compile(
 )
 STRING_LITERAL = r'"(?:\\.|[^"\\])*"'
 MODEL_START = re.compile(r"\{\s*name\s*:\s*(" + STRING_LITERAL + r"),\s*describe\s*:")
-LITERAL_TOKEN = re.compile(
-    STRING_LITERAL + r"|void\s+0|![01]|[{}\[\]:,]|"
-    r"-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|[A-Za-z_$][\w$]*"
-)
 PROPERTY_TOKEN = re.compile(STRING_LITERAL + r"|[{}\[\]()]|[A-Za-z_$][\w$]*")
 MODEL_FIELDS = (
     "slug", "releaseDate", "status", "tags",
     "contextLength", "outputTokenLimit", "identifiers", "capabilities", "metadata",
 )
 IDENTITY_FIELDS = frozenset({"slug", "status", "identifiers", "tags"})
-
-
-def literal_at(text: str, position: int = 0) -> Any:
-    """Decode the data-only subset of bundle literals, refusing executable values."""
-    tokens: list[str] = []
-    depth = 0
-    while position < len(text):
-        while position < len(text) and text[position].isspace():
-            position += 1
-        match = LITERAL_TOKEN.match(text, position)
-        if not match:
-            raise SourceError("Mistral documentation contains an unsupported data literal")
-        token = match.group()
-        position = match.end()
-        if token.startswith('"'):
-            # Minifiers use JavaScript's hex escapes in otherwise JSON strings.
-            token = re.sub(r"\\x([0-9a-fA-F]{2})", r"\\u00\1", token)
-        elif token in ("!0", "!1"):
-            token = "true" if token == "!0" else "false"
-        elif token.startswith("void"):
-            token = "null"
-        elif token not in ("null", "true", "false") and re.match(r"[A-Za-z_$]", token):
-            following = text[position:].lstrip()
-            if not following.startswith(":"):
-                raise SourceError("Mistral documentation data is not a literal")
-            token = json.dumps(token)
-        elif token.startswith("."):
-            token = "0" + token
-        elif token.startswith("-."):
-            token = "-0" + token[1:]
-        tokens.append(token)
-        if token in ("{", "["):
-            depth += 1
-        elif token in ("}", "]"):
-            depth -= 1
-        if depth == 0:
-            break
-    try:
-        return json.loads("".join(tokens), parse_float=str)
-    except (ValueError, TypeError) as exc:
-        raise SourceError("Mistral documentation data could not be decoded") from exc
 
 
 def model_entries(bundle: str) -> list[dict[str, Any]]:

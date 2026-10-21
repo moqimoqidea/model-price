@@ -9,94 +9,21 @@ Compiled blog cards and their route metadata retain the same literal-only rule.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 from ..errors import SourceError
+from ..literals import (
+    STRING_LITERAL,
+    code_matches as _code_matches,
+    string_value as _literal,
+    value_end as _value_end,
+)
 from ..text import clean_text
 from .parsing import article_details, official_link, page_data, published_date
 
-STRING_LITERAL = re.compile(r"`(?:\\[\s\S]|[^`\\])*`|\"(?:\\[\s\S]|[^\"\\])*\"|'(?:\\[\s\S]|[^'\\])*'")
 CHILD_PROPERTY = re.compile(r"\bchildren\s*:\s*")
 DATE_PROPERTY = re.compile(r"\bdate\s*:\s*")
-ESCAPES = {"b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
-
-
-def _literal(value: str) -> str:
-    if value.startswith("`"):
-        for match in re.finditer(r"\$\{", value):
-            prefix = value[:match.start()]
-            if (len(prefix) - len(prefix.rstrip("\\"))) % 2 == 0:
-                raise SourceError("official article contains dynamic template content")
-
-    def unescape(match: re.Match[str]) -> str:
-        token = match[1]
-        if token.startswith(("u", "x")):
-            return chr(int(token[1:].strip("{}"), 16))
-        if token in ("\n", "\r\n"):
-            return ""
-        return ESCAPES.get(token, token)
-
-    return re.sub(
-        r"\\(u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|\r?\n|.)",
-        unescape,
-        value[1:-1],
-    )
-
-
-def _code_matches(text: str, pattern: re.Pattern[str]) -> Iterator[re.Match[str]]:
-    """Only code tokens count; quoted examples and comments stay inert."""
-    position = 0
-    while position < len(text):
-        literal = STRING_LITERAL.match(text, position)
-        if literal:
-            position = literal.end()
-            continue
-        if text.startswith("//", position):
-            end = text.find("\n", position + 2)
-            position = len(text) if end < 0 else end + 1
-            continue
-        if text.startswith("/*", position):
-            end = text.find("*/", position + 2)
-            if end < 0:
-                raise SourceError("official article contains an unterminated comment")
-            position = end + 2
-            continue
-        match = pattern.match(text, position)
-        if match:
-            yield match
-            position = match.end()
-        else:
-            position += 1
-
-
-def _value_end(text: str, start: int) -> int:
-    """Balance a literal expression while keeping braces inside strings inert."""
-    stack: list[str] = []
-    pairs = {"(": ")", "[": "]", "{": "}"}
-    position = start
-    while position < len(text):
-        character = text[position]
-        if character in "\"'`":
-            literal = STRING_LITERAL.match(text, position)
-            if not literal:
-                raise SourceError("official article contains an unterminated string")
-            position = literal.end()
-            continue
-        if character in pairs:
-            stack.append(pairs[character])
-        elif character in ")]}":
-            if not stack:
-                return position
-            if stack.pop() != character:
-                raise SourceError("official article contains unbalanced JSX content")
-        elif character == "," and not stack:
-            return position
-        position += 1
-    if stack:
-        raise SourceError("official article contains incomplete JSX content")
-    return position
 
 
 def _children(expression: str) -> str:
