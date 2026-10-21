@@ -290,6 +290,21 @@ than its API. This is runtime report metadata, not part of snapshot identity.
   complete per-model capabilities, and conflicts before atomic replacement; legacy
   card captures and schema-1 mirrors remain readable. Full console evidence is kept
   under `console_metadata`, separately from live catalogue prices.
+  The 2026-10-21 refresh collected all 120 current IDs through the same author
+  filters and checked every literal ID's rendered detail page. Each introduction
+  matched its fresh catalogue description. Six IDs were added and four former
+  IDs were absent; absence alone does not assert retirement. Current readable
+  capabilities, modalities, and protocols come from these dated `detail_page`
+  checks, alongside fresh catalogue specifications, official dates, status, API
+  references, and billing evidence. Earlier raw capability responses retain their
+  own `capabilities_captured_at`; only the Step 5 Preview response was recaptured
+  as raw API data in this refresh. The 62 earlier raw generation configurations
+  across 31 models retain their 2026-10-08 date. Fresh `generation_options` record
+  the selected-mode controls for 7 image, 20 video, and 2 world models. These
+  controls do not establish unvisited mode/resolution combinations. Capture
+  credentials and account-specific UI sections remain excluded. Parsed-cache
+  version 38 invalidates introductions from before this refresh; baseline and
+  mirror compatibility versions are unchanged.
 - Baidu Qianfan: the pricing page is a Gatsby document. Its own HTML is the whole
   portal, and the Markdown behind its "查看 MD" button is assembled in the browser
   (it opens as a `blob:` URL) rather than published as a file — so the article body

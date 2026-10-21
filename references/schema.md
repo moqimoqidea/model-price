@@ -86,8 +86,10 @@ Tencent descriptions may additionally contain `console_metadata`:
   also expose context/input/output token limits, catalogue TPM/RPM, concurrency,
   input constraints, modalities, and supported protocols
 - `capabilities[]`: original `CapabilityName`, `DisplayName`, `Description`, and
-  `CapabilityValue`; explicit false values stay here, while only supported
-  capabilities enter the description's positive capability list
+  `CapabilityValue`; explicit false values stay here. Optional
+  `capabilities_captured_at` dates this API evidence independently when a later
+  refresh verifies the visible detail page instead. It does not make the older
+  API values current
 - `api_info`: official API documentation references
 - `charging_info[]`: original console billing evidence, retaining its own units
   and variants; this is captured evidence, never a replacement for current
@@ -97,7 +99,18 @@ Tencent descriptions may additionally contain `console_metadata`:
   fields include `PromptMaxLength`, `ResolutionList`, `ResolutionSpecList`,
   `SupportInputImageNum`, `SupportOutputImageNum`, and `GenTypeList` with video
   duration/resolution options. Absence means no configuration was captured for
-  that ID, not that a parameter is unsupported
+  that ID, not that a parameter is unsupported. Optional
+  `generation_configs_captured_at` preserves the capture date when these raw
+  configurations are retained during a later refresh
+- `detail_page`: the independently dated visible-page check, with supported
+  capability labels, input/output `modalities`, named `limits`, and `protocols`.
+  When present, this check supplies the readable capability, modality, and
+  protocol fields; a capability absent from the page is not an explicit false
+- `generation_options`: an independently dated experience-page check, with its
+  source URL, model name, prompt limit, and `fields[]` containing each control's
+  key, label, selected value, and options. Options apply to the recorded selected
+  generation mode and other selected values, not every combination of modes,
+  resolutions, ratios, and durations
 
 Readable `specifications.discontinued_at` and `offline_at` preserve separately
 published EOM and EOS timestamps. `discontinued` alone remains legacy; only an
