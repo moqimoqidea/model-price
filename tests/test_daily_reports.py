@@ -23,7 +23,7 @@ from model_price.delta import scan_providers
 from model_price.descriptions.resolver import DescriptionResolver
 from model_price.descriptions.sources import OpenRouterDescriptionSource
 from model_price.lifecycle_sources import event
-from model_price.messages import scan_message
+from model_price.messages import scan_message, scan_notes
 from model_price.reporting import model_title
 from model_price.providers.openrouter import OpenRouterAdapter
 from model_price.snapshots import SnapshotStore
@@ -48,12 +48,14 @@ def daily_payload() -> dict:
 
 
 class OfflineReportTests(unittest.TestCase):
-    def render(self, payload: dict, introductions: object | None = None) -> str:
+    def render(self, payload: dict, introductions: object | None = None, *, notes: bool = False) -> str:
         with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
             root = Path(directory)
             source = root / "scan.json"
             source.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             arguments = ["tool", "render", str(source), "--max-chars", "100000"]
+            if notes:
+                arguments.append("--notes")
             if introductions is not None:
                 summaries = root / "introductions.json"
                 summaries.write_text(json.dumps(introductions, ensure_ascii=False), encoding="utf-8")
@@ -163,12 +165,27 @@ class OfflineReportTests(unittest.TestCase):
         text = self.render(payload, [{"provider": "aggregator", "model_id": "m1", "summary": "文本推理。"}])
         self.assertEqual(text.count("m1、m2"), 2)
         self.assertIn("【价格调整】【替代模型更新】m1", text)
-        for value in ("old-successor → new-successor", "https://aggregator.example/notices",
-                      "HTTP 403 publication", "模型发布来源：读取失败"):
+        for value in ("old-successor → new-successor", "https://aggregator.example/notices"):
             self.assertIn(value, text)
+        notes = scan_notes(payload)
+        for value in ("HTTP 403 publication", "模型发布来源：读取失败"):
+            self.assertIn(value, notes)
+            self.assertNotIn(value, text)
         self.assertNotIn("0.8125", text)
         self.assertNotIn("0.9375", text)
         self.assertNotIn("无变化：aggregator", text)
+
+    def test_offline_render_prints_only_the_delivery_note_on_request(self) -> None:
+        payload = daily_payload()
+        payload["providers"].append({
+            "provider": {"id": "bad", "name": "坏渠道"},
+            "status": "source_error",
+            "error": "offline",
+        })
+        text = self.render(payload, notes=True)
+        self.assertIn("坏渠道：来源解析失败；offline。", text)
+        self.assertNotIn("【渠道结论】", text)
+        self.assertNotIn("【模型能力】", text)
 
     def test_nine_long_openrouter_introductions_shorten_without_reintroducing_rates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

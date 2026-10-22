@@ -28,7 +28,7 @@ from model_price.lifecycle_sources import (
     bedrock_events,
     read_events,
 )
-from model_price.messages import scan_message
+from model_price.messages import scan_message, scan_notes
 from model_price.reporting import lifecycle_schedule_text
 from model_price.snapshots import SnapshotStore, parse_baseline_selection, require_moment
 
@@ -293,7 +293,7 @@ class RetirementIndependenceTests(unittest.TestCase):
         self.assertEqual(report["lifecycle"]["status"], "baseline_created")
         self.assertIn("qwen-turbo", report["lifecycle"]["retired_model_ids"])
 
-    def test_a_withdrawn_image_only_list_is_stated_in_the_channel_conclusion(self) -> None:
+    def test_a_withdrawn_image_only_list_is_stated_in_the_delivery_note(self) -> None:
         def fail() -> list[dict[str, Any]]:
             raise SourceError("price API unavailable")
 
@@ -315,9 +315,10 @@ class RetirementIndependenceTests(unittest.TestCase):
         self.assertEqual(lifecycle["status"], "baseline_created")
         self.assertEqual(lifecycle["image_only_dates"], ["2026-01-30"])
         self.assertIn("qwen-turbo", lifecycle["retired_model_ids"])
+        self.assertNotIn("部分批次仅图片公告", scan_message(payload))
         self.assertIn(
             "阿里云百炼 退役公告：部分批次仅图片公告、无可读模型名单（2026-01-30）；其余批次已读取。",
-            scan_message(payload),
+            scan_notes(payload),
         )
 
     def test_failed_and_empty_sources_preserve_successful_notice_history(self) -> None:

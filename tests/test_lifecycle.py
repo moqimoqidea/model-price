@@ -38,7 +38,7 @@ from model_price.lifecycle_sources import (
     zhipu_events,
 )
 from model_price.errors import SourceError
-from model_price.messages import scan_message
+from model_price.messages import scan_message, scan_notes
 from model_price.snapshots import (
     SnapshotStore,
     parse_baseline_selection,
@@ -579,8 +579,9 @@ class LifecycleScanTests(unittest.TestCase):
         self.assertEqual(report["lifecycle"]["status"], "changed")
         message = scan_message(result)
         self.assertIn("【退役日期更新】o1", message)
-        self.assertIn("pricing unavailable", message)
         self.assertIn("2026-10-01 → 2026-10-03", message)
+        self.assertNotIn("pricing unavailable", message)
+        self.assertIn("pricing unavailable", scan_notes(result))
 
     def test_due_shutdown_marks_even_a_still_priced_model_delisted(self):
         class PriceAdapter:

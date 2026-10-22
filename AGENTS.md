@@ -326,10 +326,12 @@ even when the tests still pass.
     quoted evidence, with complete original scope, never current catalogue offers.
     The message omits an `active` lifecycle; catalogue listing is not proof of
     public access, and preview, legacy, retired, and unknown remain visible.
-17. **Statuses are reported, never softened.** `source_error`, `not_found`, and
-    `empty_scan` reach the scan reader. `update_skipped` and `check_failed` remain
-    in JSON while the scan message omits the Skill update check. A provider that
-    held still is still named, because that shows the scan covered it.
+17. **Statuses are reported, never softened.** A provider that held still is still
+    named, because that shows the scan covered it. A provider without a usable
+    comparison is counted in the message ("N 个本次未纳入") and is never silently
+    dropped: `channel_notes` renders its name, its reason, and every coverage gap
+    for the delivery note (`render --notes`). `update_skipped` and `check_failed`
+    remain in JSON while the scan message omits the Skill update check.
 18. **No credentials, ever.** The only authenticated path is refreshing the
     explicit Tencent mirror through a user-owned logged-in session, offline.
 19. **An official update time needs official evidence.** A vendor-labelled date or

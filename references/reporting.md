@@ -79,12 +79,17 @@ remain available for named-model queries and archival use.
 
 ### Channel conclusions
 
-Keep channel/model totals, all channel outcomes and change counts, and actual
-baseline timestamps. Group unchanged channel names, but name every channel.
-Distinguish price catalogue, retirement notices, and publication reads; a failed
-independent read is a partial failure. Notice-only or publication-only changes
-still count as changes. Preserve source_error, empty_scan, baseline_created,
-baseline_not_found, and reasons; never label incomplete coverage “all unchanged”.
+Keep channel/model totals, change counts, and the names of every channel that was
+compared. Group unchanged channel names, but name every compared channel. A channel
+without a usable comparison is counted in the summary line as "N 个本次未纳入" and
+is not named: its reason, a failed independent read, a coverage gap, and its own
+baseline belong to the delivery note, which `render --notes` prints from the same
+saved payload. Never label incomplete coverage "all unchanged".
+
+The message states one baseline fact, "对比基线：<时间>"; when channels compared
+against different moments, it states the range instead. Per-channel baselines and
+missing-history statuses stay in the delivery note. Notice-only or publication-only
+changes still count as changes.
 
 ## Summarize before delivery
 
@@ -100,10 +105,15 @@ facts. The host agent performs semantic summarization. Keep:
 
 - Every selected model ID, change cause, exceptional lifecycle/access fact,
   milestone qualifier, replacement, and official source URL.
-- Every amount the selected message displays, including before/after values,
-  currency, billing unit, scope, time/context/region conditions, and price terms.
+- The amounts the final message displays, including before/after values, currency,
+  billing unit, scope, time/context/region conditions, and price terms. When space
+  is short, keep the main price — the standard tier plus the tiers the change
+  touches — and merge equal-change tiers into one, naming the rest as "其余 N 档见
+  目录". A displayed amount is never truncated, and a dropped tier must not be the
+  one that carries the change.
 - Linked price batches in their original form, with all IDs and counts.
-- Every channel state, failure reason, coverage gap, and actual baseline context.
+- Every compared channel's state and change count. Excluded channels stay counted
+  in the body and are explained in the delivery note.
 
 Full introductions, capabilities, specifications, and prices remain in saved
 JSON. Summarizing prose does not authorize weakening a fact, importing another

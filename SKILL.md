@@ -42,7 +42,13 @@ python3 scripts/query_model_prices.py delta --format message --save-payload RUN/
 # Render that same run; no network, self-update, cache or baseline writes.
 python3 scripts/query_model_prices.py render RUN/scan.json
 python3 scripts/query_model_prices.py render RUN/scan.json --introductions RUN/introductions.json
+python3 scripts/query_model_prices.py render RUN/scan.json --notes
 ```
+
+`--notes` prints the delivery note instead of the message: the channels the
+message counted but did not name, their reasons, source coverage gaps, and
+per-channel baselines. It is the same saved evidence, so nothing has to be
+re-derived for the note.
 
 Use `--format message` for a person or any IM delivery, and `--format json`
 for machine consumption. `delta` defaults to message; named-model queries

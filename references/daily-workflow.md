@@ -40,8 +40,9 @@ python3 scripts/query_model_prices.py delta --require-current \
 
 Replace RUN_ID with a unique execution ID and retain stdout as the raw message.
 Do not replace the user's first baseline with yesterday's last baseline. Keep
-per-channel actual times and missing-history statuses. A failed or empty read
-preserves its prior history; continue the report with that failure visible.
+per-channel actual times and missing-history statuses in the payload. A failed or
+empty read preserves its prior history; the message counts the channels it could
+not compare, and the delivery note names them (§3).
 
 The payload is the evidence for this report. Never rerun delta to obtain JSON,
 another format, a shorter message, or a repaired version of today's report.
@@ -54,13 +55,25 @@ Their installation paths, contact identities, and receipts follow
 ## 3. Prepare and check the final message
 
 Follow [reporting.md](reporting.md): short Chinese introductions, grouped identical
-absence templates, full protected facts, existing price batches, and all channel
-outcomes. Summarize directly instead of asking whether to compress more. Use
-offline introduction overrides to avoid manually rewriting prices or states.
+absence templates, protected facts, existing price batches, the main prices the
+change touches, and the counted exclusions. Summarize directly instead of asking
+whether to compress more. Use offline introduction overrides to avoid manually
+rewriting prices or states.
+
+Render the delivery note from the same artifact:
+
+```bash
+python3 scripts/query_model_prices.py render RUN/scan.json --notes
+```
+
+It names the channels the message only counted, gives their reasons and coverage
+gaps, and lists per-channel baselines when they differ. The delivery note keeps
+four things: missing baselines, excluded channels, the final character count, and
+the trade-offs a summary made. It never enters the message body.
 
 Compare the final text with the saved run: every changed ID and simultaneous
-cause, displayed amount and condition, official source, independent failure, and
-baseline must survive. Count the final text after all edits. Do not forward an
+cause, every displayed amount and condition, official source, and the baseline
+fact must survive. Count the final text after all edits. Do not forward an
 overage instruction as though it were a finished report. Resolve an unavoidable
 length conflict without silently dropping facts. Read only the selected transport
 contract; DingTalk delivery uses [../im/dingtalk.md](../im/dingtalk.md).

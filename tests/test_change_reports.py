@@ -18,7 +18,7 @@ from model_price.diffing import compare_snapshots
 from model_price.descriptions.core import DescriptionSource, description_record
 from model_price.descriptions.resolver import DescriptionResolver
 from model_price.lifecycle_sources import event
-from model_price.messages import comparison_message, scan_message
+from model_price.messages import comparison_message, scan_message, scan_notes
 from model_price.pricing import make_record, price_item
 from model_price.registry import query_adapters
 from model_price.snapshots import SnapshotStore
@@ -372,8 +372,9 @@ class ChangeClassificationTests(unittest.TestCase):
         payload = scanned_pair([model_record("m1")], [model_record("m1")])
         payload["providers"][0]["lifecycle"] = {"status": "source_error", "error": "notice unavailable"}
         message = scan_message(payload)
-        self.assertIn("0 个无变化，1 个未能完成", message)
-        self.assertIn("notice unavailable", message)
+        self.assertIn("0 个无变化，1 个本次未纳入", message)
+        self.assertNotIn("notice unavailable", message)
+        self.assertIn("notice unavailable", scan_notes(payload))
         self.assertNotIn("无变化：aggregator", message)
 
     def test_same_model_on_two_channels_keeps_two_local_introductions_in_queries(self) -> None:

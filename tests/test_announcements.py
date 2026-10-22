@@ -57,11 +57,11 @@ from model_price.delta import scan_providers
 from model_price.descriptions.core import DescriptionSource
 from model_price.descriptions.resolver import DescriptionResolver
 from model_price.errors import SourceError
-from model_price.messages import scan_message
+from model_price.messages import scan_message, scan_notes
 from model_price.paths import ANNOUNCEMENT_SCHEMA_VERSION
 from model_price.pricing import make_record, price_item
 from model_price.providers import ALL_PROVIDERS
-from model_price.reporting import channel_status
+from model_price.reporting import announcement_price_text, channel_status
 from model_price.snapshots import SnapshotStore, parse_baseline_selection
 
 ARGON_URL = f"{GOOGLE_BLOG_URL}gemini-4-argon/"
@@ -1199,7 +1199,8 @@ class AnnouncementScanTests(unittest.TestCase):
         self.assertEqual(
             self.store.read("google")["captured_at"], "2026-10-02T12:00:00+08:00"
         )
-        self.assertIn("模型发布来源：读取失败", scan_message(payload))
+        self.assertNotIn("模型发布来源：读取失败", scan_message(payload))
+        self.assertIn("模型发布来源：读取失败", scan_notes(payload))
         self.assertEqual(payload["summary"]["announcement_source_errors"], 1)
 
     def test_price_failure_does_not_suppress_readable_announcement_or_assume_listing(
@@ -1332,6 +1333,30 @@ class AnnouncementScanTests(unittest.TestCase):
         self.assertIn("限定对象开放", message)
         self.assertIn("开发者：尚待开放", message)
         self.assertIn("输入 0.125 美元/百万 tokens → 3 美元/百万 tokens", message)
+
+
+class AnnouncementPriceLabelTests(unittest.TestCase):
+    """Announcement rates are history and must never read as today's bill."""
+
+    def test_the_label_states_its_terms_and_scope(self) -> None:
+        text = announcement_price_text({
+            "announced_offers": [{
+                "name": "首发期",
+                "conditions": {"published_terms": []},
+                "prices": [{"label": "输入", "amount": "2", "unit": "美元/百万 tokens"}],
+            }],
+        })
+        self.assertTrue(text.startswith(
+            "公告报价（保留公布时条款；不代表当前可调用或当前账单）："
+        ))
+        self.assertIn("输入", text)
+        self.assertIn("2", text)
+
+    def test_a_listed_model_without_announced_rates_points_at_the_catalogue(self) -> None:
+        self.assertEqual(
+            announcement_price_text({"catalog_status": "listed"}),
+            "公告未给出独立报价；本渠道目录价格按价格监控结果展示",
+        )
 
 
 if __name__ == "__main__":

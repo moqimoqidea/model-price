@@ -683,7 +683,7 @@ def announcement_price_text(item: dict[str, Any]) -> str:
     """Quote release rates as announcement evidence, never as today's API bill."""
     offers = item.get("announced_offers") or []
     if offers:
-        state = "公告报价（保留公布时的适用条款；不代表当前可调用或当前账单）"
+        state = "公告报价（保留公布时条款；不代表当前可调用或当前账单）"
         parts = [
             f"公告条款 {index}："
             + "；".join(
@@ -1011,24 +1011,14 @@ def scan_conclusion(payload: dict[str, Any]) -> list[str]:
     ]
     if summary.get("lifecycle_changes"):
         counts.append(f"退役公告及时间节点变化 {summary['lifecycle_changes']} 项")
-    if summary.get("lifecycle_source_errors"):
-        counts.append(f"退役公告读取失败 {summary['lifecycle_source_errors']} 个")
     if summary.get("announcement_changes"):
         counts.append(f"模型公布及开放变化 {summary['announcement_changes']} 项")
-    if summary.get("announcement_observations"):
-        counts.append(
-            f"官方模型首次收录 {summary['announcement_observations']} 项（缺少所选公告历史基线）"
-        )
-    if summary.get("announcement_source_errors"):
-        counts.append(
-            f"模型发布来源读取失败 {summary['announcement_source_errors']} 个"
-        )
-    if statuses.count(BASELINE_CREATED):
-        counts.append(f"{statuses.count(BASELINE_CREATED)} 个首次建立基线")
-    if statuses.count(BASELINE_NOT_FOUND):
-        counts.append(f"{statuses.count(BASELINE_NOT_FOUND)} 个未找到匹配基线")
-    failed = statuses.count(EMPTY_SCAN) + statuses.count(SOURCE_ERROR)
-    counts.append(f"{failed} 个未能完成")
+    # Channels without a usable comparison are counted, never named: their
+    # reasons and coverage caveats belong to the delivery note, not the message.
+    excluded = sum(
+        1 for status in statuses if status not in (CHANGED, UNCHANGED)
+    )
+    counts.append(f"{excluded} 个本次未纳入")
     return [f"{scope}：{'，'.join(counts)}。"]
 
 

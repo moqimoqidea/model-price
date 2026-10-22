@@ -146,7 +146,10 @@ from model_price.descriptions.core import (
     SUMMARY_MAX_CHARS,
     description_record,
 )
-from model_price.messages import band_lines, comparison_message, price_text, scan_message
+from model_price.messages import (
+    band_lines, compared_baseline_lines, comparison_message, price_text,
+    scan_message, scan_notes,
+)
 from model_price.reporting import (
     conditions_text,
     discount_folds,
@@ -4267,15 +4270,14 @@ class DeltaRenderingTests(unittest.TestCase):
             self.assertIn("输入 3 元/百万 tokens", report)
             self.assertIn("2 元/百万 tokens → 1 元/百万 tokens", report)
 
-    def test_a_failed_channel_is_named_with_its_reason_and_kept_baseline(self):
+    def test_a_failed_channel_is_named_in_the_delivery_note_with_its_kept_baseline(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
             store.write(
                 "broken",
                 snapshot_of([scanned_record("m1", "M1", "2", "8")], "2026-09-15T10:00:00+08:00"),
             )
-            report = render_scan(
-                store,
+            payload = scan_providers(
                 [
                     ScannedProvider(
                         error=SourceError("official document changed shape"),
@@ -4283,25 +4285,31 @@ class DeltaRenderingTests(unittest.TestCase):
                         provider_name="坏渠道",
                     )
                 ],
-                "2026-09-16T10:00:00+08:00",
+                store,
+                captured_at="2026-09-16T10:00:00+08:00",
             )
-            self.assertIn("坏渠道", report)
-            self.assertIn("来源解析失败", report)
-            self.assertIn("official document changed shape", report)
+            self.assertNotIn("坏渠道", scan_message(payload))
+            notes = scan_notes(payload)
+            self.assertIn("坏渠道", notes)
+            self.assertIn("来源解析失败", notes)
+            self.assertIn("official document changed shape", notes)
             self.assertIn(
                 "最近一次成功基线 2026-09-15 10:00（UTC+8） 及历史归档均保留",
-                report,
+                notes,
             )
 
     def test_a_baseline_run_says_how_many_models_it_recorded(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
-            report = render_scan(
-                store,
+            payload = scan_providers(
                 [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
-                "2026-09-16T10:00:00+08:00",
+                store,
+                captured_at="2026-09-16T10:00:00+08:00",
             )
-            self.assertIn("记录 1 个模型，下次扫描起参与对比", report)
+            self.assertIn("1 个本次未纳入", scan_message(payload))
+            self.assertIn(
+                "记录 1 个模型，下次扫描起参与对比", scan_notes(payload)
+            )
 
     def test_a_historical_scan_names_the_requested_period_and_actual_baseline(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -4359,9 +4367,24 @@ class DeltaRenderingTests(unittest.TestCase):
                 baseline=parse_baseline_selection("last-month"),
             )
             message = scan_message(payload)
-            self.assertIn("未找到匹配的历史基线", message)
-            self.assertIn("本次扫描已归档", message)
+            self.assertIn("1 个本次未纳入", message)
+            self.assertNotIn("未找到匹配的历史基线", message)
             self.assertNotIn("首次建立基线", message)
+            notes = scan_notes(payload)
+            self.assertIn("未找到匹配的历史基线", notes)
+            self.assertIn("本次扫描已归档", notes)
+
+    def test_differing_channel_baselines_stay_one_fact_line(self):
+        self.assertEqual(
+            compared_baseline_lines([
+                {"status": CHANGED, "baseline_at": "2026-09-21T09:00:00+08:00"},
+                {"status": UNCHANGED, "baseline_at": "2026-09-21T20:00:00+08:00"},
+            ]),
+            [
+                "对比基线：各渠道不同（最早 2026-09-21 09:00（UTC+8），"
+                "最晚 2026-09-21 20:00（UTC+8））。"
+            ],
+        )
 
 
 class MomentFormattingTests(unittest.TestCase):
@@ -4530,12 +4553,12 @@ class DetectionReportTests(unittest.TestCase):
                 "2026-09-16T10:00:00+08:00",
             )
             self.assertIn(
-                "【渠道结论】\n\n2 个渠道共 2 个模型：1 个有变化，1 个无变化，0 个未能完成。",
+                "【渠道结论】\n\n2 个渠道共 2 个模型：1 个有变化，1 个无变化，0 个本次未纳入。",
                 report,
             )
             self.assertLess(report.index("【模型价格】"), report.index("【渠道结论】"))
 
-    def test_every_scanned_channel_is_named_even_when_it_failed(self):
+    def test_a_failed_channel_is_counted_and_kept_in_the_delivery_note(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
             working = ScannedProvider(
@@ -4543,9 +4566,8 @@ class DetectionReportTests(unittest.TestCase):
                 provider_id="ok",
                 provider_name="好渠道",
             )
-            render_scan(store, [working], "2026-09-15T10:00:00+08:00")
-            report = render_scan(
-                store,
+            scan_providers([working], store, captured_at="2026-09-15T10:00:00+08:00")
+            payload = scan_providers(
                 [
                     working,
                     ScannedProvider(
@@ -4554,12 +4576,15 @@ class DetectionReportTests(unittest.TestCase):
                         provider_name="坏渠道",
                     ),
                 ],
-                "2026-09-16T10:00:00+08:00",
+                store,
+                captured_at="2026-09-16T10:00:00+08:00",
             )
+            report = scan_message(payload)
             self.assertIn("好渠道", report)
             self.assertIn("无变化：好渠道。", report)
-            self.assertIn("坏渠道", report)
-            self.assertIn("坏渠道：来源解析失败；offline。", report)
+            self.assertIn("1 个本次未纳入", report)
+            self.assertNotIn("坏渠道", report)
+            self.assertIn("坏渠道：来源解析失败；offline。", scan_notes(payload))
 
     def test_a_source_without_an_official_stamp_keeps_the_comparison_baseline(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -4668,13 +4693,12 @@ class DetectionReportTests(unittest.TestCase):
     def test_the_scan_closes_with_what_its_channels_add_up_to(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
-            render_scan(
-                store,
+            scan_providers(
                 [ScannedProvider([scanned_record("m1", "M1", "2", "8")])],
-                "2026-09-15T10:00:00+08:00",
-            )
-            report = render_scan(
                 store,
+                captured_at="2026-09-15T10:00:00+08:00",
+            )
+            payload = scan_providers(
                 [
                     ScannedProvider(
                         [scanned_record("m1", "M1", "1", "8"), scanned_record("m2", "M2", "3", "12")]
@@ -4685,11 +4709,14 @@ class DetectionReportTests(unittest.TestCase):
                         provider_name="坏渠道",
                     ),
                 ],
-                "2026-09-16T10:00:00+08:00",
+                store,
+                captured_at="2026-09-16T10:00:00+08:00",
             )
+            report = scan_message(payload)
             self.assertIn("【渠道结论】", report)
-            self.assertIn("1 个有变化，0 个无变化，1 个未能完成", report)
-            self.assertIn("坏渠道：来源解析失败；offline。", report)
+            self.assertIn("1 个有变化，0 个无变化，1 个本次未纳入", report)
+            self.assertNotIn("坏渠道", report)
+            self.assertIn("坏渠道：来源解析失败；offline。", scan_notes(payload))
             self.assertGreater(report.index("【渠道结论】"), report.index("【模型价格】"))
 
     def test_the_scan_omits_its_skill_update_check(self):

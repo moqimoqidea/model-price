@@ -49,7 +49,7 @@ from model_price.providers.aliyun import (
     qianwen_model_url,
 )
 from model_price.registry import query_adapters
-from model_price.messages import comparison_message, scan_message
+from model_price.messages import comparison_message, scan_message, scan_notes
 from model_price.snapshots import SnapshotStore
 
 
@@ -837,8 +837,8 @@ def crowded_catalogue(count=30):
 class DeltaLimitTests(unittest.TestCase):
     """A scan over the character budget is reported whole, and says it is over."""
 
-    def scan(self, resolver, catalogue, *, max_chars=None, extra=()):
-        """Build a scan that moved, then render it for a channel."""
+    def scan_payload(self, resolver, catalogue, *, extra=()):
+        """Build a scan that moved and keep the evidence for message and notes."""
         with tempfile.TemporaryDirectory() as directory:
             store = SnapshotStore(Path(directory))
             scan_providers(
@@ -847,12 +847,16 @@ class DeltaLimitTests(unittest.TestCase):
                 captured_at="2026-09-16T00:00:00+08:00",
                 descriptions=resolver,
             )
-            payload = scan_providers(
+            return scan_providers(
                 [ScannedProvider(catalogue), *extra],
                 store,
                 captured_at="2026-09-17T00:00:00+08:00",
                 descriptions=resolver,
             )
+
+    def scan(self, resolver, catalogue, *, max_chars=None, extra=()):
+        """Render the scan for a channel."""
+        payload = self.scan_payload(resolver, catalogue, extra=extra)
         if max_chars is None:
             return scan_message(payload)
         return scan_message(payload, max_chars=max_chars)
@@ -868,10 +872,10 @@ class DeltaLimitTests(unittest.TestCase):
             self.assertIn(f"new-{position} 的官方说明", message)
         self.assertIn("发送前需总结压缩到 3000 字内", message)
 
-    def test_an_over_budget_scan_still_names_every_channel_it_scanned(self):
-        """A channel the scan reached is a fact about the scan, not a detail."""
+    def test_an_over_budget_scan_names_every_compared_channel(self):
+        """A compared channel is a fact; an excluded one is a delivery note."""
         resolver = DescriptionResolver({"fake": NamedDescriptionSource("fake", "")})
-        message = self.scan(
+        payload = self.scan_payload(
             resolver,
             crowded_catalogue(),
             extra=[
@@ -887,12 +891,16 @@ class DeltaLimitTests(unittest.TestCase):
                 ),
             ],
         )
-        for name in ("假渠道", "安静渠道", "坏渠道"):
+        message = scan_message(payload)
+        for name in ("假渠道", "安静渠道"):
             self.assertIn(name, message)
-        # A channel that answered with nothing keeps its reason too.
-        self.assertIn("official document changed shape", message)
+        self.assertNotIn("坏渠道", message)
+        # The channel that answered with nothing keeps its reason in the note.
+        notes = scan_notes(payload)
+        self.assertIn("坏渠道", notes)
+        self.assertIn("official document changed shape", notes)
         # And what the summary has to preserve is named for whoever writes it.
-        self.assertIn("保留标题、渠道状态与已展示的全部金额", message)
+        self.assertIn("保留标题与渠道状态，已展示的金额不截断", message)
 
     def test_a_scan_that_fits_carries_no_such_note(self):
         resolver = DescriptionResolver({"fake": NamedDescriptionSource("fake", "")})

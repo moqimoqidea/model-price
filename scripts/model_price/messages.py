@@ -105,7 +105,7 @@ SCAN_SUBJECT = "全渠道模型与计费变化"
 # the overrun and what a summary is not allowed to lose.
 SUMMARIZE_NOTE = (
     "本消息 {chars} 字，超过 {limit} 字上限 {over} 字；"
-    "发送前需总结压缩到 {limit} 字内，保留标题、渠道状态与已展示的全部金额"
+    "发送前需总结压缩到 {limit} 字内，保留标题与渠道状态，已展示的金额不截断"
 )
 
 # One step of hierarchy. A message is read on a phone, so a level is added by
@@ -462,10 +462,16 @@ def scan_blocks(
 
 
 def channel_conclusion(payload: dict[str, Any]) -> list[str]:
-    """Count the scan and name every channel without a second overview."""
+    """Count the scan and name only the channels that were compared.
+
+    A channel without a usable comparison is counted in the summary line and
+    never named here. Its reason, and every coverage caveat behind the scan, are
+    rendered by ``channel_notes`` for the delivery note instead; nothing is lost
+    from the saved payload.
+    """
     reports = payload.get("providers", [])
     lines = scan_conclusion(payload)
-    for status in (CHANGED, UNCHANGED, BASELINE_CREATED, BASELINE_NOT_FOUND):
+    for status in (CHANGED, UNCHANGED):
         matching = [report for report in reports if channel_status(report) == status]
         if not matching:
             continue
@@ -479,17 +485,54 @@ def channel_conclusion(payload: dict[str, Any]) -> list[str]:
                 f"{report['provider']['name']}：{label}；{change_digest(report)}。"
                 for report in matching
             )
-    lines.extend(
-        failed_text(report)
+    lines.extend(compared_baseline_lines(reports))
+    return lines
+
+
+def compared_baseline_lines(reports: Sequence[dict[str, Any]]) -> list[str]:
+    """State the baseline in one line, or the range when the channels differ."""
+    baselines = {
+        report.get("baseline_at")
         for report in reports
-        if report["status"] in (EMPTY_SCAN, SOURCE_ERROR)
-    )
-    lines.extend(
-        partial_catalogue_text(report)
-        for report in reports
-        if channel_status(report) == SOURCE_ERROR
-        and report["status"] not in (EMPTY_SCAN, SOURCE_ERROR)
-    )
+        if report.get("baseline_at")
+        and report["status"] in (CHANGED, UNCHANGED)
+    }
+    if len(baselines) == 1:
+        return [f"对比基线：{format_moment(baselines.pop())}。"]
+    if baselines:
+        moments = sorted(str(moment) for moment in baselines)
+        return [
+            "对比基线：各渠道不同（最早 "
+            f"{format_moment(moments[0])}，最晚 {format_moment(moments[-1])}）。"
+        ]
+    return []
+
+
+def channel_notes(payload: dict[str, Any]) -> list[str]:
+    """Detail the message leaves out: exclusions, failures, and coverage gaps.
+
+    The message states how many channels were left out; a reader who needs the
+    names, the reasons, or a source's coverage limit reads them here. The saved
+    payload remains the evidence, so this renders the same facts for the
+    delivery note rather than dropping them.
+    """
+    reports = payload.get("providers", [])
+    lines: list[str] = []
+    for report in reports:
+        status = channel_status(report)
+        if status in (CHANGED, UNCHANGED):
+            continue
+        if report["status"] in (EMPTY_SCAN, SOURCE_ERROR):
+            lines.append(failed_text(report))
+        elif status == SOURCE_ERROR:
+            lines.append(partial_catalogue_text(report))
+        else:
+            lines.append(
+                sentence_text(
+                    f"{report['provider']['name']}："
+                    f"{DELTA_STATUS_LABELS.get(status, status)}；{change_digest(report)}"
+                )
+            )
     for report in reports:
         lifecycle = report.get("lifecycle") or {}
         status = lifecycle.get("status")
@@ -550,18 +593,32 @@ def channel_conclusion(payload: dict[str, Any]) -> list[str]:
                     f"{report['provider']['name']} 模型发布来源：{announcement_digest(report)}"
                 )
             )
+    observations = (payload.get("summary") or {}).get("announcement_observations")
+    if observations:
+        lines.append(
+            f"官方模型首次收录 {observations} 项（缺少所选公告历史基线）。"
+        )
+    lines.extend(differing_baseline_lines(reports))
+    return lines
+
+
+def differing_baseline_lines(reports: Sequence[dict[str, Any]]) -> list[str]:
+    """Name each channel's own baseline only when one shared line cannot."""
     baselines = {
         report.get("baseline_at") for report in reports if report.get("baseline_at")
     }
-    if len(baselines) == 1:
-        lines.append(f"对比基线：{format_moment(baselines.pop())}。")
-    elif baselines:
-        lines.extend(
-            f"{report['provider']['name']} 对比基线：{format_moment(report['baseline_at'])}。"
-            for report in reports
-            if report.get("baseline_at")
-        )
-    return lines
+    if len(baselines) <= 1:
+        return []
+    return [
+        f"{report['provider']['name']} 对比基线：{format_moment(report['baseline_at'])}。"
+        for report in reports
+        if report.get("baseline_at")
+    ]
+
+
+def scan_notes(payload: dict[str, Any]) -> str:
+    """Render the delivery note: the detail the scan message deliberately omits."""
+    return "\n".join(channel_notes(payload))
 
 
 def scan_capability_lines(

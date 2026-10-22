@@ -12,7 +12,7 @@ from typing import Any
 
 from .budget import DEFAULT_MAX_CHARS
 from .descriptions.core import AVAILABLE, SUMMARY_MAX_CHARS, summary_needs_condensing
-from .messages import scan_message
+from .messages import scan_message, scan_notes
 from .privacy import redact_report_errors
 from .reporting import changed_model_details
 
@@ -74,3 +74,10 @@ def render_saved_scan(
     redact_report_errors(payload)
     summaries = read_introductions(introductions, payload) if introductions else {}
     return scan_message(payload, max_chars=max_chars, introductions=summaries)
+
+
+def render_saved_notes(path: Path) -> str:
+    """The delivery note: what the message counts but does not name."""
+    payload = read_scan(path)
+    redact_report_errors(payload)
+    return scan_notes(payload)

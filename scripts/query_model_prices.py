@@ -39,7 +39,7 @@ from model_price.registry import (
     select_compare_providers,
     source_status,
 )
-from model_price.rendering import render_saved_scan
+from model_price.rendering import render_saved_notes, render_saved_scan
 from model_price.snapshots import (
     BaselineSelection,
     SnapshotStore,
@@ -221,6 +221,10 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument(
         "--max-chars", type=int, default=DEFAULT_MAX_CHARS, help=MAX_CHARS_HELP
     )
+    render.add_argument(
+        "--notes", action="store_true",
+        help="print the delivery note instead of the message",
+    )
 
     return parser
 
@@ -230,9 +234,14 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "render":
         try:
-            print(render_saved_scan(
-                args.payload, introductions=args.introductions, max_chars=args.max_chars,
-            ), end="")
+            print(
+                render_saved_notes(args.payload) if args.notes
+                else render_saved_scan(
+                    args.payload, introductions=args.introductions,
+                    max_chars=args.max_chars,
+                ),
+                end="",
+            )
         except (OSError, ValueError) as exc:
             parser.error(safe_diagnostic(exc))
         return 0
