@@ -169,6 +169,33 @@ class MistralPricingTests(unittest.TestCase):
         self.assertEqual(unit_code("$4 /1000 Pages", "USD"), "USD_per_thousand_pages")
         self.assertEqual(unit_label("USD_per_thousand_pages"), "美元/千页")
 
+    def test_voice_agent_tiers_never_join_model_prices(self) -> None:
+        # The pricing page also publishes a per-minute voice-agent table whose
+        # rows are usage tiers, not API model IDs. "Larger models" has no
+        # catalogue identity, and its sibling's per-minute rate must not be
+        # attached to that model's token prices.
+        voice = (
+            '<section id="voice-agents"><h2>Voice agents</h2>'
+            '<div data-slot="table-container"><table data-slot="table">'
+            "<thead><tr><th>Model</th><th>Price</th></tr></thead><tbody>"
+            "<tr><td>Mistral Small 4</td><td>$0.04/min</td></tr>"
+            "<tr><td>Larger models</td><td>$0.08/min</td></tr>"
+            "</tbody></table></div></section>"
+        )
+        prices = PRICES.replace("</article>", voice + "</article>")
+        record = MistralAdapter(
+            DocumentClient({MISTRAL_PRICING_URL: prices})
+        ).query("mistral-small-2603")[0]
+        self.assertEqual(len(record["offers"]), 6)
+        self.assertTrue(
+            all(
+                price["unit"] == "USD_per_million_tokens"
+                for item in record["offers"]
+                for price in item["prices"]
+            )
+        )
+        self.assertEqual(offer(record)["prices"][0]["amount"], "0.15")
+
     def test_published_free_rates_and_missing_rates_remain_different(self) -> None:
         adapter = MistralAdapter(DocumentClient())
         free = offer(adapter.query("mistral-moderation-2603")[0])["prices"]

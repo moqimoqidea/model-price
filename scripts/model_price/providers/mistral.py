@@ -34,6 +34,10 @@ MODE_FACTOR_RE = re.compile(
 )
 REGIONAL_FACTOR_RE = re.compile(r"\*\(\w+\?(\d*\.?\d+):1\)")
 PRICE_ANNOTATION_RE = re.compile(r"(?:Original|Sale) price:\s*", re.I)
+# The page also sells voice agents by the minute. Those rows name that product's
+# usage tiers ("Larger models") rather than API model IDs, so the section never
+# joins the model catalogue.
+NON_MODEL_SECTIONS = frozenset({"voice agents"})
 
 
 def pricing_factors(bundle: str) -> tuple[list[tuple[str, Decimal]], Decimal]:
@@ -81,6 +85,12 @@ class MistralAdapter(TabularPricingAdapter):
         super().__init__(client)
         self._price_models: dict[str, dict[str, Any]] | None = None
         self._factors: tuple[list[tuple[str, Decimal]], Decimal] | None = None
+
+    def includes_table(self, headings: list[str]) -> bool:
+        """Exclude sections that price another product rather than the API."""
+        return not NON_MODEL_SECTIONS.intersection(
+            heading.casefold() for heading in headings
+        )
 
     def model_variants(self, display_name: str, note: str = "") -> list[str]:
         key = normalize_model(model_label(display_name))

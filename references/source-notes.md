@@ -489,7 +489,11 @@ model. Current API listings missing from the price table remain unpriced; old
 detail-page figures are not current catalogue offers. Models with no API
 identifiers, such as a weights-only research model, do not become invented API
 listings. Explicitly hosted third-party rows remain on `mistral` with
-`third_party_hosted` delivery.
+`third_party_hosted` delivery. The separate Voice agents section prices that
+product's per-minute usage tiers, not API models; its rows include a tier name
+(`Larger models`) with no catalogue identity, so the whole section is excluded
+by its heading rather than letting one tier abort the channel or attaching its
+sibling's per-minute rate to that model's token prices.
 
 The launch article prints its rate as a label/amount card (`Input (/M tokens)`
 then `$1.36`). The two paragraphs are joined and read as an announcement offer;
