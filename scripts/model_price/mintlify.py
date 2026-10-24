@@ -8,11 +8,12 @@ from typing import Any, Iterator
 from urllib.parse import urlsplit
 
 from .errors import SourceError
-from .literals import code_matches, literal_at
+from .literals import STRING_LITERAL, code_matches, literal_at, value_end
 
 FLIGHT_PUSH = re.compile(r"\bself\.__next_f\.push\(\s*")
 COMPONENT_TABLE = re.compile(r"\b_jsxs?\(\s*DocTable\s*,\s*(?=\{)")
 RAW_TABLE = re.compile(r"<DocTable\b(?P<body>.*?)/>", re.S)
+JSX_CALL = re.compile(r"\b_jsxs?\s*\(")
 
 
 def _flight_records(document: str) -> dict[str, Any]:
@@ -109,6 +110,118 @@ def _table(columns: Any, rows: Any) -> list[list[str]]:
     return [[column["title"] for column in columns], *rows]
 
 
+def _visible_text(value: Any) -> str:
+    """Flatten the literal text a component's ``children`` prop publishes."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "".join(_visible_text(item) for item in value)
+    if isinstance(value, dict):
+        return _visible_text(value["children"]) if "children" in value else ""
+    if value is None or isinstance(value, bool):
+        return ""
+    return str(value)
+
+
+def _argument_boundary(source: str) -> int:
+    """Index of the comma after a component expression, ignoring nested data."""
+    depth = 0
+    position = 0
+    while position < len(source):
+        character = source[position]
+        if character in "\"'`":
+            literal = STRING_LITERAL.match(source, position)
+            if not literal:
+                raise SourceError("official document contains an unterminated string")
+            position = literal.end()
+            continue
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif character == "," and depth == 0:
+            return position
+        position += 1
+    raise SourceError("official component call has no literal props")
+
+
+def _call_end(source: str, start: int) -> int:
+    """Index just past the ``)`` that closes the call opened at ``start``."""
+    depth = 0
+    position = start
+    while position < len(source):
+        character = source[position]
+        if character in "\"'`":
+            literal = STRING_LITERAL.match(source, position)
+            if not literal:
+                raise SourceError("official document contains an unterminated string")
+            position = literal.end()
+            continue
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                return position + 1
+        position += 1
+    raise SourceError("official component call is incomplete")
+
+
+def _jsx_text(source: str, position: int) -> tuple[str, int]:
+    """Read one component call's visible text without running the component.
+
+    Mintlify compiles a table title or a linked model cell to
+    ``_jsx(Component,{...})``. Only the literal ``children`` prop is visible in
+    that cell; the component itself is never executed. A computed child still
+    reaches ``literal_at`` and is rejected there.
+    """
+    start = position
+    while start < len(source) and source[start].isspace():
+        start += 1
+    if start >= len(source) or source[start] != "(":
+        raise SourceError("official component call is not a literal")
+    end = _call_end(source, start)
+    inner = source[start + 1:end - 1]
+    comma = _argument_boundary(inner)
+    props = inner[comma + 1:].lstrip()
+    if not props.startswith("{"):
+        raise SourceError("official component call has no literal props")
+    props_end = value_end(props, 0)
+    fields = literal_at(_replace_jsx_calls(props[:props_end]))
+    if not isinstance(fields, dict):
+        raise SourceError("official component props are not a literal object")
+    return _visible_text(fields.get("children")), end
+
+
+def _replace_jsx_calls(source: str) -> str:
+    """Replace literal component calls with their visible text, keeping code inert."""
+    pieces: list[str] = []
+    position = 0
+    while position < len(source):
+        character = source[position]
+        if character in "\"'`":
+            literal = STRING_LITERAL.match(source, position)
+            if not literal:
+                raise SourceError("official document contains an unterminated string")
+            pieces.append(source[position:literal.end()])
+            position = literal.end()
+            continue
+        call = JSX_CALL.match(source, position)
+        if call:
+            text, position = _jsx_text(source, call.end() - 1)
+            pieces.append(json.dumps(text, ensure_ascii=False))
+            continue
+        pieces.append(character)
+        position += 1
+    return "".join(pieces)
+
+
+def _literal_with_jsx(text: str, position: int) -> Any:
+    """Decode one literal value, allowing component wrappers inside it."""
+    end = value_end(text, position)
+    return literal_at(_replace_jsx_calls(text[position:end]))
+
+
 def document_tables(document: str, url: str) -> list[list[list[str]]]:
     """Read literal DocTable properties in source MDX or its owned compiled form."""
     tables = []
@@ -119,13 +232,13 @@ def document_tables(document: str, url: str) -> list[list[list[str]]]:
             start = re.search(r"\b" + key + r"\s*=\s*\{\s*(?=\[)", body)
             if not start:
                 raise SourceError("official component table omitted its columns or rows")
-            fields[key] = literal_at(body, start.end())
+            fields[key] = _literal_with_jsx(body, start.end())
         tables.append(_table(fields["columns"], fields["rows"]))
     if tables or "<script" not in document.lower():
         return tables
     source = document_source(document, url)
     for match in code_matches(source, COMPONENT_TABLE):
-        fields = literal_at(source, match.end())
+        fields = _literal_with_jsx(source, match.end())
         tables.append(_table(fields.get("columns"), fields.get("rows")))
     if not tables:
         raise SourceError("official document MDX source published no literal DocTable data")

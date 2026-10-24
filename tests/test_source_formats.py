@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -23,6 +24,20 @@ from model_price.snapshots import SnapshotStore, parse_baseline_selection, requi
 FIXTURES = Path(__file__).parent / "fixtures"
 KIMI_CHAT_URL = "https://platform.kimi.com/docs/pricing/chat"
 KIMI_BATCH_URL = "https://platform.kimi.com/docs/pricing/batch"
+
+
+def hosted_page(source: str, href: str) -> str:
+    """Wrap literal MDX in the page-owned Flight records a Mintlify page serves."""
+    owner = {"mdxSource": {"compiledSource": "$a", "scope": {"pageMetadata": {"href": href}}}}
+    chunks = [
+        f"a:T{len(source.encode('utf-8')):x},",
+        source,
+        "b:" + json.dumps(owner, ensure_ascii=False) + "\n",
+    ]
+    return "".join(
+        "<script>self.__next_f.push(" + json.dumps([1, chunk], ensure_ascii=False) + ")</script>"
+        for chunk in chunks
+    )
 
 
 class SavedClient:
@@ -71,6 +86,28 @@ class SourceFormatTests(unittest.TestCase):
         self.assertEqual(records["kimi-k3"]["source"]["url"], KIMI_CHAT_URL)
         self.assertEqual(adapter.query("kimi-k3")[0]["offers"], records["kimi-k3"]["offers"])
         self.assertEqual(client.calls, [KIMI_INDEX_URL, KIMI_CHAT_URL, KIMI_BATCH_URL])
+
+    def test_kimi_reads_jsx_wrapped_table_titles_and_model_links(self) -> None:
+        source = (
+            '_jsx(DocTable,{columns:[{title:`模型`,width:`50%`},'
+            '{title:_jsx(Tooltip,{tip:`命中缓存的请求按此价格计费`,children:`缓存命中`}),width:`50%`}],'
+            'rows:[[_jsxs(_components.a,{href:`/guide/kimi-k9`,children:[`kimi-`,`k9`]}),'
+            '`¥1.30 / MTok`]]})'
+        )
+        client = SavedClient({
+            KIMI_INDEX_URL: (
+                f"- [模型价格]({KIMI_CHAT_URL}.md)\n"
+                f"- [批量价格]({KIMI_BATCH_URL}.md)\n"
+            ),
+            KIMI_CHAT_URL: hosted_page(source, "/pricing/chat"),
+            KIMI_BATCH_URL: "<!doctype html><html></html>",
+        })
+        records = {item["model_id"]: item for item in KimiAdapter(client).catalog_records()}
+        self.assertEqual(set(records), {"kimi-k9"})
+        self.assertEqual(
+            [(p["type"], p["amount"]) for p in records["kimi-k9"]["offers"][0]["prices"]],
+            [("cache_hit", "1.30")],
+        )
 
     def test_kimi_dynamic_or_mismatched_component_data_cannot_replace_a_baseline(self) -> None:
         first, second = "2026-10-20T12:00:00+08:00", "2026-10-21T12:00:00+08:00"

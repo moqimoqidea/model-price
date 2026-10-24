@@ -103,11 +103,16 @@ class MistralAdapter(TabularPricingAdapter):
                     raise SourceError("Mistral price page linked ambiguous model names")
                 self._price_models[label] = entry
         entry = self._price_models.get(key)
-        if entry is None or not entry["identifiers"]["apiNames"]:
+        if entry is None:
             raise SourceError(
                 "Mistral price row has no unique documented API identity: "
                 + display_name
             )
+        # The price page also links self-hosted and open-weight models, which the
+        # model data publishes without an API name. They are not API offers, and
+        # the catalogue already keeps them out of its API inventory.
+        if not entry["identifiers"]["apiNames"]:
+            return []
         # One model owns one record.  The catalogue's aliases travel on that
         # record and are matched by query/search, never by a second price row.
         return [entry["identifiers"]["apiNames"][0]]

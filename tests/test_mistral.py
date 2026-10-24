@@ -122,6 +122,18 @@ class MistralPricingTests(unittest.TestCase):
         self.assertEqual(set(client.requests), {MISTRAL_PRICING_URL, MISTRAL_MODELS_URL, MODEL_DATA_URL, CONTROLS_URL})
         self.assertEqual(len(client.requests), 4)
 
+    def test_self_hosted_price_rows_without_api_identity_are_not_a_channel_failure(self) -> None:
+        section = (
+            '<section id="moderation"><h2>Moderation and safety models</h2>'
+            '<table data-slot="table"><thead><tr><th>Model</th><th>Input</th><th>Output</th></tr></thead>'
+            '<tbody><tr><td><a href="/models/shieldstral-1-0">Shieldstral 1.0 ↗ Self-hosted · Open weights</a></td>'
+            '<td>—</td><td>—</td></tr></tbody></table></section>'
+        )
+        client = DocumentClient({MISTRAL_PRICING_URL: PRICES.replace("</article>", section + "</article>")})
+        records = MistralAdapter(client).catalog_records()
+        self.assertEqual(len(records), 18)
+        self.assertNotIn("shieldstral-1-0", {record["model_id"] for record in records})
+
     def test_sale_prices_and_original_amounts_are_kept_without_guessed_terms(self) -> None:
         record = MistralAdapter(DocumentClient()).query("mistral-large-4")[0]
         prices = offer(record)["prices"]

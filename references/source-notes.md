@@ -36,6 +36,28 @@ failure/retention regressions live in
 version 39 invalidates old source results; catalogue, retirement, and announcement
 baseline versions are unchanged, and validation uses temporary snapshot stores.
 
+## Document export changes checked on 2026-10-24
+
+Kimi's standard-price page now wraps a cache column title in a Tooltip component and
+every model cell in an anchor component. The table data is still literal, but those
+cells are `_jsx(Component,{...})` calls rather than bare strings. `mintlify.py` now
+reads the visible `children` text from those calls without executing the components;
+a computed child still fails literal decoding. The batch page and the previous
+literal tables are unchanged.
+
+Mistral's price page now links five self-hosted or open-weight models (Shieldstral
+1.0 and four Timestral sizes) whose model data publishes no API names.
+`MistralAdapter` skips those price rows instead of failing the whole channel; they
+remain outside the API catalogue, as `list_models` already required.
+
+The repaired readers returned 6 Kimi catalogue models and 23 Mistral API records,
+with no self-hosted row in either API inventory. Parsed-cache version 41 invalidates
+older source results; catalogue, retirement, and announcement baseline versions are
+unchanged. Reduced captures and regressions live in
+[`test_document_literals.py`](../tests/test_document_literals.py),
+[`test_source_formats.py`](../tests/test_source_formats.py), and
+[`test_mistral.py`](../tests/test_mistral.py).
+
 ## Model announcements
 
 `model_price/announcements/` reads official publication evidence independently

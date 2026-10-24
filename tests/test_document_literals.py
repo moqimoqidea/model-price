@@ -17,6 +17,11 @@ from model_price.mintlify import document_tables
 
 URL = "https://example.test/docs/pricing/chat"
 SOURCE = '_jsx(DocTable,{columns:[{title:`模型`},{title:`输入（元）`}],rows:[[`brand-new-model`,`¥1.23`]]})'
+JSX_SOURCE = (
+    '_jsx(DocTable,{columns:[{title:`模型`},'
+    '{title:_jsx(Tooltip,{tip:`命中缓存时计费`,children:`输入（元）`})}],'
+    'rows:[[_jsxs(_components.a,{href:`/models/x`,children:[`brand-new-`,`model`]}),`¥1.23`]]})'
+)
 
 
 def page_source(source: str = SOURCE, *, size_delta: int = 0, unrelated: bool = False) -> str:
@@ -51,6 +56,21 @@ class LiteralDocumentTests(unittest.TestCase):
     def test_fragmented_utf8_data_keeps_owned_columns_and_excludes_other_records(self) -> None:
         tables = document_tables(page_source(unrelated=True), URL)
         self.assertEqual(tables, [[["模型", "输入（元）"], ["brand-new-model", "¥1.23"]]])
+
+    def test_component_wrapped_titles_and_cells_supply_visible_text(self) -> None:
+        tables = document_tables(page_source(JSX_SOURCE), URL)
+        self.assertEqual(tables, [[["模型", "输入（元）"], ["brand-new-model", "¥1.23"]]])
+
+    def test_component_wrapped_table_rejects_computed_children(self) -> None:
+        for replacement in (
+            "children:cacheLabel()",
+            "children:`输入${unit}`",
+        ):
+            with self.subTest(replacement=replacement), self.assertRaises(SourceError):
+                document_tables(
+                    page_source(JSX_SOURCE.replace("children:`输入（元）`", replacement)),
+                    URL,
+                )
 
     def test_missing_or_mismatched_page_ownership_is_an_error(self) -> None:
         for old, new in (("/pricing/chat", "/pricing/another"), ("mdxSource", "mdxSourceWithNoJs"), ("$a", "$unknown")):
