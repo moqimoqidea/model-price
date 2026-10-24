@@ -786,7 +786,13 @@ Two catalogue-level traps:
   tokens per hour; a column naming no unit this tool reads keeps its amount as
   published rather than being given a token rate the page never put there. `Input`
   and `Output` head the modality of a media row, so they stay conditions — unless
-  their cells hold money, in which case the shared reader prices them.
+  their cells hold money, in which case the shared reader prices them. The page
+  also splits a promotional window from the standard rate into two rows whose
+  model names differ by a trailing `*` (`gemini-3.8-flash-tts` versus
+  `gemini-3.8-flash-tts-(preview)*`). The shared footnote stripper removes
+  numbered markers such as `(1)` but not `*`, so a scan sees two literal IDs;
+  count additions after folding the `*` variant back into its model, and keep
+  each row's amount with its own row.
 - **Kling** — the image and video price pages, one request each, both real Markdown.
   A price is billed in the vendor's own credits, and the yuan beside each credit
   rate is that rate restated rather than a second charge, so the credit is the unit

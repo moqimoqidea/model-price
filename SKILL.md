@@ -16,9 +16,9 @@ Apply recipients, timezone, baseline, and confirmation tokens from the user's
 request; a request to inspect a report does not authorize sending it.
 
 Read [references/reporting.md](references/reporting.md) when composing or forwarding
-a message. It owns report order, protected facts, batching, and summarization.
-Produce the finished concise report directly; do not offer an optional second
-compression pass.
+a message. It owns report order, protected facts, batching, summarization, and the
+shorter-delivery digest rules. Produce the finished concise report directly; do not
+offer an optional second compression pass.
 
 ## Choose the command
 

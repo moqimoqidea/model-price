@@ -41,6 +41,12 @@ affected ID list. Different errors or sources remain separate. Each model still
 keeps every change cause and notice fact; grouping absence never groups away EOS,
 replacement, access, or billing evidence.
 
+When a model carries a retirement milestone (EOM, redirect, EOS, or official
+retirement), do not print a launch-style introduction for it: a "now available"
+claim beside "停止新购" reads as its opposite. Omit that introduction and its
+source and keep the retirement evidence; an introduction that itself states the
+retirement still belongs.
+
 Keep notice facts and evidence beside the affected channel's model. Preserve
 scope, dates and precision, before/after replacements, and earliest-possible
 qualifiers. A catalogue removal is not EOS; a planned or earliest-possible
@@ -91,6 +97,31 @@ against different moments, it states the range instead. Per-channel baselines an
 missing-history statuses stay in the delivery note. Notice-only or publication-only
 changes still count as changes.
 
+### Shorter delivery (digest)
+
+A standard message is complete. When the host's delivery budget is stricter than
+`--max-chars`, it may send a digest of the same saved comparison. A digest is a
+presentation choice, never a different result:
+
+- It carries no capability or introduction prose, so it makes no claim that
+  needs a source line in the message. The saved artifact keeps every
+  introduction and its source.
+- Every displayed model ID, amount, unit, currency, region, condition, date, and
+  replacement stays exact. Only enumeration length and explanatory prose may
+  shrink; a string is never sliced.
+- A retirement or removal enumeration may name one or two literal IDs plus the
+  total and mark itself as representative ("15 项，如 …"). Every ID remains in the
+  saved artifact, and the delivery note accounts for what was represented.
+- Prices keep the standard tier and the tiers the change touches. Equal-change
+  tiers merge into one line; the rest are named as "其余 N 档见目录".
+- Excluded channels stay counted, never named in the body; their names, reasons,
+  and baselines belong to the delivery note.
+- The delivery note records every represented or omitted fact and the final
+  character count.
+
+A digest is never a silent omission: it marks a representative list as such, and
+its delivery note names what was represented or left out.
+
 ## Summarize before delivery
 
 Prepare a concise final report even when the raw rendering fits. Summarize and
@@ -115,6 +146,11 @@ facts. The host agent performs semantic summarization. Keep:
 - Every compared channel's state and change count. Excluded channels stay counted
   in the body and are explained in the delivery note.
 
+A digest sent under a stricter delivery budget follows the digest rules above: it
+may name one or two representative IDs plus the total instead of an entire
+enumeration, and its body carries no introduction source line; the delivery note
+then accounts for every represented or omitted fact.
+
 Full introductions, capabilities, specifications, and prices remain in saved
 JSON. Summarizing prose does not authorize weakening a fact, importing another
 channel's claims, or omitting a failed source. Keep quotations used as access or
@@ -122,8 +158,8 @@ price evidence intact; summarize surrounding explanation instead.
 
 Iterate on the saved artifact until the final text fits and is verified. Remove
 the tool's overage instruction only when it no longer applies. If protected facts
-alone cannot fit, explain that concrete constraint and resolve the delivery
-choice; do not silently omit facts or send over the transport ceiling.
+alone cannot fit, use the digest rules above rather than silently omitting facts
+or sending over the transport ceiling.
 
 ## Offline introduction editing
 

@@ -73,7 +73,9 @@ the trade-offs a summary made. It never enters the message body.
 
 Compare the final text with the saved run: every changed ID and simultaneous
 cause, every displayed amount and condition, official source, and the baseline
-fact must survive. Count the final text after all edits. Do not forward an
+fact must survive, or be accounted for by the digest rules in
+[reporting.md](reporting.md) when the host's delivery budget requires a shorter
+presentation. Count the final text after all edits. Do not forward an
 overage instruction as though it were a finished report. Resolve an unavoidable
 length conflict without silently dropping facts. Read only the selected transport
 contract; DingTalk delivery uses [../im/dingtalk.md](../im/dingtalk.md).

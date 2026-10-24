@@ -95,6 +95,29 @@ state cannot be determined, pause instead of sending again or advancing. Never
 use a probe message to test a real recipient. For staged authorization and frozen
 report text, follow [daily-workflow.md](../references/daily-workflow.md).
 
+## Verification
+
+A successful send receipt proves acceptance, not final delivery. Record each
+outcome before advancing to the next recipient:
+
+```bash
+dws chat +messages-query-send-status --open-task-id <openTaskId> -y -f json
+dws chat +messages-mget --msg-ids <openMessageId> -y -f json
+```
+
+`+messages-query-send-status` returns the `openMessageId` and
+`openConversationId`; `+messages-mget` returns the delivered text. Compare that
+text with the frozen report after `rstrip("\n")`: DingTalk drops a trailing
+newline, so hashing the file directly reports a false mismatch. DingTalk also
+normalizes the en dash `–` to `-`; write `-` in the report when an exact readback
+matters. When several recipients receive the same report, deduplicate by
+`conversationId`, not by `senderId` (the sender is always the authenticated user).
+
+Resolve a recipient by exact name with
+`dws contact +search-user --query "<name>" -y -f json`. The search flag is
+`--query`; `--name` is rejected. Only a single exact match is a stable identity;
+multiple or near matches pause delivery until each `userId` is checked.
+
 ## Rendering and limits
 
 DingTalk's Markdown transport parses a single newline as a space. It preserves a

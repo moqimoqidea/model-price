@@ -182,7 +182,9 @@ provider report rather than being inferred from a provider ID.
 - **The message limit** (`--max-chars`, default 3000) lives at `messages.finalize`.
   It stacks every block, measures the text, and appends one closing line naming
   the overrun when there is one. An over-long report is the complete report plus
-  that line — never a shorter report.
+  that line — never a shorter report. The host that sends it may then write a
+  digest under a stricter delivery budget; `references/reporting.md` owns what a
+  digest may omit and what it must disclose.
 
 Neither the tool nor `budget` can summarize: it takes no credentials and has no
 model to ask. So the code marks the overrun and the summarization is done by
@@ -289,7 +291,10 @@ even when the tests still pass.
     parsed responses (`CACHE_TTL`), `SNAPSHOT_SCHEMA_VERSION` covers baselines. A
     parser or source change requires the cache bump, or stale parsed data is served
     for the rest of its TTL; a baseline written by an older shape is treated as
-    absent rather than diffed against.
+    absent rather than diffed against. When a baseline gate is bumped, that side
+    must report the change as unknown, never as "no change": listing and
+    withdrawal detection is lost together with the price rows, and the capability
+    block only covers channels the comparison already marked changed.
 14. **A length limit is met by summarizing, never by truncating.** Two limits
     exist. An introduction over 300 characters is kept whole and marked
     `summary_needs_condensing` (`descriptions.core.SUMMARY_MAX_CHARS`), and the
@@ -300,7 +305,9 @@ even when the tests still pass.
     was left out. The tool takes no credentials and has no model, so it never
     summarizes either — it measures and says so, and whoever sends the message
     summarizes. Those are the only two length rules; nothing in `messages` may
-    measure or slice a string, and `budget` only counts characters.
+    measure or slice a string, and `budget` only counts characters. A host may
+    send a disclosed digest under a stricter delivery budget; even then the code
+    never slices text, and `references/reporting.md` owns the digest rules.
 15. **The message carries no Markdown.** No `**`, no `#`, no tables, no Markdown links —
     hierarchy is numbering and indentation, and each source URL is written last
     on its line. Any displayed source URL starts with `https://` so a reader can
@@ -313,8 +320,10 @@ even when the tests still pass.
     using its own words and sources, once per literal model ID; a batch of price
     movements uses the linked presentation defined above.
     Its source line is never optional: an unsourced capability claim is not a
-    fact. A scan labels every cause: new listing, catalogue removal, price
-    movement (an amount change, never a caption or a unit correction), billing-mode
+    fact. A digest carries no capability prose, so it makes no such claim; the
+    saved artifact keeps every source. A scan labels every cause: new listing,
+    catalogue removal, price movement (an amount change, never a caption or a
+    unit correction), billing-mode
     addition/removal, price-item addition/removal, replacement revision, notice change,
     crossed milestone, official publication, access change, or announcement rate
     change — for a channel that reports no price movements, only the listing,
@@ -400,6 +409,7 @@ even when the tests still pass.
 | Change how catalogue and notice changes are grouped by model | `changes.py`; keep labels in `reporting.py` |
 | Change a description source's request budget or catalogue reuse | `descriptions/sources.py`; status wording in `reporting.py` |
 | Change how a message is laid out | `messages.py` |
+| Change the shorter-delivery digest rules | `references/reporting.md` |
 | Change offline artifact reading or introduction-summary validation | `rendering.py`, plus `references/reporting.md` |
 | Change diagnostic privacy or private-capture rejection | `privacy.py`, plus `references/privacy.md`; never rewrite official price evidence |
 | Change daily installed-version, delivery, repair, or publish gates | `references/daily-workflow.md`; transport-specific facts stay in `im/` |
