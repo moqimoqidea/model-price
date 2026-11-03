@@ -352,6 +352,22 @@ than its API. This is runtime report metadata, not part of snapshot identity.
   credentials and account-specific UI sections remain excluded. Parsed-cache
   version 38 invalidates introductions from before this refresh; baseline and
   mirror compatibility versions are unchanged.
+  The 2026-11-03 refresh collected all 125 current literal IDs across 20 author
+  filters, including six additions; one former ID was absent, which does not by
+  itself assert retirement. Fresh `DescribeModelList` metadata supplies every
+  introduction, specification, official date, status, API reference, and quoted
+  billing item. `DescribeModelCapabilityList` was recaptured for every ID: all
+  737 original capability records, including explicit unsupported values and API
+  examples with placeholders, supersede the earlier detail-page checks. Each
+  capability response keeps its own `capabilities_captured_at`. Current selected-mode
+  `generation_options` were checked for all 7 image, 20 video, 7 3D-generation,
+  and 2 world models offered by the experience page. These controls establish
+  only the recorded selected mode and dependent options, not unvisited parameter
+  combinations. The 62 earlier raw generation configurations across 31 models
+  retain their original `generation_configs_captured_at`; they were not recaptured
+  or re-dated. Credentials, session parameters, account data, and personal quotas
+  remain excluded. Parsed-cache version 42 invalidates the earlier introductions;
+  baseline and mirror compatibility versions are unchanged.
 - Baidu Qianfan: the pricing page is a Gatsby document. Its own HTML is the whole
   portal, and the Markdown behind its "查看 MD" button is assembled in the browser
   (it opens as a `blob:` URL) rather than published as a file — so the article body
