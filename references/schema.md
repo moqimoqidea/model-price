@@ -75,7 +75,9 @@ hosting mode has the same `DisplayName`. Explicit compatibility IDs and public
 catalogue aliases may resolve that record; ambiguous names do not transfer its
 specifications to another ID.
 
-Tencent descriptions may additionally contain `console_metadata`:
+Tencent descriptions may additionally contain `console_metadata`. Raw API fields
+may be absent when a record was captured only from visible pages; that absence
+does not establish that the console API omits or does not support them:
 
 - `captured_at`: the authenticated mirror capture time, distinct from the current
   read's `source.retrieved_at`

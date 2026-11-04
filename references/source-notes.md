@@ -368,6 +368,24 @@ than its API. This is runtime report metadata, not part of snapshot identity.
   or re-dated. Credentials, session parameters, account data, and personal quotas
   remain excluded. Parsed-cache version 42 invalidates the earlier introductions;
   baseline and mirror compatibility versions are unchanged.
+  The 2026-11-04 refresh verified all 126 current literal IDs across the same 20
+  author filters. Hy4 (`hy4`) was added; every earlier literal ID was verified on
+  its own detail page. All 125 existing introductions were unchanged after text
+  normalization, and every introduction matched its fresh catalogue card.
+  Current readable capabilities, input/output modalities, token/context limits,
+  default concurrency, TPM/RPM,
+  and protocols now follow the independently dated `detail_page` checks. Earlier
+  API specifications that these pages do not display retain their dated evidence.
+  Explicit compatibility aliases remain attached to their own literal IDs.
+  All 36 selected-mode `generation_options` were recaptured: 7 image, 20 video,
+  7 3D, and 2 world models. Their options establish only the recorded mode and
+  other selected values. Raw list metadata, 737 capability records, and billing
+  evidence retain their 2026-11-03 capture dates; the 62 earlier raw generation
+  configurations retain their original dates. None of these API responses was
+  recaptured or re-dated. Hy4 has visible-page evidence only; no console status
+  was inferred, so its lifecycle remains unknown. Credentials, account data,
+  personal quotas, and session parameters remain excluded. Parsed-cache version
+  43 invalidates earlier introductions; baseline and mirror versions are unchanged.
 - Baidu Qianfan: the pricing page is a Gatsby document. Its own HTML is the whole
   portal, and the Markdown behind its "查看 MD" button is assembled in the browser
   (it opens as a `blob:` URL) rather than published as a file — so the article body
