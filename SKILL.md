@@ -1,6 +1,6 @@
 ---
 name: model-price
-description: Find and compare major AI models by purpose, capabilities, specifications, lifecycle exceptions, availability, version, service mode, and official price, or scan catalogues and official retirement notices for launches, withdrawals, announcement dates, EOM, automatic redirects, EOS, billing changes, and price moves. Use for model research, provider availability, pricing, and change tracking involving Aliyun, Volcengine, Tencent Cloud, Baidu Qianfan, DeepSeek, Kimi, Zhipu, MiniMax, Xiaomi MiMo, Ant Ling (蚂蚁大模型), OpenAI, Anthropic, Google Gemini, xAI Grok, or Mistral AI.
+description: Find and compare major AI models by purpose, capabilities, specifications, availability, lifecycle and official price; scan catalogues and notices for releases, retirements and price changes; or run opt-in paid cross-provider TTFT, output TPS and cache performance benchmarks using environment-only API keys. Use for model research, pricing, change tracking or inference performance comparisons involving Aliyun, Volcengine, Tencent Cloud, DeepSeek and other major model providers.
 ---
 
 # Model Price
@@ -8,6 +8,17 @@ description: Find and compare major AI models by purpose, capabilities, specific
 Query public official model catalogues, introductions, prices, releases, and
 retirement notices without credentials. Use the bundled script for the facts;
 never answer a current price or change question from memory.
+
+For **inference performance comparisons** (TPS, TTFT, long input or cache), read
+[performance/README.md](performance/README.md), then use its separate CLI. Start
+with an offline plan and a Hello preflight for the selected targets. Warn about
+quota and paid input/output before live calls; start with a small smoke test,
+then normally 3 repetitions. Read keys only from named environment variables.
+Use Aliyun's workspace endpoint and each provider's own thinking parameters;
+never assume OpenAI compatibility makes provider-specific options identical.
+Keep cold/warm intent separate from observed cache hits, use actual server usage,
+and report unavailable measurements rather than inventing TPS. Do not benchmark
+unverified provider/auth contracts just because their price catalogue is supported.
 
 For **daily IM reports**, read [references/daily-workflow.md](references/daily-workflow.md)
 before acting. It owns installed-version verification, a single scan, concise
@@ -124,7 +135,9 @@ stay in the saved JSON/session, outside the scan message.
   during summarization. Its listing/notices/introductions remain visible;
   named-model queries still show its rates.
 - Prefer the vendor's machine-readable Markdown or public JSON over rendered
-  HTML. Do not request or store credentials. The sole console exception is an
+  HTML. Public catalogue commands never read credentials. Only the explicitly
+  requested performance CLI reads environment keys; never request plaintext or
+  store credentials. The sole console exception is an
   explicitly requested offline refresh of Tencent's model-description mirror.
 
 ## Delivery and maintenance

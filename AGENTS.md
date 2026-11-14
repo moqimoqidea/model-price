@@ -28,6 +28,17 @@ retained historical baseline.
 
 Standard library only, Python 3, no install step, no build step.
 
+The independent `performance/` directory is an opt-in paid inference benchmark,
+not a price adapter. Read `performance/README.md` when changing it. Its CLI is
+`performance/benchmark.py`; provider-specific thinking mappings live in
+`performance/providers.py`, environment-only target configuration in `config.py`,
+SSE/usage/timing in `protocols.py`, synthetic input in `prompts.py`, and paid-call
+budgets/checkpoints/statistics in `runner.py`. Offline fixtures live in
+`tests/test_performance.py`. It must never be invoked by public catalogue commands.
+Before changing the repository, inspect local changes and try a safe upstream
+fast-forward; preserve local edits and report any update failure rather than
+claiming the checkout is current. Do not replace a Git checkout by copying files.
+
 ## Layout
 
 ```
@@ -186,7 +197,7 @@ provider report rather than being inferred from a provider ID.
   digest under a stricter delivery budget; `references/reporting.md` owns what a
   digest may omit and what it must disclose.
 
-Neither the tool nor `budget` can summarize: it takes no credentials and has no
+Neither the public catalogue CLI nor `budget` can summarize: it takes no credentials and has no
 model to ask. So the code marks the overrun and the summarization is done by
 whoever writes the message out. `budget` exposes `overage(text, limit)` and
 `fits_within(text, limit)` for that measurement, and nothing that selects a
@@ -302,7 +313,7 @@ even when the tests still pass.
     (default 3000) is rendered complete with one closing line naming the overrun;
     no selected block is dropped, no list is capped, no string is sliced. This is not
     cosmetic: a cut price loses its decimal point and the reader cannot tell what
-    was left out. The tool takes no credentials and has no model, so it never
+    was left out. The public catalogue CLI takes no credentials and has no model, so it never
     summarizes either — it measures and says so, and whoever sends the message
     summarizes. Those are the only two length rules; nothing in `messages` may
     measure or slice a string, and `budget` only counts characters. A host may
@@ -341,8 +352,15 @@ even when the tests still pass.
     dropped: `channel_notes` renders its name, its reason, and every coverage gap
     for the delivery note (`render --notes`). `update_skipped` and `check_failed`
     remain in JSON while the scan message omits the Skill update check.
-18. **No credentials, ever.** The only authenticated path is refreshing the
-    explicit Tencent mirror through a user-owned logged-in session, offline.
+18. **Public catalogue commands never read credentials.** The Tencent mirror
+    refresh uses a user-owned logged-in session offline. The separate, explicitly
+    requested `performance/` CLI may read API keys only from environment variables;
+    it never saves keys, auth headers, private endpoint URLs or raw response bodies.
+    Each selected route must pass a bounded Hello preflight before long paid calls.
+    Provider/protocol thinking and authentication contracts must be verified per
+    provider; price-catalogue coverage never implies inference support. Missing
+    usage stays unknown, warm intent is not proof of a cache hit, failed attempts
+    are not retried automatically, and measurements never enter price baselines.
 19. **An official update time needs official evidence.** A vendor-labelled date or
     a date the official update log publishes may populate `source_updated_at`. When
     no such evidence exists, JSON retains the most recent successful snapshot

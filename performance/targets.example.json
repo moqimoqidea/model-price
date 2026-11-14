@@ -1,0 +1,63 @@
+{
+  "targets": [
+    {
+      "id": "deepseek",
+      "provider": "deepseek",
+      "thinking_mode": "off",
+      "protocol": "chat",
+      "url": "https://api.deepseek.com/chat/completions",
+      "model": "deepseek-flash",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "region": "official-default",
+      "revision": "DeepSeek-V4.1-Flash (rolling alias; verify before comparing)",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "params": {}
+    },
+    {
+      "id": "aliyun",
+      "provider": "aliyun",
+      "thinking_mode": "off",
+      "protocol": "chat",
+      "url": "https://${DASHSCOPE_WORKSPACE_ID}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "url_env": "ALIYUN_BENCHMARK_URL",
+      "model": "deepseek-v4.1-flash",
+      "model_env": "ALIYUN_BENCHMARK_MODEL",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "region": "cn-beijing; verify workspace endpoint",
+      "revision": "unverified; confirm hosted version in console",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "params": {}
+    },
+    {
+      "id": "tencent",
+      "provider": "tencent",
+      "thinking_mode": "off",
+      "protocol": "chat",
+      "url": "https://tokenhub.tencentmaas.com/v1/chat/completions",
+      "model": "deepseek-v4.1-flash",
+      "api_key_env": "TENCENT_API_KEY",
+      "region": "guangzhou",
+      "revision": "unverified; confirm hosted version in console",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "params": {}
+    },
+    {
+      "id": "volcengine",
+      "provider": "volcengine",
+      "thinking_mode": "off",
+      "protocol": "chat",
+      "url": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+      "model": "deepseek-v4-1-flash-261017",
+      "model_env": "ARK_BENCHMARK_MODEL",
+      "api_key_env": "ARK_API_KEY",
+      "region": "cn-beijing",
+      "revision": "261017; verify alias/revision equivalence with other targets",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "params": {}
+    }
+  ]
+}

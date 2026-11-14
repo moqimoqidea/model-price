@@ -45,6 +45,14 @@ validation. Price, lifecycle, and publication baseline versions are unchanged.
 
 ## Local artifacts and Git
 
+The separate opt-in inference benchmark reads credentials only through configured
+environment variable names. It writes owner-only, ignored results beneath
+`cache/performance/`, retaining counters, timings, model identities and prompt
+hashes rather than prompt/output text, headers, keys, workspace endpoint URLs or
+raw error bodies. Failure diagnostics are fixed codes rather than provider
+exception strings. See [performance/README.md](../performance/README.md) for paid
+call boundaries. This exception never applies to the public catalogue CLI.
+
 `cache/` and `snapshots/` retain their own ignore files. Environment overrides,
 HAR exports, key/certificate containers, and private capture/session directories
 are ignored at the root too. Ignore rules do not protect a file that was already
