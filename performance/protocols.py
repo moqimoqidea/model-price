@@ -116,6 +116,9 @@ class Observation:
     finished: bool = False
     finish_reason: str | None = None
     model: str | None = None
+    # A vendor build identifier, when the route publishes one; it tells two same-named
+    # revisions apart without guessing from the model ID.
+    fingerprint: str | None = None
     usage: dict = field(default_factory=dict)
     protocol: str = ""
 
@@ -139,6 +142,7 @@ class Observation:
             raise StreamError("provider_stream_error")
         if protocol == "chat":
             self.model = item.get("model") or self.model
+            self.fingerprint = item.get("system_fingerprint") or self.fingerprint
             for choice in item.get("choices", []):
                 delta = choice.get("delta", {})
                 self.content(delta.get("content"), now)
@@ -264,7 +268,8 @@ class Observation:
                                "hit" if self.cached_tokens > 0 else "miss"),
             "cache_hit_ratio": (self.cached_tokens / self.input_tokens
                                 if self.cached_tokens is not None and self.input_tokens else None),
-            "response_model": self.model, "finish_reason": self.finish_reason,
+            "response_model": self.model, "system_fingerprint": self.fingerprint,
+            "finish_reason": self.finish_reason,
             "has_text": self.first_text is not None,
         }
 
@@ -274,7 +279,7 @@ def measure(target: Target, text: str, limit: int, warm: bool, timeout: float = 
     """Make exactly one paid attempt; all failures have fixed, credential-free diagnostics."""
     start = clock()
     observation = Observation(start)
-    result = {"status": "error", "error": None,
+    result = {"status": "error", "error": None, "headers_seconds": None,
               "prompt_sha256": hashlib.sha256(text.encode()).hexdigest(),
               "prompt_characters": len(text)}
     try:

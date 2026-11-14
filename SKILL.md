@@ -13,7 +13,10 @@ For **inference performance comparisons** (TPS, TTFT, long input or cache), read
 [performance/README.md](performance/README.md), then use its separate CLI. Start
 with an offline plan and a Hello preflight for the selected targets. Warn about
 quota and paid input/output before live calls; start with a small smoke test,
-then normally 3 repetitions. Read keys only from named environment variables.
+then normally 3 repetitions. Each route also answers one small density probe so a
+token target is the size actually sent; `--no-calibrate` opts out, and a report
+names every route's own requested model ID beside the model its response named.
+Read keys only from named environment variables.
 Use Aliyun's workspace endpoint and each provider's own thinking parameters;
 never assume OpenAI compatibility makes provider-specific options identical.
 Keep cold/warm intent separate from observed cache hits, use actual server usage,

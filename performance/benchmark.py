@@ -30,6 +30,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--thinking", choices=("on", "off", "provider-default"), help="verified provider mapping only; default from target config")
     result.add_argument("--max-output-tokens", type=token_count, default=256)
     result.add_argument("--max-total-tokens", type=token_count, default=500000, help="estimated run budget, not a currency cap")
+    result.add_argument("--no-calibrate", action="store_true", help="skip the paid density probe and use the planning constant")
     result.add_argument("--timeout", type=float, default=120, help="socket timeout and between-event deadline, seconds")
     result.add_argument("--pause", type=float, default=1, help="seconds between paid calls")
     result.add_argument("--output", type=Path, help="new JSON file; defaults to ignored cache/performance/")
@@ -64,7 +65,8 @@ def main(argv=None) -> int:
             return 0 if all(target.ready() for target in targets) else 1
         if args.thinking:
             targets = [replace(target, thinking_mode=args.thinking) for target in targets]
-        experiment = plan(targets, sizes, modes, args.repeats, args.max_output_tokens, args.max_total_tokens)
+        experiment = plan(targets, sizes, modes, args.repeats, args.max_output_tokens,
+                          args.max_total_tokens, calibrate=not args.no_calibrate and args.command != "check")
         if args.command == "plan":
             print(json.dumps(experiment, ensure_ascii=False, indent=2))
             return 0

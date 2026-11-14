@@ -11,7 +11,8 @@
 新增独立的 [多渠道性能测试](performance/README.md)：比较同模型在不同渠道的 TTFT、
 输出 TPS、长输入和实际缓存命中，支持 Chat Completions、Responses、Anthropic、Gemini
 流式解析。先提供 DeepSeek、百炼、腾讯与方舟的厂家配置；密钥只读环境变量，百炼同时读取
-`DASHSCOPE_WORKSPACE_ID`。先 Hello 预检，再做短输出、3 次重复的小测试；默认不跑昂贵的
+`DASHSCOPE_WORKSPACE_ID`。先 Hello 预检，再对每个渠道做一次密度校准，让“10K 输入”就是实际发出去的
+10K；报告逐渠道写出真实请求的模型 ID 与响应返回的模型。随后做短输出、3 次重复的小测试；默认不跑昂贵的
 完整长上下文矩阵。原有公开价格命令保持无凭据。协议解析与文档适配不等同于实网验证，
 其余渠道补齐鉴权与实测报告后再启用。
 

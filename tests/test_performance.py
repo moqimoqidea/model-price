@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from performance.config import Target, load_targets, token_count
-from performance.prompts import corpus, prompt
+from performance.prompts import CALIBRATION_TOKENS, DEFAULT_CHARS_PER_TOKEN, corpus, prompt
 from performance.protocols import NoRedirect, Observation, measure, request_parts
 from performance.providers import generation_parameters
 from performance.runner import aggregate, display, execute, plan
@@ -72,7 +72,7 @@ class PerformanceTests(unittest.TestCase):
 
     def test_chat_skips_role_and_usage_for_ttft(self):
         result = self.measurement("chat", [
-            {"choices": [{"delta": {"role": "assistant"}}]},
+            {"choices": [{"delta": {"role": "assistant"}}], "system_fingerprint": "fp-fixture"},
             {"choices": [{"delta": {"reasoning_content": "reason"}}]},
             {"choices": [{"delta": {"content": "Hello"}}]},
             {"choices": [{"delta": {"content": " world"}, "finish_reason": "stop"}]},
@@ -87,6 +87,7 @@ class PerformanceTests(unittest.TestCase):
         self.assertEqual(result["output_tps"], 4.5)
         self.assertEqual(result["visible_output_tps"], 5)
         self.assertEqual(result["cache_hit_ratio"], 0.6)
+        self.assertEqual(result["system_fingerprint"], "fp-fixture")
 
     def test_nonthinking_without_details_can_measure_reported_output(self):
         result = self.measurement("chat", [
@@ -337,7 +338,7 @@ class PerformanceTests(unittest.TestCase):
         self.assertEqual(content, corpus(10000))
         self.assertNotEqual(prompt(content, "a")[:80], prompt(content, "b")[:80])
         self.assertEqual(prompt(content, "a"), prompt(content, "a"))
-        self.assertLess(abs(len(prompt(content, "x" * 64)) / 4 - 10000), 100)
+        self.assertLess(abs(len(prompt(content, "x" * 64)) / DEFAULT_CHARS_PER_TOKEN - 10000), 100)
 
     def test_plan_includes_paid_warmup_and_rejects_large_matrix(self):
         report = plan([target()], [10000], ["cold", "warm"], 3, 256, 500000)
@@ -356,7 +357,7 @@ class PerformanceTests(unittest.TestCase):
                     "ttft_seconds": 0.2, "output_tps": 30, "cache_observed": "hit" if warm else "miss"}
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / "result.json"
-            report = execute([target()], plan([target()], [128], ["cold", "warm"], 3, 32, 500000),
+            report = execute([target()], plan([target()], [128], ["cold", "warm"], 3, 32, 500000, calibrate=False),
                              output, probe=probe, sleep=lambda _: None, run_id="fixture")
             self.assertEqual(len(calls), 8)
             self.assertEqual(calls[0], ("Hello", 16, False))
@@ -388,7 +389,7 @@ class PerformanceTests(unittest.TestCase):
             return {"status": "ok", "input_tokens": 2 if text == "Hello" else 500,
                     "output_tokens": 3, "cache_observed": "miss"}
         with tempfile.TemporaryDirectory() as folder:
-            result = execute([target()], plan([target()], [100], ["cold"], 3, 16, 500),
+            result = execute([target()], plan([target()], [100], ["cold"], 3, 16, 500, calibrate=False),
                              Path(folder) / "result.json", probe=probe, sleep=lambda _: None)
         self.assertEqual(len(calls), 2)
         self.assertEqual(result["state"], "budget_stopped")
@@ -416,7 +417,7 @@ class PerformanceTests(unittest.TestCase):
                 raise KeyboardInterrupt
             return {"status": "ok", "input_tokens": 2, "output_tokens": 3}
         with tempfile.TemporaryDirectory() as folder:
-            result = execute([target()], plan([target()], [100], ["cold"], 3, 16, 100000),
+            result = execute([target()], plan([target()], [100], ["cold"], 3, 16, 100000, calibrate=False),
                              Path(folder) / "result.json", probe=probe, sleep=lambda _: None)
         self.assertEqual(result["state"], "interrupted")
         self.assertEqual(result["samples"][0]["error"], "interrupted")
@@ -430,6 +431,58 @@ class PerformanceTests(unittest.TestCase):
         self.assertEqual(len(summary), 2)
         self.assertEqual(summary[0]["metrics"]["ttft_seconds"]["mean"], 1)
         self.assertEqual(summary[0]["failures"], 1)
+
+    def test_corpus_density_is_a_parameter_not_a_fixed_four_characters(self):
+        self.assertEqual(CALIBRATION_TOKENS, 2000)
+        self.assertLess(len(corpus(1000, 4.0)), len(corpus(1000, DEFAULT_CHARS_PER_TOKEN)))
+
+    def test_plan_accounts_for_one_density_probe_per_route(self):
+        probed = plan([target()], [10000], ["cold"], 3, 16, 500000)
+        bare = plan([target()], [10000], ["cold"], 3, 16, 500000, calibrate=False)
+        self.assertEqual(probed["calibration_requests"], 1)
+        self.assertEqual(bare["calibration_requests"], 0)
+        self.assertGreater(probed["total_tokens_estimate"], bare["total_tokens_estimate"])
+
+    def test_calibration_probe_replaces_the_constant_with_the_route_density(self):
+        calls = []
+
+        def probe(route, text, limit, warm, timeout):
+            calls.append((len(text), limit))
+            return {"status": "ok", "error": None, "input_tokens": round(len(text) / 5.8),
+                    "output_tokens": 1, "ttft_seconds": 0.1, "output_tps": 1}
+
+        with tempfile.TemporaryDirectory() as folder:
+            report = execute([target()], plan([target()], [100], ["cold"], 1, 4, 500000),
+                             Path(folder) / "result.json", probe=probe, sleep=lambda _: None, run_id="fixture")
+        self.assertEqual(calls[0], (5, 16))
+        self.assertEqual(calls[1][1], 1)
+        density = report["calibration"]["fixture"]["chars_per_token"]
+        self.assertAlmostEqual(density, 5.8, places=1)
+        self.assertTrue(report["samples"][0]["input_target_within_10_percent"])
+        self.assertEqual(report["samples"][0]["chars_per_token"], density)
+
+    def test_display_names_the_requested_model_and_any_answered_alias(self):
+        rows = [
+            dict(target="volcengine", input_target=100, phase="measurement", status="ok",
+                 model="deepseek-v4-1-flash-261017", response_model="deepseek-v4-1-flash-261017",
+                 mode="cold", cache_observed="miss", ttft_seconds=1, output_tps=100),
+            dict(target="aliyun", input_target=100, phase="measurement", status="ok",
+                 model="deepseek-v4.1-flash", response_model="deepseek-v4-flash",
+                 mode="cold", cache_observed="miss", ttft_seconds=1, output_tps=100),
+        ]
+        text = display({"state": "completed", "preflight": [], "summary": aggregate(rows)})
+        self.assertIn("model=deepseek-v4-1-flash-261017", text)
+        self.assertIn("model=deepseek-v4.1-flash（响应 deepseek-v4-flash）", text)
+
+    def test_display_reports_deviation_and_spread(self):
+        base = dict(target="fixture", model="fixture-model", input_target=10000,
+                    phase="measurement", status="ok", mode="cold", cache_observed="miss")
+        rows = [dict(base, input_tokens=6870, ttft_seconds=value, output_tps=100,
+                     headers_seconds=0.2) for value in (1.0, 1.2)]
+        text = display({"state": "completed", "preflight": [], "summary": aggregate(rows)})
+        self.assertIn("偏离 -31%", text)
+        self.assertIn("±", text)
+        self.assertIn("headers=0.200s", text)
 
 
 if __name__ == "__main__":
