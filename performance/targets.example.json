@@ -50,6 +50,7 @@
       "thinking_mode": "off",
       "protocol": "chat",
       "url": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+      "base_url_env": "ARK_BASE_URL",
       "model": "deepseek-v4-1-flash-261017",
       "model_env": "ARK_BENCHMARK_MODEL",
       "api_key_env": "ARK_API_KEY",

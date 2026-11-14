@@ -23,7 +23,7 @@ from performance.config import Target, load_targets, token_count
 from performance.prompts import corpus, prompt
 from performance.protocols import NoRedirect, Observation, measure, request_parts
 from performance.providers import generation_parameters
-from performance.runner import aggregate, execute, plan
+from performance.runner import aggregate, display, execute, plan
 
 
 def target(protocol="chat", **kwargs):
@@ -224,6 +224,101 @@ class PerformanceTests(unittest.TestCase):
             changed = replace(route, thinking_mode="on")
             self.assertEqual(changed.missing_env, route.missing_env)
             self.assertFalse(changed.ready())
+
+    def test_every_missing_provider_key_is_named_and_no_paid_probe_runs(self):
+        expected = {
+            "deepseek": {"DEEPSEEK_API_KEY"},
+            "aliyun": {"DASHSCOPE_API_KEY", "DASHSCOPE_WORKSPACE_ID"},
+            "tencent": {"TENCENT_API_KEY"},
+            "volcengine": {"ARK_API_KEY"},
+        }
+        with mock.patch.dict(os.environ, {}, clear=True), tempfile.TemporaryDirectory() as folder:
+            routes = load_targets(ROOT / "performance/targets.example.json")
+            for route in routes:
+                self.assertEqual(set(route.missing_environment()), expected[route.id])
+                self.assertEqual(set(route.public()["missing_environment"]), expected[route.id])
+            probe = mock.Mock(side_effect=AssertionError("must not send requests without environment"))
+            result = execute(routes, plan(routes, [100], ["cold"], 3, 16, 500000),
+                             Path(folder) / "result.json", probe=probe)
+        probe.assert_not_called()
+        self.assertEqual(result["samples"], [])
+        for row in result["preflight"]:
+            self.assertEqual(set(row["missing_environment"]), expected[row["target"]])
+            for name in expected[row["target"]]:
+                self.assertIn(name, display(result))
+
+    def test_empty_and_whitespace_exports_are_missing(self):
+        with mock.patch.dict(os.environ, {"FIXTURE_API_KEY": " \n\t"}):
+            route = target()
+            self.assertFalse(route.ready())
+            self.assertEqual(route.missing_environment(), ("FIXTURE_API_KEY",))
+        with mock.patch.dict(os.environ, {"DASHSCOPE_API_KEY": "", "DASHSCOPE_WORKSPACE_ID": "  "}, clear=True):
+            route = load_targets(ROOT / "performance/targets.example.json", ["aliyun"])[0]
+            self.assertEqual(set(route.missing_environment()), {"DASHSCOPE_API_KEY", "DASHSCOPE_WORKSPACE_ID"})
+
+    def test_ark_base_url_supports_base_and_full_endpoint_without_persisting_either(self):
+        for base in ("https://fixture.example/api/v3", "https://fixture.example/api/v3/",
+                     "https://fixture.example/api/v3/chat/completions"):
+            with self.subTest(base=base), mock.patch.dict(os.environ, {"ARK_BASE_URL": base}):
+                route = load_targets(ROOT / "performance/targets.example.json", ["volcengine"])[0]
+                self.assertEqual(route.url, "https://fixture.example/api/v3/chat/completions")
+                self.assertNotIn("fixture.example", json.dumps(route.public()))
+
+    def test_ark_base_url_is_optional_with_official_default(self):
+        with mock.patch.dict(os.environ, {"ARK_API_KEY": "fixture-key"}, clear=True):
+            route = load_targets(ROOT / "performance/targets.example.json", ["volcengine"])[0]
+            self.assertTrue(route.ready())
+            self.assertEqual(route.url, "https://ark.cn-beijing.volces.com/api/v3/chat/completions")
+
+    def test_selected_target_ignores_unrelated_environment_values(self):
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "fixture-key", "ARK_BASE_URL": "invalid",
+                                         "DASHSCOPE_WORKSPACE_ID": "invalid workspace"}, clear=True):
+            route = load_targets(ROOT / "performance/targets.example.json", ["deepseek"])[0]
+        self.assertEqual(route.id, "deepseek")
+
+    def test_full_url_override_takes_precedence_over_base_environment(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "config.json"
+            path.write_text(json.dumps({"targets": [{"id": "fixture", "protocol": "chat",
+                "url_env": "FIXTURE_URL", "base_url_env": "FIXTURE_BASE", "model": "fixture",
+                "api_key_env": "FIXTURE_API_KEY"}]}))
+            with mock.patch.dict(os.environ, {"FIXTURE_URL": "https://full.example/v1/chat/completions",
+                                             "FIXTURE_BASE": "https://base.example/v1"}):
+                route = load_targets(path)[0]
+                self.assertEqual(route.url, "https://full.example/v1/chat/completions")
+            with mock.patch.dict(os.environ, {"FIXTURE_BASE": "https://base.example/v1"}, clear=True):
+                route = load_targets(path)[0]
+                self.assertEqual(route.url, "https://base.example/v1/chat/completions")
+                self.assertEqual(route.missing_env, ())
+
+    def test_aliyun_full_endpoint_does_not_require_workspace(self):
+        with mock.patch.dict(os.environ, {"DASHSCOPE_API_KEY": "fixture-key",
+                                         "ALIYUN_BENCHMARK_URL": "https://fixture.example/chat/completions"}, clear=True):
+            route = load_targets(ROOT / "performance/targets.example.json", ["aliyun"])[0]
+            self.assertTrue(route.ready())
+            self.assertEqual(route.missing_environment(), ())
+
+    def test_env_command_is_offline_and_names_missing_exports(self):
+        from performance.benchmark import main
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch("urllib.request.build_opener") as network, \
+                mock.patch("performance.benchmark.execute") as paid, \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+            status = main(["env"])
+        self.assertEqual(status, 1)
+        for name in ("DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY", "DASHSCOPE_WORKSPACE_ID", "TENCENT_API_KEY", "ARK_API_KEY"):
+            self.assertIn(name, output.getvalue())
+        network.assert_not_called()
+        paid.assert_not_called()
+
+    def test_env_command_never_exposes_loaded_values(self):
+        from performance.benchmark import main
+        values = {name: "fixture-only-hidden-value" for name in
+                  ("DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY", "DASHSCOPE_WORKSPACE_ID", "TENCENT_API_KEY", "ARK_API_KEY")}
+        with mock.patch.dict(os.environ, values, clear=True), mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+            status = main(["env"])
+        self.assertEqual(status, 0)
+        self.assertNotIn("fixture-only-hidden-value", output.getvalue())
 
     def test_config_rejects_credentials_and_invalid_endpoints(self):
         for change in ({"api_key": "not-real"}, {"url": "http://example.test"},

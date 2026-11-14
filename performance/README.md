@@ -9,6 +9,11 @@
 从仓库根目录执行，仅用 Python 标准库，无需安装依赖：
 
 ```bash
+# 只检查当前进程能否读到所需变量，不联网、不收费；缺失时逐项点名。
+python3 performance/benchmark.py env
+# 变量在 ~/.zshrc、当前进程尚未加载时：
+zsh -ic 'python3 performance/benchmark.py env'
+
 # 只看计划，不发请求；配置示例自带四个目标。
 python3 performance/benchmark.py plan
 
@@ -55,14 +60,20 @@ python3 performance/benchmark.py report --input cache/performance/RUN.json
 | DeepSeek | `DEEPSEEK_API_KEY` | `thinking.type=enabled/disabled` | 官方文档、离线流式测试；待实网验证 |
 | 阿里百炼 | `DASHSCOPE_WORKSPACE_ID`、`DASHSCOPE_API_KEY` | `enable_thinking=true/false` | 官方文档、工作空间与离线测试；待实网验证 |
 | 腾讯 TokenHub | `TENCENT_API_KEY` | `thinking.type=enabled/disabled` | 官方文档、离线测试；待实网验证 |
-| 火山方舟 | `ARK_API_KEY` | `thinking.type=enabled/disabled` | 官方文档、离线测试；待实网验证 |
+| 火山方舟 | `ARK_API_KEY`；可选 `ARK_BASE_URL` | `thinking.type=enabled/disabled` | 官方文档、离线测试；待实网验证 |
 
 百炼请求地址是
 `https://${DASHSCOPE_WORKSPACE_ID}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions`。
 不会在工作空间缺失时退回旧地址。不同地域请在本地环境设置完整的 `ALIYUN_BENCHMARK_URL`。
 `ALIYUN_BENCHMARK_MODEL`、`ARK_BENCHMARK_MODEL` 可覆写对应 API ID；方舟的接入点 ID 也可使用。
+方舟正式 CLI 读取 `ARK_BASE_URL`：例如 `https://ark.cn-beijing.volces.com/api/v3`，
+会补上 `/chat/completions`；如果已是完整 Chat 端点则不重复追加。未设置时使用示例中的官方端点。
+自定义配置可用 `base_url_env` 指定其他 API 基址变量，`url_env` 提供的完整端点优先。
 所有配置中的 `api_key_env` 都可改成用户已有的环境变量名称，不复制密钥。
 脚本继承当前进程环境，不自动读取 `.env`、登录 shell 文件、浏览器或 Keychain。
+缺失、空字符串及纯空白值都按未配置处理；`env`、`plan` 以及 `check`/`run` 的预检会列出
+缺少的具体变量名，缺值目标不会发送 Hello 或长输入请求。百炼可同时列出缺少的密钥与工作空间；
+显式配置了完整的百炼端点时不再要求额外提供工作空间 ID。提示只包含变量名称，不包含值。
 
 原始 HTTP 的百炼 `enable_thinking` 直接位于 JSON 顶层；Python OpenAI SDK 的 `extra_body`
 是 SDK 包装参数，不能作为原始 JSON 的一层发出去。`providers.py` 根据厂家与协议翻译

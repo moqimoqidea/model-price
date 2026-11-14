@@ -122,7 +122,9 @@ def execute(targets: list[Target], experiment: dict, path: Path, *, check_only=F
             payload["preflight"].append(record)
             checkpoint()
             if not target.ready():
-                result = {"status": "error", "error": "missing_environment" if target.missing_env else "missing_key"}
+                result = {"status": "error", "error": "missing_environment" if target.missing_env else "missing_key",
+                          "missing_environment": list(target.missing_environment())}
+                progress(f"{target.id}: 缺少环境变量 {', '.join(result['missing_environment'])}；跳过请求")
             else:
                 progress(f"{target.id}: Hello 鉴权预检")
                 result = invoke(target, "Hello", 16, False, 8)
@@ -192,6 +194,8 @@ def display(payload: dict) -> str:
     lines = [f"性能测试：{payload['state']}"]
     for item in payload["preflight"]:
         lines.append(f"{item['target']} Hello: {item['status']}" + (f" ({item['error']})" if item.get("error") else ""))
+        if item.get("missing_environment"):
+            lines.append("  缺少环境变量：" + ", ".join(item["missing_environment"]) + "；export 后重试。")
     for group in payload["summary"]:
         def mean(name):
             value = group["metrics"][name]["mean"]

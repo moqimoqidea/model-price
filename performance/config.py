@@ -19,6 +19,20 @@ PARAMETERS = {
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
+def environment_value(name: str) -> str:
+    """Treat empty or whitespace-only exports as missing, without exposing their contents."""
+    return os.environ.get(name, "").strip()
+
+
+def endpoint_from_base(base: str, protocol: str) -> str:
+    """Append only the protocol route; the user's API base already owns its version prefix."""
+    validate_url(base)
+    suffix = {"chat": "/chat/completions", "responses": "/responses",
+              "anthropic": "/messages", "gemini": "/models/{model}:streamGenerateContent"}[protocol]
+    base = base.rstrip("/")
+    return base if base.endswith(suffix) else base + suffix
+
+
 def positive(value: object, label: str) -> int:
     if type(value) is not int or value <= 0:
         raise ValueError(f"{label} must be a positive integer")
@@ -53,10 +67,16 @@ class Target:
     missing_env: tuple = ()
 
     def key(self) -> str | None:
-        return os.environ.get(self.api_key_env) or None
+        return environment_value(self.api_key_env) or None
+
+    def missing_environment(self) -> tuple[str, ...]:
+        names = list(self.missing_env)
+        if not self.key():
+            names.insert(0, self.api_key_env)
+        return tuple(dict.fromkeys(names))
 
     def ready(self) -> bool:
-        return bool(self.key()) and not self.missing_env
+        return not self.missing_environment()
 
     def generation_params(self) -> dict:
         return generation_parameters(self.provider, self.protocol, self.thinking_mode, self.params)
@@ -70,7 +90,7 @@ class Target:
             "provider": self.provider, "thinking_mode": self.thinking_mode,
             "region": self.region, "revision": self.revision,
             "api_key_env": self.api_key_env, "key_present": bool(self.key()),
-            "missing_environment": list(self.missing_env), "ready": self.ready(),
+            "missing_environment": list(self.missing_environment()), "ready": self.ready(),
             "context_window": self.context_window, "max_output_tokens": self.max_output_tokens,
             "cache_policy": self.cache_policy, "params_sha256": digest,
         }
@@ -84,22 +104,51 @@ def load_targets(path: Path, selected: list[str] | None = None) -> list[Target]:
     if not isinstance(document, dict) or set(document) != {"targets"} or not isinstance(document["targets"], list):
         raise ValueError("config must contain a targets array only")
     targets, ids = [], set()
-    allowed = (set(Target.__dataclass_fields__) - {"missing_env"}) | {"url_env", "model_env"}
+    allowed = (set(Target.__dataclass_fields__) - {"missing_env"}) | {"url_env", "model_env", "base_url_env"}
     for raw in document["targets"]:
         if not isinstance(raw, dict) or set(raw) - allowed:
             raise ValueError("unknown target field; credentials belong in environment variables")
         item = dict(raw)
+        identifier = item.get("id")
+        if not isinstance(identifier, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", identifier):
+            raise ValueError("target id must use letters, digits, underscores, or hyphens")
+        if identifier in ids:
+            raise ValueError("duplicate target id")
+        ids.add(identifier)
+        if selected and identifier not in selected:
+            continue
+        if item.get("protocol") not in PROTOCOLS:
+            raise ValueError("protocol must be chat, responses, anthropic, or gemini")
+        missing_env = []
+        full_url_override = False
         for field_name in ("url", "model"):
             env = item.pop(field_name + "_env", None)
             if env is not None:
                 if not isinstance(env, str) or not ENV_NAME.fullmatch(env):
                     raise ValueError("invalid environment variable name")
-                item[field_name] = os.environ.get(env) or item.get(field_name, "")
-        missing_env = []
+                override = environment_value(env)
+                fallback = item.get(field_name, "")
+                if not override and not fallback:
+                    missing_env.append(env)
+                item[field_name] = override or fallback or ("https://missing-environment.invalid" if field_name == "url" else "missing-model")
+                if field_name == "url":
+                    full_url_override = bool(override)
+        base_env = item.pop("base_url_env", None)
+        if base_env is not None:
+            if not isinstance(base_env, str) or not ENV_NAME.fullmatch(base_env):
+                raise ValueError("invalid environment variable name")
+            base = environment_value(base_env)
+            if base and not full_url_override:
+                item["url"] = endpoint_from_base(base, item["protocol"])
+                if raw.get("url_env") in missing_env:
+                    missing_env.remove(raw["url_env"])
+            elif not base and not item.get("url"):
+                missing_env.append(base_env)
+                item["url"] = "https://missing-environment.invalid"
         # Aliyun workspace routing is explicit; a missing workspace never falls back to a legacy host.
         template = item.get("url", "")
         if isinstance(template, str) and "${DASHSCOPE_WORKSPACE_ID}" in template:
-            workspace = os.environ.get("DASHSCOPE_WORKSPACE_ID", "")
+            workspace = environment_value("DASHSCOPE_WORKSPACE_ID")
             if workspace and not re.fullmatch(r"[A-Za-z0-9_-]+", workspace):
                 raise ValueError("invalid DASHSCOPE_WORKSPACE_ID hostname component")
             if not workspace:
@@ -109,13 +158,6 @@ def load_targets(path: Path, selected: list[str] | None = None) -> list[Target]:
             target = Target(**item)
         except TypeError:
             raise ValueError("target is missing required fields") from None
-        if not isinstance(target.id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", target.id):
-            raise ValueError("target id must use letters, digits, underscores, or hyphens")
-        if target.id in ids:
-            raise ValueError("duplicate target id")
-        ids.add(target.id)
-        if selected and target.id not in selected:
-            continue
         object.__setattr__(target, "missing_env", tuple(missing_env))
         if target.protocol not in PROTOCOLS:
             raise ValueError("protocol must be chat, responses, anthropic, or gemini")

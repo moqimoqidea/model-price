@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="Opt-in paid TTFT/TPS comparison; plan is offline.")
-    result.add_argument("command", choices=("plan", "check", "run", "report"))
+    result.add_argument("command", choices=("env", "plan", "check", "run", "report"))
     result.add_argument("--config", type=Path, default=ROOT / "performance/targets.example.json")
     result.add_argument("--target", action="append", help="literal target id; repeat to select several")
     result.add_argument("--input-tokens", default="10K", help="approximate sizes, e.g. 10K,50K,500K,800K; K=1000")
@@ -55,6 +55,13 @@ def main(argv=None) -> int:
         if not modes or set(modes) - {"cold", "warm"}:
             cli.error("--modes must contain cold and/or warm")
         targets = load_targets(args.config, args.target)
+        if args.command == "env":
+            for target in targets:
+                missing = target.missing_environment()
+                print(f"{target.id}: " + ("缺少环境变量 " + ", ".join(missing) + "；不会发送请求。"
+                                        if missing else "环境变量已就绪（未验证授权）。"))
+            print("仅检查当前进程环境，不联网。变量写在 ~/.zshrc 时，请先加载配置，或用 zsh -ic 启动本命令。")
+            return 0 if all(target.ready() for target in targets) else 1
         if args.thinking:
             targets = [replace(target, thinking_mode=args.thinking) for target in targets]
         experiment = plan(targets, sizes, modes, args.repeats, args.max_output_tokens, args.max_total_tokens)
