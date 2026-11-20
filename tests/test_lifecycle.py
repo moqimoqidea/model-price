@@ -267,6 +267,39 @@ Starting August 20, 2026, paid APIs remain for existing users. The free music ge
         self.assertIn("getDocDetail", seen[0])
         self.assertEqual(found[0]["model_id"], "doubao-old-260101")
 
+    def test_openai_current_page_columns_are_read_by_their_headers(self):
+        page = """## Upcoming deprecations
+
+| Shutdown date | Affected model | Status | Recommended replacement | Notice date |
+| --- | --- | --- | --- | --- |
+| **Dec 11, 2026** | `gpt-5`, `gpt-5-2025-08-07` | Deprecated | `gpt-6.1-sol` | Jun 11, 2026 |
+| **Dec 1, 2026** | `gpt-image-1-mini` | Deprecated | `gpt-image-2.6-sunburst` or `gpt-image-2.6-flare` | Jun 2, 2026 |
+
+## Feature and endpoint deprecations
+
+| Shutdown date | Affected feature or endpoint | Status | Recommended replacement | Notice date |
+| --- | --- | --- | --- | --- |
+| **Nov 30, 2026** | `/v1/prompts` and reusable prompt objects | Deprecated | Move it. | Jun 3, 2026 |
+
+## Past deprecations
+
+| Shutdown date | Affected model or feature | Listed replacement | Notice date |
+| --- | --- | --- | --- |
+| **Oct 23, 2026** | `gpt-4`, `gpt-4-0613` | `gpt-5.6-sol` | Apr 22, 2026 |
+"""
+        found = openai_events(page)
+        self.assertEqual(
+            {item["model_id"] for item in found},
+            {"gpt-5", "gpt-5-2025-08-07", "gpt-image-1-mini", "gpt-4", "gpt-4-0613"},
+        )
+        first = next(item for item in found if item["model_id"] == "gpt-5")
+        self.assertEqual(first["eos_at"], "2026-12-11")
+        self.assertEqual(first["announced_at"], "2026-06-11")
+        self.assertEqual(first["replacement"], "gpt-6.1-sol")
+        self.assertIsNone(
+            next(item for item in found if item["model_id"] == "gpt-image-1-mini")["replacement"]
+        )
+
     def test_openai_single_segment_reasoning_id_is_kept(self):
         page = """## September 10, 2026
 | Shutdown date | Model / system | Recommended replacement |
@@ -276,6 +309,25 @@ Starting August 20, 2026, paid APIs remain for existing users. The free music ge
         found = openai_events(page)
         self.assertEqual({item["model_id"] for item in found}, {"o1", "o1-2024-12-17"})
         self.assertTrue(all(item["source_url"].endswith(".md") for item in found))
+
+    def test_kimi_undated_retired_rows_are_evidence_but_scheduled_promises_are_not(self):
+        page = """## 多模态模型
+
+| 模型名称 | 描述 |
+| --- | --- |
+| `kimi-k3.1-pro` | 当前可用。 |
+
+## 已下线模型
+
+| 模型名称 | 描述 |
+| --- | --- |
+| `kimi-k2.5` | 已下线 |
+| `kimi-k2.7-code` | 已停止向新注册用户提供，预计于 2026 年 12 月底全面下线。 |
+"""
+        found = {item["model_id"]: item for item in kimi_events(page)}
+        self.assertEqual(set(found), {"kimi-k2.5"})
+        self.assertEqual(found["kimi-k2.5"]["notice_status"], "retired")
+        self.assertIsNone(found["kimi-k2.5"]["eos_at"])
 
     def test_kimi_series_dates_follow_the_published_family_not_a_name_list(self):
         page = """## 已下线模型

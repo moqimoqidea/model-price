@@ -11,6 +11,9 @@ from .errors import SourceError
 from .literals import STRING_LITERAL, code_matches, literal_at, value_end
 
 FLIGHT_PUSH = re.compile(r"\bself\.__next_f\.push\(\s*")
+MANIFEST = re.compile(
+    r'<template\b[^>]*\bdata-mint="manifest"[^>]*>(?P<body>.*?)</template\s*>', re.I | re.S
+)
 COMPONENT_TABLE = re.compile(r"\b_jsxs?\(\s*DocTable\s*,\s*(?=\{)")
 RAW_TABLE = re.compile(r"<DocTable\b(?P<body>.*?)/>", re.S)
 JSX_CALL = re.compile(r"\b_jsxs?\s*\(")
@@ -67,6 +70,23 @@ def _flight_records(document: str) -> dict[str, Any]:
     return records
 
 
+def _manifest_record(document: str) -> dict[str, Any] | None:
+    """Decode the page manifest the docs site now ships inside a template.
+
+    Mintlify used to stream its page records through script pushes; the same
+    ownership data now travels as one JSON manifest. Either shape names the page
+    that owns an MDX source, so the table reader accepts both.
+    """
+    match = MANIFEST.search(document)
+    if not match:
+        return None
+    try:
+        value = json.loads(match["body"])
+    except ValueError as exc:
+        raise SourceError("official document contains invalid page data") from exc
+    return value if isinstance(value, dict) else None
+
+
 def _objects(value: Any) -> Iterator[dict[str, Any]]:
     if isinstance(value, dict):
         yield value
@@ -79,7 +99,8 @@ def _objects(value: Any) -> Iterator[dict[str, Any]]:
 
 def document_source(document: str, url: str) -> str:
     """Only the requested page's declared MDX reference can supply table data."""
-    records = _flight_records(document)
+    manifest = _manifest_record(document)
+    records = {"manifest": manifest} if manifest is not None else _flight_records(document)
     path = urlsplit(url).path.removeprefix("/docs").removesuffix(".md")
     references: set[str] = set()
     for record in records.values():

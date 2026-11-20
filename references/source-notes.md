@@ -58,6 +58,57 @@ unchanged. Reduced captures and regressions live in
 [`test_source_formats.py`](../tests/test_source_formats.py), and
 [`test_mistral.py`](../tests/test_mistral.py).
 
+## Document export changes checked on 2026-11-20
+
+Six official sources changed shape; each was reproduced against a fresh response
+before its reader changed.
+
+Kimi's price pages moved their page data out of streamed `self.__next_f` records
+into one `<template data-mint="manifest">` JSON document. `mintlify.py` now reads
+the manifest when no streamed record exists and still requires the requested
+page's own `mdxSource` and `pageMetadata.href`; another page's manifest is
+rejected. Kimi's model list also dropped the dated retirement lines: it now states
+`已下线` for retired models and an expected month for scheduled ones. A row that
+asserts the model is already offline becomes an undated retired notice; an
+expected month is not turned into an exact EOS.
+
+OpenAI's deprecation page rewrote its tables: the model column is now
+`Affected model` (past: `Affected model or feature`), a `Notice date` column
+carries the announcement date, and a two-alternative `Recommended replacement`
+names no single replacement. Columns are resolved by header wording, and escaped
+pipes inside an alias cell are rejoined before reading. Retired OpenAI "images"
+rows were already known: a two-alternative cell reports no replacement.
+
+Aliyun's bulletin now places a table after `具体下线清单` and its schedule bullets
+after that table. Only a list standing before any table is read as the model list;
+the schedule bullets no longer raise as unreadable model names.
+
+Kling's capability map heads its summary column `简介` and adds a `模型 ID`
+column. The shared summary wording now includes `简介`; descriptions still join the
+price record by literal id or display name.
+
+Mistral migrated to a Turbopack build, so both pinned chunk names
+(`2894-*.js`, `app/.../page-*.js`) stopped matching, and the lifecycle page no
+longer serves its `.md` variant. `mistral_catalogue.discover_bundle` now finds the
+bundle by what its text publishes — the model inventory, or the billing-mode
+factors — among the scripts the page itself loads, and refuses with the same
+source error when none qualifies. The pricing controls now state the regional
+multiplier as a constant and compose one mode with the regional delta added
+instead of multiplied (`priority` = 1.75 + 0.1); that branch is read from the
+page rather than assumed. The lifecycle policy is read from its HTML page.
+
+Baidu's ERNIE blog index and its `index.xml` feed both stopped serving release
+data: the feed returns 404 and `/blog/` now serves the site's shell with no
+article links, feed, sitemap, or `llms.txt`. No official replacement index was
+found, so the source keeps reporting `source_error` rather than pretending the
+channel is quiet. Gemini's price and deprecation documents returned the edge
+challenge (`HTTP 403`) on the morning run and answered normally on a later
+same-day read; that is treated as transient, not a parser fault.
+
+Parsed-cache version 44 invalidates older source results; catalogue, retirement,
+and announcement baseline versions are unchanged. Validation used direct readers
+only — the day's `delta` was not re-run against persistent history.
+
 ## Model announcements
 
 `model_price/announcements/` reads official publication evidence independently
@@ -143,12 +194,12 @@ source keeps its last successful notice archive.
 | Volcengine Ark | [Model deprecation notice](https://docs.volcengine.com/docs/ark/model-deprecation-notice) | Read the page's official `getDocDetail` `Result.MDContent`, because the rendered HTML sometimes omits its tables. Batch timeline gives announcement/start, EOM, EOS; model rows may override EOS. Some embedding rows state EOM while existing access continues. |
 | Tencent TokenHub | [Product announcement index](https://cloud.tencent.com/document/product/1823/130758) and its linked [individual notices](https://cloud.tencent.com/announce/detail/2469) | Read exact `model` parameters or the literal ID in a labelled 下线模型 field, and prose or labelled 下线时间 schedules. Preserve seconds and separately stated redirect dates. Conditional migrations retain their qualification in `scope`; an announcement-time example of the latest model never becomes a fixed redirect target. Price notices alone are insufficient retirement evidence. Follow up to 17 unique notices, reserving the other three document reads within the default host budget; rolling omissions retain archived events. |
 | Baidu Qianfan | [Retirement mechanism and history](https://cloud.baidu.com/doc/qianfan/s/zmh4stou3) | Historical table gives registration and retirement dates per hosted model, plus recommended replacement. Its example row is excluded. |
-| Aliyun Bailian | [Withdrawal index, official Markdown](https://help.aliyun.com/zh/model-studio/model-depreciation.md), its linked [bulletins](https://www.aliyun.com/notice/118177), and [dated retired-model tabs](https://help.aliyun.com/zh/model-studio/rate-limit.md) | Read the index and each unique bulletin through its anonymous `GET https://t.aliyun.com/abs/bulletin/bulletinDetail?language=zh&website=cn&id=<notice-id>` API. Validate success, notice identity, the domestic platform, and the Chinese withdrawal body in `data.info.detailList`. Model columns, labelled shutdown lists, and explicit single-model shutdown sentences supply literal IDs; a family heading does not withdraw its mainline ID, and adjacent model paragraphs stay separate. `publishTime` gives the announcement instant; a published `impactTime` point in `Asia/Shanghai` can refine the prose's day, but a change window never invents a precise EOS. Recommended replacements require manual migration. Older image-only lists used the dated `已下线模型` tabs in the official rate-limit document; checked 2026-10-11 the vendor had emptied that section to a single pointer line, with no tab left in it and the rest of the same document still rendering its own, so when that back-fill is withdrawn or unreachable the affected batch dates are returned as `image_only_dates` and every readable notice still publishes. A dated table that is present but omits one of those batches remains a source error, and a zero limit outside `已下线模型` is not retirement evidence. This reader is independent of price-catalogue success or `OfflineInfo` availability. |
+| Aliyun Bailian | [Withdrawal index, official Markdown](https://help.aliyun.com/zh/model-studio/model-depreciation.md), its linked [bulletins](https://www.aliyun.com/notice/118177), and [dated retired-model tabs](https://help.aliyun.com/zh/model-studio/rate-limit.md) | Read the index and each unique bulletin through its anonymous `GET https://t.aliyun.com/abs/bulletin/bulletinDetail?language=zh&website=cn&id=<notice-id>` API. Validate success, notice identity, the domestic platform, and the Chinese withdrawal body in `data.info.detailList`. Model columns, labelled shutdown lists, and explicit single-model shutdown sentences supply literal IDs; a bullet list counts only when it stands before any table, so a notice's later schedule bullets are not read as model names; a family heading does not withdraw its mainline ID, and adjacent model paragraphs stay separate. `publishTime` gives the announcement instant; a published `impactTime` point in `Asia/Shanghai` can refine the prose's day, but a change window never invents a precise EOS. Recommended replacements require manual migration. Older image-only lists used the dated `已下线模型` tabs in the official rate-limit document; checked 2026-10-11 the vendor had emptied that section to a single pointer line, with no tab left in it and the rest of the same document still rendering its own, so when that back-fill is withdrawn or unreachable the affected batch dates are returned as `image_only_dates` and every readable notice still publishes. A dated table that is present but omits one of those batches remains a source error, and a zero limit outside `已下线模型` is not retirement evidence. This reader is independent of price-catalogue success or `OfflineInfo` availability. |
 | DeepSeek | [Official updates](https://api-docs.deepseek.com/zh-cn/updates/) | One dated entry per release, newest first: `h2` carries `时间: YYYY-MM-DD` and each `h3` under it names a model. A route that does not exist answers HTTP 200 with the docs home page, and the site marks only one of the two spellings canonical, so a response counts only when it names the log. Record only explicit old-version withdrawal and continued routing stated in the changelog; there is no complete future retirement timetable. |
-| Kimi | [Model list](https://platform.kimi.com/docs/models) | Retired-model section gives series-level dates and literal retired IDs. Match a table ID to the longest published series prefix. |
+| Kimi | [Model list](https://platform.kimi.com/docs/models) | Retired-model section gives series-level dates and literal retired IDs. Match a table ID to the longest published series prefix. Since 2026-11-20 the page also lists retired models with `已下线` and no date: those become undated retired notices, while an `预计` month is not turned into an exact EOS. |
 | Xiaomi MiMo | [Deprecation log](https://mimo.mi.com/static/docs/updates/deprecate.md) | Separates the earlier automatic replacement time from the final old-ID expiry time where both are printed. |
 | Ant Ling | [Model deprecation](https://developer.ant-ling.com/zh-CN/docs/models/deprecation/) | Read tables headed 模型 ID with 计划下架日期 or 下架日期. 即将下架 is scheduled; 已下架 explicitly confirms retirement. Preserve the published UTC+8 clock to seconds and each literal ID's case. 推荐替代模型 is a manual migration recommendation, not an automatic redirect: the policy says old-ID API calls return errors after shutdown. 当前可用模型 and partner migration examples are not retirement notices. A partially unreadable notice table is a source error. |
-| OpenAI | [API deprecations](https://developers.openai.com/api/docs/deprecations) | Published notification and shutdown tables, with the shared Docs MCP fallback described below. A row may name several aliases separated by escaped Markdown pipes; each literal ID gets its own event. The official `shutdown_date` API requires credentials and is outside this public reader. |
+| OpenAI | [API deprecations](https://developers.openai.com/api/docs/deprecations) | Published notification and shutdown tables, with the shared Docs MCP fallback described below. Columns are resolved by header wording (`Shutdown date`, a column naming models, `Notice date`, `… replacement`); a feature/endpoint table withdraws a product surface, not a model. A row may name several aliases separated by escaped Markdown pipes, rejoined before reading; each literal ID gets its own event. Two alternative replacements name no single replacement. The official `shutdown_date` API requires credentials and is outside this public reader. |
 | Anthropic | [Model deprecations](https://platform.claude.com/docs/en/about-claude/model-deprecations) | Deprecated and retired table applies to Anthropic-operated API. A row explicitly marked Retired is down even if its retirement date is blank. Partner platform schedules may differ. Active models' “not sooner than” dates are not shutdown promises. |
 | Google Gemini | [Gemini API deprecations](https://ai.google.dev/gemini-api/docs/deprecations) | Shutdown dates are the *earliest possible* dates. The page separately marks already-shutdown models with `row-gray` table rows, including one with no published shutdown date. Only that explicit row state confirms retirement; reaching an unshaded row's date does not. |
 | xAI | [Official migration guides](https://docs.x.ai/developers/migration/may-15-retirement) | Old slugs can continue to resolve through automatic redirection, with billing at replacement-model prices. Read the effective PT clock where given; a date-only notice remains date-only. |
@@ -224,8 +275,9 @@ source, without guessing a per-model API documentation URL.
   number and two different things. The video document is consulted only for an
   entry whose own rates are all zero, so a priced model never pays for it.
 - Kling publishes no per-model page. Both of its capability maps (video and image)
-  are read instead: the vendor's own words for each model, what it takes in, how
-  long a clip it makes and at what resolution. The same pages describe the
+  are read instead: the vendor's own words for each model (headed `简介` on the
+  current pages), what it takes in, how long a clip it makes and at what
+  resolution. The same pages describe the
   platform's own chargeable capabilities (扩图, 数字人, 对口型), which the price page
   prices under exactly those names.
 - DeepSeek uses the official update log (`deepseek_updates.py`): the same dated

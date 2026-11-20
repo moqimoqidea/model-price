@@ -240,9 +240,18 @@ def aliyun_notice(payload: dict[str, Any], url: str) -> list[LifecycleEvent]:
                     replacement=replacements[0] if len(replacements) == 1 else None,
                     end_behavior="unavailable", scope="百炼推理",
                 ))
-    listed = re.search(r"具体下线清单[^<]*</(?:strong|p)>.*?(<ul\b.*?</ul>)", body, re.S)
+    # A notice may publish its list as a bullet list, or as a table followed by
+    # an unrelated timeline list. Only a list standing where the list belongs —
+    # immediately after the phrase, before any table — is a model list.
+    phrase = re.search(r"具体下线清单[^<]*</(?:strong|p)>", body)
+    if phrase:
+        rest = body[phrase.end():]
+        table_at = rest.find("<table")
+        listed = re.search(r"<ul\b.*?</ul>", rest if table_at < 0 else rest[:table_at], re.S)
+    else:
+        listed = None
     if listed:
-        for value in re.findall(r"<li\b[^>]*>(.*?)</li>", listed[1], re.S):
+        for value in re.findall(r"<li\b[^>]*>(.*?)</li>", listed[0], re.S):
             # A family label before the colon does not withdraw the mainline ID.
             names = aliyun_model_names(re.split(r"[：:]", clean_text(value), maxsplit=1)[-1])
             if not names:
@@ -465,31 +474,57 @@ def baidu_events(document: str) -> list[LifecycleEvent]:
 def openai_events(document: str) -> list[LifecycleEvent]:
     found = []
     for path, rows in markdown_tables(document):
-        if (
-            not rows
-            or "Shutdown date" not in rows[0][0]
-            or len(rows[0]) < 2
-            or "Model" not in rows[0][1]
-        ):
+        if not rows or "shutdown date" not in " ".join(rows[0]).lower():
             continue
+        headers = [clean_text(cell).lower() for cell in rows[0]]
+        model_column = next(
+            (index for index, cell in enumerate(headers) if "model" in cell), None
+        )
+        # A feature/endpoint table withdraws a product surface, not a model id.
+        if model_column is None or model_column == 0:
+            continue
+        replacement_column = next(
+            (index for index, cell in enumerate(headers) if "replacement" in cell), None
+        )
+        notice_column = next(
+            (index for index, cell in enumerate(headers) if "notice" in cell), None
+        )
         announced = date_value(path[-1]) if path else None
         for row in rows[1:]:
-            if len(row) < 2 or not (eos := date_value(row[0])):
+            # The official Markdown escapes pipes between aliases; the shared
+            # table reader may still split them into extra cells. Those extras
+            # belong to the model column, so rejoin them before reading.
+            extra = len(row) - len(headers)
+            if extra > 0 and model_column + extra < len(row):
+                row = [
+                    *row[:model_column],
+                    " ".join(row[model_column:model_column + extra + 1]),
+                    *row[model_column + extra + 1:],
+                ]
+            if len(row) <= model_column or not (eos := date_value(row[0])):
                 continue
             # Backticks distinguish actual model ids from endpoint names and prose.
-            # The official Markdown escapes pipes between aliases; the shared
-            # table reader may still split them into extra cells.
-            names = re.findall(r"`([^`]+)`", " ".join(row[1:-1]))
-            replacement = re.findall(r"`([^`]+)`", row[-1]) if len(row) > 2 else []
+            names = re.findall(r"`([^`]+)`", row[model_column])
+            replacements = (
+                re.findall(r"`([^`]+)`", row[replacement_column])
+                if replacement_column is not None and replacement_column < len(row)
+                else []
+            )
+            notice = (
+                date_value(row[notice_column])
+                if notice_column is not None and notice_column < len(row)
+                else None
+            )
             for name in names:
                 if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
                     found.append(
                         event(
                             name,
                             SOURCES["openai"],
-                            announced_at=announced,
+                            announced_at=notice or announced,
                             eos_at=eos,
-                            replacement=replacement[0] if replacement else None,
+                            # Two alternatives name no single replacement.
+                            replacement=replacements[0] if len(replacements) == 1 else None,
                             end_behavior="unavailable",
                             scope="OpenAI API",
                         )
@@ -755,11 +790,18 @@ def kimi_events(document: str) -> list[LifecycleEvent]:
         if names:
             dates[names[0]] = when
     names: list[str] = []
+    retired: list[str] = []
     for _, rows in markdown_tables("## 已下线模型\n" + section):
         if not rows or "模型名称" not in rows[0][0]:
             continue
         for row in rows[1:]:
             names.extend(re.findall(r"`([^`]+)`", row[0]))
+            # The page now states retirement as a status. Only rows that assert
+            # the model is already offline are evidence; a promise with an
+            # expected month is a schedule this reader has no exact date for.
+            note = clean_text(row[1]) if len(row) > 1 else ""
+            if "已下线" in note and "预计" not in note and "停止向新注册" not in note:
+                retired.extend(re.findall(r"`([^`]+)`", row[0]))
     names.extend(dates)
     found = []
     for name in dict.fromkeys(names):
@@ -770,6 +812,16 @@ def kimi_events(document: str) -> list[LifecycleEvent]:
                     name,
                     SOURCES["kimi"],
                     eos_at=dates[max(matches, key=len)],
+                    end_behavior="unavailable",
+                    scope="Kimi API",
+                )
+            )
+        elif name in retired:
+            found.append(
+                event(
+                    name,
+                    SOURCES["kimi"],
+                    notice_status="retired",
                     end_behavior="unavailable",
                     scope="Kimi API",
                 )

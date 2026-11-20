@@ -1116,5 +1116,26 @@ class KlingDescriptionTests(unittest.TestCase):
         description = self.source().describe("kling-3.0")
         self.assertIn("3~15s", " ".join(description["capabilities"]))
 
+    def test_the_current_capability_map_heads_its_summary_column_as_brief(self):
+        page = """# 视频能力地图
+
+## 模型信息
+
+| 模型 | 模型 ID | 简介 | 输入类型 | 生成时长 | 分辨率 |
+| --- | --- | --- | --- | --- | --- |
+| Kling 4.0 | kling-4.0 | 30s视频原生直出，全能参考 | 文本、图片、视频 | 3~30s | 720p、1080p、4K |
+"""
+        source = KlingDescriptionSource(
+            MappingClient(
+                {
+                    KLING_VIDEO_CAPABILITY_URL: page,
+                    KLING_IMAGE_CAPABILITY_URL: "",
+                }
+            )
+        )
+        description = source.describe("kling-4.0", "Kling 4.0")
+        self.assertEqual(description["summary"], "30s视频原生直出，全能参考")
+        self.assertIn("输入类型：文本、图片、视频", description["capabilities"])
+
     def test_an_unknown_model_has_no_description(self):
         self.assertIsNone(self.source().describe("kling-9.9"))

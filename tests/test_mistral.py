@@ -11,6 +11,7 @@ import re
 import sys
 import tempfile
 import unittest
+from decimal import Decimal
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -43,7 +44,12 @@ from model_price.mistral_catalogue import (
 )
 from model_price.pricing import unit_code
 from model_price.providers import ALL_PROVIDERS, OVERSEAS_PROVIDERS
-from model_price.providers.mistral import MistralAdapter
+from model_price.providers.mistral import (
+    MistralAdapter,
+    additive_modes,
+    combined_factor,
+    pricing_factors,
+)
 from model_price.registry import (
     build_adapters,
     inferred_overseas_providers,
@@ -121,6 +127,73 @@ class MistralPricingTests(unittest.TestCase):
         self.assertEqual(adapter.list_models("ministral-14b"), ["ministral-14b-2512", "ministral-14b-latest"])
         self.assertEqual(set(client.requests), {MISTRAL_PRICING_URL, MISTRAL_MODELS_URL, MODEL_DATA_URL, CONTROLS_URL})
         self.assertEqual(len(client.requests), 4)
+
+    def test_a_hash_named_bundle_is_found_by_the_model_data_it_publishes(self) -> None:
+        hashed = "https://docs.mistral.ai/_next/static/chunks/1yj32-1ejttyn.js"
+        page = MODELS.replace(MODEL_DATA_URL, hashed)
+        from model_price.mistral_catalogue import MistralCatalogue
+
+        client = DocumentClient(
+            {
+                MISTRAL_MODELS_URL: page,
+                hashed: MODEL_DATA,
+                "https://docs.mistral.ai/_next/static/chunks/decoy.js": "console.log(1)",
+            }
+        )
+        catalogue = MistralCatalogue(client)
+        self.assertEqual(catalogue.bundle_url, hashed)
+        self.assertTrue(catalogue.entries)
+
+    def test_a_page_that_publishes_no_model_data_still_fails_loudly(self) -> None:
+        page = '<html><head><script src="/_next/static/chunks/aaa.js"></script></head></html>'
+        from model_price.mistral_catalogue import MistralCatalogue
+
+        client = DocumentClient(
+            {
+                MISTRAL_MODELS_URL: page,
+                "https://docs.mistral.ai/_next/static/chunks/aaa.js": "console.log(1)",
+            }
+        )
+        with self.assertRaises(SourceError):
+            MistralCatalogue(client)
+
+    def test_pricing_controls_are_found_by_the_factors_they_publish(self) -> None:
+        hashed = "https://docs.mistral.ai/_next/static/chunks/0i3snf-dni0to.js"
+        page = PRICES.replace(CONTROLS_URL, hashed)
+        client = DocumentClient(
+            {
+                MISTRAL_PRICING_URL: page,
+                hashed: CONTROLS,
+                "https://docs.mistral.ai/_next/static/chunks/decoy.js": "void 0",
+            }
+        )
+        record = MistralAdapter(client).query("mistral-large-4")[0]
+        self.assertEqual(offer(record, "batch")["prices"][0]["amount"], "0.34")
+
+    def test_the_current_controls_publish_how_regional_rates_compose(self) -> None:
+        bundle = (
+            '{value:"standard",label:x,factor:1,suffix:y},'
+            '{value:"batch",label:x,factor:.5,suffix:y},'
+            '{value:"priority",label:x,factor:1.75,suffix:y};'
+            "let i=t?1.1:1;return\"priority\"===e?1.75+(i-1):"
+            "(s.find(t=>t.value===e)?.factor??1)*i;"
+        )
+        modes, regional = pricing_factors(bundle)
+        self.assertEqual(dict(modes), {"standard": Decimal(1), "batch": Decimal("0.5"), "priority": Decimal("1.75")})
+        self.assertEqual(regional, Decimal("1.1"))
+        additive = additive_modes(bundle)
+        self.assertEqual(
+            combined_factor("priority", Decimal("1.75"), regional, additive),
+            Decimal("1.85"),
+        )
+        self.assertEqual(
+            combined_factor("batch", Decimal("0.5"), regional, additive),
+            Decimal("0.55"),
+        )
+        self.assertEqual(
+            combined_factor("priority", Decimal("1.75"), Decimal(1), additive),
+            Decimal("1.75"),
+        )
 
     def test_self_hosted_price_rows_without_api_identity_are_not_a_channel_failure(self) -> None:
         section = (

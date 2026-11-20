@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urljoin, urlsplit
 
 from .errors import SourceError
@@ -21,12 +21,12 @@ from .text import clean_text
 
 MISTRAL_MODELS_URL = "https://docs.mistral.ai/models"
 MISTRAL_PRICING_URL = "https://docs.mistral.ai/inference/pricing"
-MISTRAL_LIFECYCLE_URL = "https://docs.mistral.ai/inference/model-lifecycle.md"
+MISTRAL_LIFECYCLE_URL = "https://docs.mistral.ai/inference/model-lifecycle"
 MISTRAL_NEWS_URL = "https://mistral.ai/news/"
 
-# The docs currently put their model-data module in this shared chunk. Resolve
-# its deployment hash from the page, and reject a changed layout rather than
-# continuing with stale IDs or following every unrelated application bundle.
+# Older deployments name the model-data and pricing-control chunks this way.
+# They are tried first, and `discover_bundle` finds the owner's bundle by what it
+# publishes when a deployment stops naming chunks after their build hash.
 MODEL_BUNDLE_PATH = re.compile(r"/_next/static/chunks/2894-[^/?]+\.js(?:\?[^\"]*)?")
 PRICING_BUNDLE_PATH = re.compile(
     r"/_next/static/chunks/app/[^\"]*/inference/pricing/"
@@ -123,6 +123,44 @@ def script_url(document: str, pattern: re.Pattern[str]) -> str:
     return matches[0]
 
 
+def discover_bundle(
+    client: Any,
+    document: str,
+    accept: Callable[[str], bool],
+    message: str,
+) -> tuple[str, str]:
+    """Find the page's own data bundle by what it publishes, not by its name.
+
+    The docs site now names chunks by content hash, so a pinned build name stops
+    matching after any deployment. The page still lists the scripts it loads;
+    the first one whose text the caller's own reader can use is the bundle that
+    owns this data.
+    """
+    cache = getattr(client, "_mistral_script_cache", None)
+    if cache is None:
+        cache = {}
+        setattr(client, "_mistral_script_cache", cache)
+    for url in dict.fromkeys(ModelLinks(document).scripts):
+        text = cache.get(url)
+        if text is None:
+            try:
+                text = client.get_text(url)
+            except (KeyError, SourceError):
+                continue
+            cache[url] = text
+        if accept(text):
+            return url, text
+    raise SourceError(message)
+
+
+def publishes_model_data(text: str) -> bool:
+    """Whether a script carries the documented model inventory."""
+    try:
+        return bool(model_entries(text))
+    except SourceError:
+        return False
+
+
 def retirement_api_ids(document: str) -> set[str]:
     """Read the schedule's API column, including its separate header/body tables."""
     found: set[str] = set()
@@ -151,8 +189,18 @@ class MistralCatalogue:
 
     def __init__(self, client: Any) -> None:
         document = client.get_text(MISTRAL_MODELS_URL)
-        self.bundle_url = script_url(document, MODEL_BUNDLE_PATH)
-        self.entries = model_entries(client.get_text(self.bundle_url))
+        try:
+            self.bundle_url = script_url(document, MODEL_BUNDLE_PATH)
+        except SourceError:
+            self.bundle_url, bundle = discover_bundle(
+                client,
+                document,
+                publishes_model_data,
+                "Mistral documentation's public data bundle was not found",
+            )
+            self.entries = model_entries(bundle)
+        else:
+            self.entries = model_entries(client.get_text(self.bundle_url))
         self.slugs = ModelLinks(document).slugs
         self.retirement_ids = retirement_api_ids(document)
         if not self.slugs:

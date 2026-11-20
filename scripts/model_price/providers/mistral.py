@@ -18,6 +18,7 @@ from ..mistral_catalogue import (
     MISTRAL_PRICING_URL,
     PRICING_BUNDLE_PATH,
     STRING_LITERAL,
+    discover_bundle,
     literal_at,
     model_label,
     read_catalogue,
@@ -33,6 +34,11 @@ MODE_FACTOR_RE = re.compile(
     re.S,
 )
 REGIONAL_FACTOR_RE = re.compile(r"\*\(\w+\?(\d*\.?\d+):1\)")
+# The current controls state the regional multiplier as a constant first, then
+# compose it per mode; one mode gets the regional delta added rather than
+# multiplied, and that branch publishes both the mode and its base factor.
+REGIONAL_CONSTANT_RE = re.compile(r"let\s+\w+\s*=\s*\w+\s*\?\s*(\d*\.?\d+)\s*:\s*1\b")
+ADDITIVE_MODE_RE = re.compile(r'"(\w+)"\s*===\s*\w+\s*\?\s*(\d*\.?\d+)\s*\+\s*\(\w+\s*-\s*1\)')
 PRICE_ANNOTATION_RE = re.compile(r"(?:Original|Sale) price:\s*", re.I)
 # The page also sells voice agents by the minute. Those rows name that product's
 # usage tiers ("Larger models") rather than API model IDs, so the section never
@@ -46,7 +52,7 @@ def pricing_factors(bundle: str) -> tuple[list[tuple[str, Decimal]], Decimal]:
         (literal_at(match[1]), Decimal(match[2]))
         for match in MODE_FACTOR_RE.finditer(bundle)
     ]
-    region = REGIONAL_FACTOR_RE.search(bundle)
+    region = REGIONAL_FACTOR_RE.search(bundle) or REGIONAL_CONSTANT_RE.search(bundle)
     if dict(modes).get("standard") != 1 or not region:
         raise SourceError("Mistral pricing controls published no readable billing factors")
     if (
@@ -55,6 +61,33 @@ def pricing_factors(bundle: str) -> tuple[list[tuple[str, Decimal]], Decimal]:
     ):
         raise SourceError("Mistral pricing controls published inconsistent billing factors")
     return modes, Decimal(region[1])
+
+
+def additive_modes(bundle: str) -> dict[str, Decimal]:
+    """Modes the page composes with the regional delta added, not multiplied."""
+    return {
+        mode: Decimal(base) for mode, base in ADDITIVE_MODE_RE.findall(bundle)
+    }
+
+
+def combined_factor(
+    mode: str, base: Decimal, regional: Decimal, additive: dict[str, Decimal]
+) -> Decimal:
+    """Apply the page's own composition rule for one mode under regional rates."""
+    if regional == 1:
+        return base
+    if mode in additive:
+        return additive[mode] + (regional - 1)
+    return base * regional
+
+
+def _publishes_pricing_factors(bundle: str) -> bool:
+    """Whether a script carries the page's billing-mode multipliers."""
+    try:
+        pricing_factors(bundle)
+    except SourceError:
+        return False
+    return True
 
 
 def scaled_price(price: dict[str, Any], factor: Decimal) -> dict[str, Any]:
@@ -85,6 +118,7 @@ class MistralAdapter(TabularPricingAdapter):
         super().__init__(client)
         self._price_models: dict[str, dict[str, Any]] | None = None
         self._factors: tuple[list[tuple[str, Decimal]], Decimal] | None = None
+        self._additive_modes: dict[str, Decimal] = {}
 
     def includes_table(self, headings: list[str]) -> bool:
         """Exclude sections that price another product rather than the API."""
@@ -163,6 +197,23 @@ class MistralAdapter(TabularPricingAdapter):
                 known.add(normalize_model(model_id))
         return rows
 
+    def _published_factors(self) -> tuple[list[tuple[str, Decimal]], Decimal]:
+        """Read the page's billing controls from whichever script publishes them."""
+        document = self.document_text()
+        try:
+            controls_url = script_url(document, PRICING_BUNDLE_PATH)
+        except SourceError:
+            _, bundle = discover_bundle(
+                self.client,
+                document,
+                _publishes_pricing_factors,
+                "Mistral documentation's public data bundle was not found",
+            )
+        else:
+            bundle = self.document(controls_url)
+        self._additive_modes = additive_modes(bundle)
+        return pricing_factors(bundle)
+
     def _record_for(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         record = super()._record_for(rows)
         entry = read_catalogue(self.client).for_api(record["model_id"])
@@ -175,9 +226,9 @@ class MistralAdapter(TabularPricingAdapter):
         if not record["offers"]:
             return record
         if self._factors is None:
-            controls_url = script_url(self.document_text(), PRICING_BUNDLE_PATH)
-            self._factors = pricing_factors(self.document(controls_url))
+            self._factors = self._published_factors()
         modes, regional_factor = self._factors
+        additive = self._additive_modes
         record["offers"] = [
             {
                 "name": mode,
@@ -187,7 +238,15 @@ class MistralAdapter(TabularPricingAdapter):
                     "inference_scope": "regional" if regional else "default",
                 },
                 "prices": [
-                    scaled_price(price, factor * (regional_factor if regional else 1))
+                    scaled_price(
+                        price,
+                        combined_factor(
+                            mode,
+                            factor,
+                            regional_factor if regional else Decimal(1),
+                            additive,
+                        ),
+                    )
                     for price in offer["prices"]
                 ],
             }

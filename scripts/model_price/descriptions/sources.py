@@ -396,7 +396,7 @@ class MarkdownTableDescriptionSource(DescriptionSource):
             headers = [markdown_text(cell).lower() for cell in table[0]]
             model_index = self._column(headers, self.model_headers)
             summary_index = self._column(
-                headers, ("描述", "介绍", "特点", "description")
+                headers, ("描述", "介绍", "简介", "特点", "description", "summary")
             )
             if model_index is None or summary_index is None:
                 continue

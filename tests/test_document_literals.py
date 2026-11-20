@@ -39,6 +39,28 @@ def page_source(source: str = SOURCE, *, size_delta: int = 0, unrelated: bool = 
     return "".join("<script>self.__next_f.push(" + json.dumps([1, chunk], ensure_ascii=False) + ")</script>" for chunk in chunks)
 
 
+def manifest_page(source: str, href: str = "/pricing/chat") -> str:
+    """Keep the page data in the template the docs site now ships it in."""
+    manifest = {
+        "page": {
+            "pagePath": "pricing/chat",
+            "mdx": {
+                "mdxSource": {
+                    "compiledSource": source,
+                    "frontmatter": {},
+                    "scope": {"pageMetadata": {"href": href}},
+                }
+            },
+        }
+    }
+    return (
+        "<html><body><script>void 0</script>"
+        '<template data-mint="manifest">'
+        + json.dumps(manifest, ensure_ascii=False)
+        + "</template></body></html>"
+    )
+
+
 class LiteralDocumentTests(unittest.TestCase):
     def test_literal_values_keep_currency_strings_escapes_and_numeric_precision(self) -> None:
         result = literal_at(r'''{text:`元\u002f百万`,rates:['¥1.23',.25,],enabled:!0,missing:void 0,}''')
@@ -92,6 +114,14 @@ class LiteralDocumentTests(unittest.TestCase):
         ):
             with self.subTest(source=source), self.assertRaises(SourceError):
                 document_tables(page_source(source), URL)
+
+    def test_page_manifest_template_supplies_the_owned_table(self) -> None:
+        tables = document_tables(manifest_page(SOURCE), URL)
+        self.assertEqual(tables, [[["模型", "输入（元）"], ["brand-new-model", "¥1.23"]]])
+
+    def test_manifest_of_another_page_is_not_adopted(self) -> None:
+        with self.assertRaises(SourceError):
+            document_tables(manifest_page(SOURCE, href="/pricing/other"), URL)
 
 
 if __name__ == "__main__":

@@ -73,6 +73,22 @@ class AliyunRetirementTests(unittest.TestCase):
         self.assertEqual(len(self.client.calls), len(set(self.client.calls)))
         self.assertEqual(self.client.calls.count(ALIYUN_RETIRED_MODELS_URL), 1)
 
+    def test_a_schedule_list_after_the_table_is_not_read_as_a_model_list(self) -> None:
+        notice = json.loads(json.dumps(self.client.notices["118177"]))
+        detail = notice["data"]["info"]["detailList"][0]
+        detail["contentHtml"] = (
+            "<p>百炼将于 2026 年 10 月 10 日对下表中的旧版本模型进行下线处理。"
+            "具体下线清单及替换模型推荐如下：</p>"
+            "<table><tbody><tr><td><p>模型名称</p></td><td><p>推荐替换模型</p></td></tr>"
+            "<tr><td><p>qwen-turbo</p></td><td><p>qwen3.6-turbo</p></td></tr></tbody></table>"
+            "<p><strong>下线时间安排：</strong></p>"
+            "<ul><li>2026年9月1日（停止新购 EOM）：届时将关闭新购入口。</li>"
+            "<li>2026年10月10日（正式下线）：届时模型将全面停止推理服务。</li></ul>"
+        )
+        events = aliyun_notice(notice, "https://www.aliyun.com/notice/118177")
+        self.assertEqual([item["model_id"] for item in events], ["qwen-turbo"])
+        self.assertEqual(events[0]["replacement"], "qwen3.6-turbo")
+
     def test_published_time_point_and_date_only_notices_keep_their_precision(self) -> None:
         self.assertEqual(self.notice("118177")[0]["eos_at"], "2026-10-10T00:00:00+08:00")
         self.assertEqual(self.notice("118177")[0]["announced_at"], "2026-04-13T16:49:54+08:00")
