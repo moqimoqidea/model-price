@@ -334,6 +334,75 @@ def markdown_link_text(value: str) -> str:
     return clean_text(flattened)
 
 
+# Some official docs publish marker tables instead of pipe tables: each cell is a
+# ``*`` line, ``---`` separates rows, and ``{% %}`` directives carry layout. The
+# tab title is the table's heading, so a priced table keeps its service tier.
+MARKER_TABLE_TOKEN_RE = re.compile(
+    r'\{%\s*tab\s+title="(?P<tab>[^"]+)"\s*%\}'
+    r"|\{%\s*/tab\s*%\}"
+    r"|\{%\s*table\b[^%]*%\}(?P<table>.*?)\{%\s*/table\s*%\}",
+    re.S,
+)
+MARKER_DIRECTIVE_RE = re.compile(r"\{%\s*/?[^%]*%\}")
+MARKER_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.M)
+
+
+def _heading_path(text: str) -> list[str]:
+    path: list[str] = []
+    for heading in MARKER_HEADING_RE.finditer(text):
+        level = len(heading.group(1))
+        title = clean_text(MARKER_DIRECTIVE_RE.sub("", heading.group(2)))
+        path = path[: level - 1] + [title]
+    return path
+
+
+def marker_text(value: str) -> str:
+    """Read a marker-table cell's literal text without its layout directives."""
+    return markdown_link_text(MARKER_DIRECTIVE_RE.sub(" ", value))
+
+
+def marker_tables(text: str) -> list[tuple[list[str], list[list[str]]]]:
+    """Read ``{% table %}`` blocks with the enclosing tab title as their heading."""
+    tables: list[tuple[list[str], list[list[str]]]] = []
+    tab = ""
+    for token in MARKER_TABLE_TOKEN_RE.finditer(text):
+        if token.group("tab") is not None:
+            tab = token.group("tab")
+        elif token.group("table") is None:
+            tab = ""
+        else:
+            rows: list[list[str]] = []
+            cells: list[str] = []
+            cell: str | None = None
+            for line in token.group("table").splitlines():
+                value = line.strip()
+                if not value:
+                    continue
+                if set(value) == {"-"}:
+                    if cell is not None:
+                        cells.append(cell)
+                        cell = None
+                    if cells:
+                        rows.append(cells)
+                    cells = []
+                elif value == "*" or value.startswith("* "):
+                    if cell is not None:
+                        cells.append(cell)
+                    cell = value[1:].strip()
+                elif cell is not None:
+                    cell = f"{cell} {value}".strip()
+            if cell is not None:
+                cells.append(cell)
+            if cells:
+                rows.append(cells)
+            if rows:
+                headings = _heading_path(text[: token.start()])
+                if tab:
+                    headings.append(tab)
+                tables.append((headings, rows))
+    return tables
+
+
 def markdown_json_rows(document: str) -> list[list[str]]:
     """Read the JSON-array rows some vendors embed directly in Markdown."""
     rows = []

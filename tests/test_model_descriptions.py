@@ -15,6 +15,11 @@ from model_price.descriptions.core import (
     description_record,
     unavailable_description,
 )
+from model_price.descriptions.parsing import (
+    markdown_capabilities,
+    markdown_specifications,
+    markdown_summary,
+)
 from model_price.descriptions.resolver import DescriptionResolver
 from model_price.descriptions.sources import (
     AliyunDescriptionSource,
@@ -124,6 +129,75 @@ class BrokenDescriptionSource(FakeDescriptionSource):
 
 
 class DescriptionSourceTests(unittest.TestCase):
+    def test_agent_context_blockquote_is_not_a_model_summary(self):
+        text = (
+            "> ## AI Agent Context\n"
+            "> - Full documentation index: https://aistudio.google.com/llms.txt\n"
+            "> - Gemini Docs MCP server (consistent live info): https://example.test\n"
+            "\n# Gemini 9 Flash\n\n"
+            "Gemini 9 Flash is a model for long-horizon work.\n"
+        )
+        self.assertEqual(
+            markdown_summary(text), "Gemini 9 Flash is a model for long-horizon work."
+        )
+
+    def test_marker_property_table_publishes_limits_and_supported_features(self):
+        text = """{% table variant="model" %}
+  * Property
+  * Description
+
+  ---
+
+  *     {% section class="model-property" %}
+  {% icon name="save" /%}Supported data types
+
+    {% /section %}
+
+  *     **Inputs** Text, Image
+
+    **Output** Text
+
+  ---
+
+  *     {% section class="model-property" %}
+  {% icon name="token_auto" /%}Token limits
+
+    {% /section %}
+
+  *     **Input token limit** 1,048,576
+
+    **Output token limit** 65,536
+
+  ---
+
+  *     {% section class="model-property" %}
+  {% icon name="handyman" /%}Capabilities
+
+    {% /section %}
+
+  *     {% section class="three-column-grid" %}
+  {% section %}
+  [**Audio generation**](/docs/speech-generation)
+
+  {% badge type="not-supported" /%}
+
+  {% /section %}
+
+  {% section %}
+  [**Code execution**](/docs/code-execution)
+
+  {% badge type="supported" /%}
+
+  {% /section %}
+
+    {% /section %}
+{% /table %}"""
+        specs = markdown_specifications(text)
+        self.assertEqual(specs["input_token_limit"], "1,048,576")
+        self.assertEqual(specs["output_token_limit"], "65,536")
+        self.assertEqual(specs["input_modalities"], "Text, Image")
+        self.assertEqual(markdown_capabilities(text), ["Code execution"])
+
     def test_volcengine_percent_encodes_non_ascii_model_ids(self):
         url = (
             "https://console.volcengine.com/ark/region:cn-beijing/model/detail?"

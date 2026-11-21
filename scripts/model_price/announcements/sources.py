@@ -80,6 +80,7 @@ class NewsSource:
     article_path: str = ""
     article_trailing_slash: bool = False
     summary_from_body: bool = False
+    require_date: bool = False
     subject_inventory: Callable[[Any], list[str]] | None = None
     entry_reader: Callable[[Any], list[dict[str, Any]]] | None = None
     article_reader: Callable[[Any, str], dict[str, Any]] | None = None
@@ -122,8 +123,11 @@ NEWS_SOURCES = {
     ),
     "baidu": NewsSource(
         "https://ernie.baidu.com/blog/",
-        "https://ernie.baidu.com/blog/index.xml",
+        "https://ernie.baidu.com/blog/",
         r"ERNIE|PaddleOCR",
+        "html",
+        article_path=r"^/(?:release|research/posts)/",
+        require_date=True,
     ),
     "anthropic": NewsSource(
         "https://www.anthropic.com/news",
@@ -297,7 +301,11 @@ def _news_entries(
         entry["published_at"] = (
             entry["published_at"] or page.link_dates.get(raw) or date_value(title)
         )
-    return list(entries.values())
+    return [
+        entry
+        for entry in entries.values()
+        if not spec.require_date or entry["published_at"]
+    ]
 
 
 def _read_news(

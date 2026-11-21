@@ -1,8 +1,12 @@
 """Google Gemini pricing, read from the official Markdown pricing page.
 
 The page publishes a Markdown copy at ``pricing.md.txt`` whose tables keep one
-header row each, so the shared Markdown reader is enough: no element or class
-name has to be tracked in rendered HTML.
+header row each, so the shared Markdown reader is enough.
+
+The published ``ai.google.dev`` page 301s to this canonical AI Studio docs host.
+Reading the destination directly matters: the cross-host redirect would carry
+``Sec-Fetch-Site: cross-site``, which that edge refuses with a 403 even for the
+same public document.
 """
 
 from __future__ import annotations
@@ -16,8 +20,9 @@ from ..models import model_family, model_matches, normalize_model
 from ..parsing import (
     cell_rates,
     dated_rate_terms,
-    markdown_link_text,
     markdown_tables,
+    marker_tables,
+    marker_text,
     price_unit_code,
 )
 from ..pricing import (
@@ -32,7 +37,7 @@ from ..pricing import (
 )
 from ..text import clean_text
 
-GEMINI_URL = "https://ai.google.dev/gemini-api/docs/pricing"
+GEMINI_URL = "https://aistudio.google.com/docs/pricing"
 GEMINI_MARKDOWN_URL = f"{GEMINI_URL}.md.txt"
 
 # Sections that describe tools, agents, or general notes rather than a model.
@@ -135,14 +140,14 @@ class GeminiAdapter(PriceSource):
         parts = re.split(r"^## +(.+)$", text, flags=re.M)
         sections = []
         for heading, body in zip(parts[1::2], parts[2::2]):
-            display_name = markdown_link_text(heading)
+            display_name = marker_text(heading)
             if normalize_model(display_name) in NON_MODEL_SECTIONS:
                 continue
             sections.append(
                 {
                     "display_name": display_name,
                     "model_ids": self._model_ids(body, display_name),
-                    "tables": markdown_tables(body),
+                    "tables": [*markdown_tables(body), *marker_tables(body)],
                 }
             )
         if not sections:

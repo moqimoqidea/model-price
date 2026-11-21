@@ -210,6 +210,51 @@ class OfficialSourceTests(unittest.TestCase):
             ["gemini-retired-dated", "gemini-retired-undated"],
         )
 
+    def test_google_marker_tables_keep_scheduled_and_deprecated_rows_apart(self) -> None:
+        page = """# Gemini deprecations
+## Gemini 3 models  {% id="gemini-3-models" %}
+{% table %}
+  * Model
+  * Release date
+  * Shutdown date
+  * Recommended replacement
+
+  ---
+
+  * `gemini-3.1-flash-lite`
+  * May 7, 2026
+  * May 7, 2027
+  * `gemini-3.5-flash-lite`
+
+  ---
+
+  * `gemini-3.8-flash`
+  * September 2, 2026
+  * No shutdown date announced
+  *
+{% /table %}
+### Deprecated models  {% id="gemini-3-deprecated-models" %}
+{% table %}
+  * Model
+  * Release date
+  * Shutdown date
+  * Recommended replacement
+
+  ---
+
+  * `gemini-3-pro-preview`
+  * November 18, 2025
+  * March 9, 2026
+  * `gemini-3.1-pro-preview`
+{% /table %}
+"""
+        found = {item["model_id"]: item for item in gemini_events(page)}
+        self.assertEqual(set(found), {"gemini-3.1-flash-lite", "gemini-3-pro-preview"})
+        self.assertEqual(found["gemini-3.1-flash-lite"]["notice_status"], "scheduled")
+        self.assertTrue(found["gemini-3.1-flash-lite"]["eos_earliest"])
+        self.assertEqual(found["gemini-3-pro-preview"]["notice_status"], "retired")
+        self.assertEqual(found["gemini-3-pro-preview"]["eos_at"], "2026-03-09")
+
     def test_zhipu_distinguishes_dated_redirect_retired_and_undated_plans(self):
         pages = {
             "https://docs.bigmodel.cn/flash": "GLM-4.5-Flash 将于2026 年 1 月 30 日下线。正式下线后，相关请求将会自动路由至 GLM-4.7-Flash。",

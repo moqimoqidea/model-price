@@ -7,7 +7,13 @@ import re
 from typing import Iterator
 
 from ..models import normalize_model
-from ..parsing import markdown_link_text, markdown_tables, prose_blocks
+from ..parsing import (
+    markdown_link_text,
+    markdown_tables,
+    marker_tables,
+    marker_text,
+    prose_blocks,
+)
 from ..text import CELL_BREAK_RE, clean_text
 
 FRONTMATTER_RE = re.compile(r"\A---\s*\n(?P<body>.*?)\n---\s*\n", re.S)
@@ -94,11 +100,20 @@ def markdown_summary(text: str) -> str:
     overview = prose_paragraphs(section(text, "Overview"))
     if overview:
         return overview[0]
-    blockquotes = [
-        markdown_text(line[1:])
-        for line in text.splitlines()
-        if line.startswith(">") and "documentation index" not in line.lower()
-    ]
+    blockquotes = []
+    for line in text.splitlines():
+        if not line.startswith(">"):
+            continue
+        value = line[1:].strip()
+        # Agent-context notes use a quoted heading and bullets; they are
+        # navigation, not the page's own description of the model.
+        if (
+            not value
+            or value.startswith(("#", "-", "*"))
+            or "documentation index" in value.lower()
+        ):
+            continue
+        blockquotes.append(markdown_text(value))
     if blockquotes:
         return blockquotes[0]
     paragraphs = prose_paragraphs(FRONTMATTER_RE.sub("", text, count=1))
@@ -132,7 +147,19 @@ def markdown_capabilities(text: str) -> list[str]:
         if len(cells) >= 2 and cells[0] not in {"Feature", "Property", "---"}:
             if not set(cells[0]) <= {"-", ":"}:
                 result.append(f"{cells[0]}：{cells[1]}")
-    return result
+    for _, rows in marker_tables(text):
+        for row in rows[1:]:
+            if len(row) < 2 or marker_text(row[0]).lower() != "capabilities":
+                continue
+            for match in re.finditer(
+                r"\[\*\*(.+?)\*\*\]\([^)]*\)(.*?)(?=\[\*\*|\Z)", row[1], re.S
+            ):
+                badge = re.search(r"\{%\s*badge([^%]*)%\}", match.group(2))
+                if badge and re.search(
+                    r'type\s*=\s*"supported"', badge.group(1)
+                ):
+                    result.append(match.group(1).strip())
+    return list(dict.fromkeys(result))
 
 
 def markdown_specifications(text: str) -> dict[str, str]:
@@ -205,6 +232,46 @@ def markdown_specifications(text: str) -> dict[str, str]:
             value = markdown_text(row[value_column])
             if key and value:
                 result.setdefault(key, value)
+    for _, rows in marker_tables(text):
+        if len(rows) < 2:
+            continue
+        headers = [marker_text(cell).lower() for cell in rows[0]]
+        if not headers or headers[0] not in property_headers:
+            continue
+        value_column = next(
+            (
+                index
+                for index, header in enumerate(headers[1:], start=1)
+                if header in value_headers
+            ),
+            None,
+        )
+        if value_column is None:
+            continue
+        for row in rows[1:]:
+            if len(row) <= value_column:
+                continue
+            source = row[value_column]
+            property_name = marker_text(row[0]).lower()
+            if property_name.startswith("token limits"):
+                for label, value in re.findall(
+                    r"\*\*(.+?)\*\*\s*([0-9][0-9,.]*)", source
+                ):
+                    key = labels.get(label.strip().lower())
+                    if key:
+                        result.setdefault(key, value)
+            elif property_name == "supported data types":
+                for label, value in re.findall(
+                    r"\*\*(Inputs?|Outputs?)\*\*\s*(.+?)(?=\*\*|\Z)", source, re.S
+                ):
+                    key = (
+                        "input_modalities"
+                        if label.lower().startswith("input")
+                        else "output_modalities"
+                    )
+                    value = clean_text(value).rstrip(".")
+                    if value:
+                        result.setdefault(key, value)
     return result
 
 

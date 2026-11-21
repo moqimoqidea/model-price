@@ -58,7 +58,7 @@ from .tencent_mirror import validate_tencent_mirror
 OPENAI_MODELS_URL = "https://developers.openai.com/api/docs/models/all"
 ANTHROPIC_MODELS_URL = "https://platform.claude.com/docs/en/models/overview"
 ANTHROPIC_MODELS_MARKDOWN_URL = f"{ANTHROPIC_MODELS_URL}.md"
-GEMINI_MODELS_URL = "https://ai.google.dev/gemini-api/docs/models"
+GEMINI_MODELS_URL = "https://aistudio.google.com/docs/models"
 XAI_MODELS_URL = "https://docs.x.ai/developers/models"
 KIMI_MODELS_URL = "https://platform.kimi.com/docs/models.md"
 MINIMAX_MODELS_URL = "https://platform.minimax.cn/docs/guides/models-intro.md"
@@ -287,7 +287,7 @@ class GeminiDescriptionSource(MarkdownDetailSource):
     source_url = GEMINI_MODELS_URL
     source_kind = "official_markdown"
     url_for = staticmethod(
-        lambda model: "https://ai.google.dev/gemini-api/docs/models/"
+        lambda model: "https://aistudio.google.com/docs/models/"
         f"{normalize_model(model)}.md.txt"
     )
 

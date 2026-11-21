@@ -1294,6 +1294,60 @@ class GeminiAdapterTests(unittest.TestCase):
             format_price(storage), "0.50 美元/百万 tokens/小时 至 2026-12-31"
         )
 
+    def test_marker_tables_keep_each_tab_as_its_service_tier(self):
+        markdown = """## Gemini Marker
+
+*[`gemini-marker`](/docs/models/gemini-marker)*
+
+{% tabs %}
+  {% tab title="Standard" %}
+  {% table %}
+  * Feature
+  * Free Tier
+  * Paid Tier, per 1M tokens in USD
+
+  ---
+
+  * Input price
+  * Not available
+  * $0.75 through December 31, 2026.
+  $1.50 starting January 1, 2027.
+
+  ---
+
+  * Output price (including thinking tokens)
+  * Not available
+  * $3.75
+  {% /table %}
+  {% /tab %}
+
+  {% tab title="Batch" %}
+  {% table %}
+  * Feature
+  * Free Tier
+  * Paid Tier, per 1M tokens in USD
+
+  ---
+
+  * Input price
+  * Not available
+  * $0.375
+  {% /table %}
+  {% /tab %}
+{% /tabs %}
+"""
+        record = self.adapter(markdown).query("gemini-marker")[0]
+        self.assertEqual(record["display_name"], "Gemini Marker")
+        self.assertEqual(
+            [offer["name"] for offer in record["offers"]], ["standard", "batch"]
+        )
+        standard = next(
+            offer for offer in record["offers"] if offer["name"] == "standard"
+        )
+        self.assertEqual(price_lookup(standard, "input")["amount"], "0.75")
+        self.assertEqual(price_lookup(standard, "input")["list_amount"], "1.50")
+        self.assertEqual(price_lookup(standard, "output")["amount"], "3.75")
+
     def test_a_rate_the_page_does_not_date_carries_no_period(self):
         standard = next(
             offer

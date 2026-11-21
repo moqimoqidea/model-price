@@ -48,7 +48,7 @@
 | 阿里云百炼 | [Qwen-Drive-1.0](https://qwen.ai/blog?id=qwen-drive-1.0) 是自动驾驶视觉语言研究模型，百炼此次目录无同名项；Qwen3.8-Flash-Next 等也有独立的研究/权重发布。 | 读取当前 Qwen 公开文章 API 的正文、路径和日期；研究成果、权重与百炼托管调用分开。旧 `qwenlm.github.io/blog/` 已提示迁移，不能当成最新源。 |
 | 火山引擎方舟 | [Seed 官方模型成果索引](https://seed.bytedance.com/en/blog) 单独列出 Seed2.1、SeedRealtime、Seed Audio、Seed GR-RL 等成果；方舟目录使用 `doubao-...` 等具体版本，不能按系列强行合并。 | 独立读取官方结构化成果索引。该索引只给名称与链接的条目会显示介绍未找到，不能合成能力；不推断方舟 API ID 或上架状态。 |
 | 腾讯云 TokenHub | [混元公开研究](https://hunyuan.tencent.com/) 有独立的 Hy3 发布文章，公开接口提供正文和发布时间；这条通路不需要进入 TokenHub 控制台。 | 接入匿名只读、分页的研究 API；保持 TokenHub 卡片介绍镜像的原有授权边界。研究公告不证明所有 TokenHub 托管条目已经开放。 |
-| 百度智能云千帆 | [ERNIE-5.1-Preview 的 LMArena 公告](https://ernie.baidu.com/blog/posts/ernie-5.1-preview-0430-release-on-lmarena/) 证明研究/榜单预览有独立发布来源，不能只看千帆价格。 | 接入 ERNIE RSS；本次 feed 最新条目为 2026-05-09，90 天窗口内无新增。该旧 feed 不足以证明千帆近期完全没有发布，价格目录仍独立读取。 |
+| 百度智能云千帆 | [ERNIE-5.1-Preview 的 LMArena 公告](https://ernie.baidu.com/blog/posts/ernie-5.1-preview-0430-release-on-lmarena/) 证明研究/榜单预览有独立发布来源，不能只看千帆价格。 | 接入 ERNIE 博客首页的带日期卡片；旧的 `/blog/index.xml` RSS 已返回 404。首页与价格目录独立读取，索引未列出的公告不能据此判断不存在。 |
 | DeepSeek 原厂 | [官方更新日志](https://api-docs.deepseek.com/zh-cn/updates/) 保留实验版、升级、路由名称与退役等事实，并非每条发布都等于当前新 API ID。 | 重用现有日志读取器；发布、介绍、更新时间及退役消费者共享同一次文档读取，不按旧名称推断当前价格。 |
 | Kimi | [Kimi K3](https://www.kimi.com/en/blog/kimi-k3) 与 K2 系列有官方博客介绍；K3 API 已可用，而权重与完整技术报告可以随后发布。 | 接入官方发布文章。未来的权重/报告不被误判为 API 尚未开放；保留公告名称，不把旧研究系列强行映射到当前价格 ID。 |
 | 智谱 BigModel | [模型概览](https://docs.bigmodel.cn/cn/guide/start/model-overview.md) 列出 AutoGLM-Phone、GLM-Realtime 等；能力目录、旧版目录与价格目录不完全相同。 | 重用完整能力表读取器。无同名价格不代表关闭，旧版条目的退役判断仍由独立通知负责；概览不被宣称为完整研究新闻索引。 |
@@ -166,7 +166,7 @@ Z.ai 的 `/blog`、博客 sitemap 和 feed 均未提供可读总索引。因此�
 | 阿里云百炼 | [Qwen 博客](https://qwen.ai/)及其匿名文章 API | 可读，继续读取字面标题、完整正文与官方日期。研究发布不证明百炼托管。 |
 | 火山引擎方舟 | [Seed 博客](https://seed.bytedance.com/en/blog)及匿名分页 API | 可读，新增近期博客与现有成果目录的组合读取；实际 API 会限制每页条数，必须跟随分页令牌。包括 SeedRealtime、Seedance 2.5、Seed Audio 1.0；名称由官方卡片标签限定。 |
 | 腾讯 TokenHub | [Hunyuan 研究索引](https://hunyuan.tencent.com/)及匿名 `publicList` | 可读，本次近期窗口内没有可识别发布。索引沉默不证明没有研究进展；研究正文不替代 TokenHub 的授权介绍镜像。 |
-| 百度千帆 | [ERNIE 博客 RSS](https://ernie.baidu.com/blog/index.xml) | 可读，但 feed 最新条目仍为 2026-05-09，近期窗口无记录。旧订阅的覆盖限制仍保留。 |
+| 百度千帆 | [ERNIE 博客](https://ernie.baidu.com/blog/) | 可读，首页卡片提供标题、文章链接与日期；旧 RSS 入口已 404。索引未列出的历史文章仍按覆盖缺口对待。 |
 | DeepSeek | [官方更新日志](https://api-docs.deepseek.com/zh-cn/updates/) | 可读，继续与日期、介绍和退役消费者复用同一次文档读取。 |
 | Kimi | 用户指定的[官方博客](https://www.kimi.ai/blog/) | 可读，现已作为登记入口。Next.js `articleList.items` 提供标题、地址和日期，先排除旧文章及外部论文；本次确认 Kimi K3。 |
 | 智谱 BigModel | [能力目录](https://docs.bigmodel.cn/cn/guide/start/model-overview.md)、[Z.ai 更新](https://docs.z.ai/release-notes/new-released.md)、[GLM-Legal](https://z.ai/blog/glm-legal) | 三处均可读。测试申请模型与当前价格目录分别保留；总博客索引的缺口见上文。 |

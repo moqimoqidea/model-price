@@ -31,6 +31,7 @@ from .parsing import (
     headed_document_tables,
     markdown_link_text,
     markdown_tables,
+    marker_tables,
     prose_blocks,
 )
 from .text import clean_text, clean_zero_width_text
@@ -48,7 +49,7 @@ SOURCES = {
     "ant-ling": ANT_LING_DEPRECATION_URL,
     "openai": "https://developers.openai.com/api/docs/deprecations.md",
     "anthropic": "https://platform.claude.com/docs/en/about-claude/model-deprecations.md",
-    "google": "https://ai.google.dev/gemini-api/docs/deprecations",
+    "google": "https://aistudio.google.com/docs/deprecations",
     "xai": "https://docs.x.ai/llms.txt",
     "mistral": MISTRAL_MODELS_URL,
     "zhipu": "https://docs.bigmodel.cn/cn/guide/models/free/glm-4.5-flash.md",
@@ -589,20 +590,50 @@ class GrayModelRowParser(HTMLParser):
             self.gray = False
 
 
+def google_marker_tables(
+    document: str,
+) -> list[tuple[list[str], list[list[str]]]]:
+    """Read the docs platform's marker tables with their heading context.
+
+    The deprecations page moved from rendered HTML tables to ``{% table %}``
+    blocks: each cell is a ``*`` line and ``---`` separates rows. The heading is
+    what separates an already-shutdown "Deprecated models" table from a schedule
+    of earliest-possible dates.
+    """
+    return [
+        (
+            headings,
+            [
+                [
+                    clean_text(re.sub(r"`", "", markdown_link_text(cell)))
+                    for cell in row
+                ]
+                for row in rows
+            ],
+        )
+        for headings, rows in marker_tables(document)
+    ]
+
+
 def gemini_events(document: str) -> list[LifecycleEvent]:
     """Use gray rows for actual shutdowns; other dates are only earliest dates."""
     gray_rows = GrayModelRowParser()
     gray_rows.feed(document)
     found = []
-    for headings, rows in headed_document_tables(document):
+    for headings, rows in [
+        *headed_document_tables(document),
+        *google_marker_tables(document),
+    ]:
         if not rows or rows[0][:3] != ["Model", "Release date", "Shutdown date"]:
             continue
-        if "Managed agents" in headings:
+        heading_text = " ".join(headings)
+        if "Managed agents" in heading_text or "Deprecated agents" in heading_text:
             continue
+        deprecated = "deprecated models" in heading_text.lower()
         for row in rows[1:]:
             if len(row) < 3 or not model_ids(row[0]):
                 continue
-            confirmed = normalize_model(row[0]) in gray_rows.models
+            confirmed = deprecated or normalize_model(row[0]) in gray_rows.models
             eos = date_value(row[2])
             if not eos and not confirmed:
                 continue

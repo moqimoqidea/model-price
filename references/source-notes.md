@@ -98,16 +98,18 @@ instead of multiplied (`priority` = 1.75 + 0.1); that branch is read from the
 page rather than assumed. The lifecycle policy is read from its HTML page.
 
 Baidu's ERNIE blog index and its `index.xml` feed both stopped serving release
-data: the feed returns 404 and `/blog/` now serves the site's shell with no
-article links, feed, sitemap, or `llms.txt`. No official replacement index was
-found, so the source keeps reporting `source_error` rather than pretending the
-channel is quiet. Gemini's price and deprecation documents returned the edge
-challenge (`HTTP 403`) on the morning run and answered normally on a later
-same-day read; that is treated as transient, not a parser fault.
+data: the feed returns 404 and the former RSS transport read nothing. `/blog/`
+now publishes dated Astro cards with title, article link, and date, so the source
+reads those cards directly instead of claiming the channel is quiet. The index
+covers its latest-updates window; announcements absent from it remain outside
+its coverage. Gemini's price and deprecation documents returned `HTTP 403` on
+every run: the published `ai.google.dev` URL 301s to `aistudio.google.com`, and
+the redirect carried `Sec-Fetch-Site: cross-site`, which that edge refuses.
+Reading the canonical AI Studio URL directly answers 200; it is the same public
+document, and a failure still surfaces as `source_error`.
 
-Parsed-cache version 44 invalidates older source results; catalogue, retirement,
-and announcement baseline versions are unchanged. Validation used direct readers
-only — the day's `delta` was not re-run against persistent history.
+Parsed-cache version 45 invalidates older source results; catalogue, retirement,
+and announcement baseline versions are unchanged.
 
 ## Model announcements
 
@@ -129,7 +131,7 @@ No third-party host inherits its creator's announcement as a hosted listing.
 | Aliyun Bailian | [Qwen blog](https://qwen.ai/) | Anonymous `GET /api/v2/article/retrieval?type=qwen_ai&language=en-US` returns `data.articles`: `title`, `path`, `content`, and `extra.date/description/introduction`. Public `blog?id=<path>` uses the published path, not the internal UUID. The old GitHub Pages blog announces its migration and is not a current substitute. Qwen research/open weights do not themselves prove Bailian hosting. |
 | Volcengine Ark | [Seed models and blog](https://seed.bytedance.com/en/blog) | Keep the `window._ROUTER_DATA.loaderData.layout.footer_config` Models inventory, and independently paginate the site's anonymous `GET /api/get_article_list_v2?article_type=2&count=100&order_desc=true&page_token=<token>`. The API caps pages independently of the requested count; follow `next_page_token/has_more`, including old pinned posts, and accept its successful terminal response without `sub_article_list`. Only English published entries (`ArticleMeta.StatusEn=2`) supply `Title/TitleKey/Abstract/ImageTitle` from `ArticleSubContentEn`; `ImageTitle` owns the literal subject when the headline adds a descriptor such as “Audio Creation Model”. Read each recent article's own router `article.SubArticle` and `ContentEn`, not navigation or guessed Ark IDs. `PublishDate` is an official millisecond timestamp. Reuse the parsed inventory within the run. |
 | Tencent TokenHub | [Hunyuan research](https://hunyuan.tencent.com/) | Anonymous read-only `POST https://api.hunyuan.tencent.com/api/blog/publicList`, paged by `pageNum/pageSize`; `needFilter=true`. Read the published `title/desc/content/customUrl`, and only official dates when present. This idempotent read is retryable. Public research evidence does not replace the authenticated TokenHub description mirror or prove a TokenHub listing. |
-| Baidu Qianfan | [ERNIE blog RSS](https://ernie.baidu.com/blog/index.xml) | Official model-release subjects and full feed content. Research/Arena previews need not have Qianfan rates. An old feed cannot establish coverage of announcements absent from that feed. |
+| Baidu Qianfan | [ERNIE blog](https://ernie.baidu.com/blog/) | Read the dated release/research cards on the official blog index. The former `/blog/index.xml` RSS feed now returns 404; the Astro index still publishes each card's title, article link, and date. Research/Arena previews need not have Qianfan rates. An index cannot establish coverage of announcements absent from it. |
 | DeepSeek | [Official updates](https://api-docs.deepseek.com/zh-cn/updates/) | Reuse `deepseek_updates.read_updates` and its official dated model entries, shared with introductions and retirement evidence. Do not treat an upcoming benchmark framework as a closed API. |
 | Kimi | [Official research blog](https://www.kimi.ai/blog/) | Read its public Next.js `articleList.items` with literal `title/href/date`, before fetching recent same-host articles. Repeated navigation links do not own article dates, and external papers/repositories are excluded. The former `kimi.com/blog` entry is no longer the registered news index. Upcoming weights and technical reports do not close an already usable Kimi API. |
 | Zhipu | [Model overview Markdown](https://docs.bigmodel.cn/cn/guide/start/model-overview.md), [Z.ai model updates](https://docs.z.ai/release-notes/new-released), and the verified [GLM-Legal article](https://z.ai/blog/glm-legal) | Read all three independently. The update log's Markdown exporter drops model-name labels, so read the canonical HTML once. Each `update-container` owns its `update-description`, date-only `update-label`, and `update-content`; source MDX `Update` blocks remain readable. Body comparisons never become release subjects. Z.ai's `/blog` and blog sitemap/feed do not supply a readable general index, so unindexed articles require an explicitly verified URL; this is bounded coverage, not a model-name list. Its HTML article shell links a same-host module containing literal MDX JSX prose and `date/title`; read only those literals, never execute JavaScript or borrow the shared runtime's text. Dashed names such as GLM-Legal/GLM-Image need no number. A beta application is limited API-access evidence, not a BigModel listing, a free rate, or general availability. |
@@ -201,7 +203,7 @@ source keeps its last successful notice archive.
 | Ant Ling | [Model deprecation](https://developer.ant-ling.com/zh-CN/docs/models/deprecation/) | Read tables headed 模型 ID with 计划下架日期 or 下架日期. 即将下架 is scheduled; 已下架 explicitly confirms retirement. Preserve the published UTC+8 clock to seconds and each literal ID's case. 推荐替代模型 is a manual migration recommendation, not an automatic redirect: the policy says old-ID API calls return errors after shutdown. 当前可用模型 and partner migration examples are not retirement notices. A partially unreadable notice table is a source error. |
 | OpenAI | [API deprecations](https://developers.openai.com/api/docs/deprecations) | Published notification and shutdown tables, with the shared Docs MCP fallback described below. Columns are resolved by header wording (`Shutdown date`, a column naming models, `Notice date`, `… replacement`); a feature/endpoint table withdraws a product surface, not a model. A row may name several aliases separated by escaped Markdown pipes, rejoined before reading; each literal ID gets its own event. Two alternative replacements name no single replacement. The official `shutdown_date` API requires credentials and is outside this public reader. |
 | Anthropic | [Model deprecations](https://platform.claude.com/docs/en/about-claude/model-deprecations) | Deprecated and retired table applies to Anthropic-operated API. A row explicitly marked Retired is down even if its retirement date is blank. Partner platform schedules may differ. Active models' “not sooner than” dates are not shutdown promises. |
-| Google Gemini | [Gemini API deprecations](https://ai.google.dev/gemini-api/docs/deprecations) | Shutdown dates are the *earliest possible* dates. The page separately marks already-shutdown models with `row-gray` table rows, including one with no published shutdown date. Only that explicit row state confirms retirement; reaching an unshaded row's date does not. |
+| Google Gemini | [Gemini API deprecations](https://aistudio.google.com/docs/deprecations) | Shutdown dates are the *earliest possible* dates. The page lists already-shutdown models under its **Deprecated models** sections, including rows with no published shutdown date. Only that explicit section confirms retirement; reaching an unshaded row's date does not. |
 | xAI | [Official migration guides](https://docs.x.ai/developers/migration/may-15-retirement) | Old slugs can continue to resolve through automatic redirection, with billing at replacement-model prices. Read the effective PT clock where given; a date-only notice remains date-only. |
 | Mistral AI | [Model directory](https://docs.mistral.ai/models) and [lifecycle policy](https://docs.mistral.ai/inference/model-lifecycle) | The explicit deprecated/retired table's API column selects the literal IDs; its header and body are rendered as separate tables. The same public model data publishes `status`, `metadata.deprecationDate`, `metadata.retirementDate`, and a recommended replacement. Dates are not expanded to aliases absent from that schedule. Deprecation is an announcement, not EOM. The policy explicitly states retired identifiers return 404, so replacements are manual recommendations, not redirects. A currently reassigned alias does not inherit an old revision's EOS. Date-only values and explicit undated Retired statuses remain distinct. |
 | Zhipu BigModel | [GLM-4.5-Flash](https://docs.bigmodel.cn/cn/guide/models/free/glm-4.5-flash.md), [GLM-Z1](https://docs.bigmodel.cn/cn/guide/models/text/glm-z1.md), and [GLM-4.5](https://docs.bigmodel.cn/cn/guide/models/text/glm-4.5.md) model pages | No central retirement feed. Read explicit banner text on these known official pages: a dated shutdown with automatic routing, an undated “已下线” series notice, and undated “即将下线” plans. Only literal named IDs are recorded; a series notice is not expanded into guessed variants. These pages are a maintained source list, not a complete vendor-wide schedule. |
@@ -554,7 +556,10 @@ than its API. This is runtime report metadata, not part of snapshot identity.
   value is relabelled as a vendor update time. Content negotiation was verified
   during the dated audit but is not a third retry chain against the same edge.
 - Anthropic: `https://platform.claude.com/docs/en/about-claude/pricing`; no public pricing JSON is exposed, so use its official `.md` representation.
-- Google Gemini: `https://ai.google.dev/gemini-api/docs/pricing.md.txt`. The page
+- Google Gemini: `https://aistudio.google.com/docs/pricing.md.txt`. The published
+  `ai.google.dev` page 301s here; read the destination directly because the
+  cross-host redirect carries `Sec-Fetch-Site: cross-site`, which that edge
+  rejects with 403. The page
   publishes a Markdown copy, so its `pricing-table` HTML classes are no longer read.
   DevSite can redirect a browser UA into OAuth even for this public download.
   The shared client retains only the run's anonymous server-issued cookies,

@@ -431,6 +431,23 @@ class DiscoverySourceTests(unittest.TestCase):
         self.assertEqual([m["model_id"] for m in result["models"]], ["Grok 9"])
         self.assertEqual(client.calls, [spec.index_url, url])
 
+    def test_baidu_html_index_discovers_release_cards(self) -> None:
+        spec = NEWS_SOURCES["baidu"]
+        url = "https://ernie.baidu.com/release/ernie-9/"
+        index = (
+            '<a class="news-card article-link" href="/release/ernie-9/">'
+            "<h3>Introducing ERNIE 9</h3><span>Product updates</span>"
+            '<time datetime="2026-11-11">November 11, 2026</time></a>'
+            '<a href="/research/posts/ernie-1/"><h3>ERNIE 1</h3></a>'
+        )
+        page = "<h1>Introducing ERNIE 9</h1><p>ERNIE 9 is a new model.</p>"
+        client = MappingClient({spec.index_url: index, url: page})
+        result = read_publications(
+            "baidu", client, datetime.fromisoformat("2026-11-21T12:00:00+08:00")
+        )
+        self.assertEqual([m["model_id"] for m in result["models"]], ["ERNIE 9"])
+        self.assertEqual(client.calls, [spec.index_url, url])
+
     def test_soft_404_keeps_only_the_official_index_evidence_and_reports_failure(
         self,
     ) -> None:
