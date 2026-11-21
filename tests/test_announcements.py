@@ -48,6 +48,7 @@ from model_price.announcements.sources import (
     XIAOMI_UPDATES_URL,
     XIAOMI_BLOG_URL,
     XIAOMI_BLOG_ASSETS,
+    _read_zhipu_updates,
     discovery_policy,
     read_publications,
     seed_blog_url,
@@ -113,7 +114,14 @@ LEGAL_MODULE_URL = "https://z.ai/blog/assets/legal-current.js"
 LEGAL_SHELL = (FIXTURES / "zai-article-shell.html").read_text(encoding="utf-8")
 LEGAL_MODULE = (FIXTURES / "zai-article-module.js").read_text(encoding="utf-8")
 ZHIPU_OVERVIEW = "# 模型概览\n\n| 模型 | 特点 |\n| --- | --- |\n| GLM-9 | 通用文本模型 |\n"
-ZHIPU_UPDATES = '<Update label="2026-10-09" description=" GLM-9">A model for reasoning.</Update>'
+ZHIPU_UPDATES = """**2026-10-09**
+
+GLM-9 模型上线
+
+💬 [**GLM-9**](https://docs.bigmodel.cn/cn/guide/models/text/glm-9)
+
+* A model for reasoning.
+"""
 
 
 class MappingClient:
@@ -447,6 +455,39 @@ class DiscoverySourceTests(unittest.TestCase):
         )
         self.assertEqual([m["model_id"] for m in result["models"]], ["ERNIE 9"])
         self.assertEqual(client.calls, [spec.index_url, url])
+
+    def test_zhipu_markdown_release_log_names_linked_models(self) -> None:
+        page = """# 模型与产品发布记录
+## 公告通知
+**2026-08-26**
+
+GLM-5.3-Flash 原生多模态模型上线
+
+👀 [**GLM-5.3-Flash**](https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash.md)
+
+* 原生融入视觉能力。
+* 极致高效混合架构。
+
+**2026-10-14**
+
+一次新增 2 个基座模型、3 个推理模型
+
+🤖 **基座模型**
+
+[**GLM-4-Air-250414（高性价比版）**](https://docs.bigmodel.cn/cn/guide/models/text/glm-4)
+
+* 性能比肩 GPT-4o。
+"""
+        client = MappingClient({ZHIPU_UPDATES_URL: page})
+        found = _read_zhipu_updates(
+            client, datetime.fromisoformat("2026-11-21T12:00:00+08:00")
+        )
+        by_id = {item["model_id"]: item for item in found}
+        self.assertIn("GLM-5.3-Flash", by_id)
+        self.assertEqual(by_id["GLM-5.3-Flash"]["published_at"], "2026-08-26")
+        self.assertEqual(by_id["GLM-5.3-Flash"]["summary"], "原生融入视觉能力。")
+        self.assertIn("GLM-4-Air-250414", by_id)
+        self.assertEqual(by_id["GLM-4-Air-250414"]["published_at"], "2026-10-14")
 
     def test_soft_404_keeps_only_the_official_index_evidence_and_reports_failure(
         self,

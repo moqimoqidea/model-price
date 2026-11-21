@@ -34,7 +34,6 @@ from .parsing import (
     feed_entries,
     markdown_text,
     model_names,
-    model_update_entries,
     official_link,
     page_data,
     published_date,
@@ -42,6 +41,7 @@ from .parsing import (
     mentions_model,
     publication_names,
     release_note_entries,
+    zhipu_release_entries,
 )
 
 # News feeds include years of old releases and customer stories. Discovery scans
@@ -57,7 +57,7 @@ QWEN_BLOG_URL = "https://qwen.ai/"
 QWEN_BLOG_API = "https://qwen.ai/api/v2/article/retrieval?type=qwen_ai&language=en-US"
 SEED_MODELS_URL = "https://seed.bytedance.com/en/blog"
 SEED_BLOG_API = "https://seed.bytedance.com/api/get_article_list_v2"
-ZHIPU_UPDATES_URL = "https://docs.z.ai/release-notes/new-released"
+ZHIPU_UPDATES_URL = "https://docs.bigmodel.cn/cn/update/new-releases.md"
 # Z.ai publishes these articles without a readable blog index or blog sitemap.
 # Register verified article URLs as evidence, never their model names in a parser.
 ZHIPU_BLOG_URL = "https://z.ai/blog/glm-legal"
@@ -648,14 +648,26 @@ def _read_seed_article(client: Any, url: str) -> dict[str, Any]:
     }
 
 
+ZHIPU_BRANDS = r"GLM|CogView|CogVideoX?|AutoGLM"
+
+
 def _read_zhipu_updates(client: Any, reference: datetime) -> list[dict[str, Any]]:
-    """Use card subjects; the Markdown export drops their model-name labels."""
+    """Read the dated Markdown release log; linked labels own literal names."""
     found = []
-    for item in model_update_entries(client.get_text(ZHIPU_UPDATES_URL)):
-        if _recent(item["published_at"], reference):
+    for item in zhipu_release_entries(client.get_text(ZHIPU_UPDATES_URL)):
+        if not _recent(item["published_at"], reference):
+            continue
+        names: list[str] = []
+        for value in [item["title"], *item["labels"]]:
+            names.extend(model_names(value, ZHIPU_BRANDS))
+        names = list(dict.fromkeys(names))
+        if not names:
+            # Product, plan, and partner updates name no literal model subject.
+            continue
+        for name in names:
             found.append(publication(
-                item["title"], ZHIPU_UPDATES_URL, item["summary"], item["published_at"],
-                item["paragraphs"], [item["title"]], source_name="智谱 Z.ai 官方模型更新",
+                name, ZHIPU_UPDATES_URL, item["summary"], item["published_at"],
+                item["paragraphs"], names, source_name="智谱 BigModel 官方模型更新",
             ))
     return found
 

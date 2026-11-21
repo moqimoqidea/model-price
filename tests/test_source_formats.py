@@ -123,20 +123,38 @@ class SourceFormatTests(unittest.TestCase):
                 self.assertEqual(failed["providers"][0]["status"], "source_error")
                 self.assertEqual(store.read("kimi"), archived)
 
-    def test_zai_rendered_updates_keep_card_subjects_dates_and_bullet_prose(self) -> None:
-        text = (FIXTURES / "zai-updates-rendered.html").read_text()
+    def test_zai_markdown_updates_keep_subjects_dates_and_bullet_prose(self) -> None:
+        text = """**2026-08-26**
+
+GLM-5.3-Flash 原生多模态模型上线
+
+👀 [**GLM-5.3-Flash**](https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash.md)
+
+* 原生融入视觉能力。
+* 极致高效混合架构。
+
+**2026-08-18**
+
+GLM-5.3 新一代旗舰模型上线
+
+💬 [**GLM-5.3**](https://docs.bigmodel.cn/cn/guide/models/text/glm-5.3.md)
+
+* 更强的编程能力。
+"""
         client = SavedClient({ZHIPU_UPDATES_URL: text})
         found = _read_zhipu_updates(client, self.reference)
-        self.assertEqual([(item["model_id"], item["published_at"]) for item in found], [("GLM-5.3-Flash", "2026-08-26"), ("GLM-5.3", "2026-08-18")])
-        self.assertIn("visual", found[0]["summary"].lower())
-        self.assertNotIn("Mythos 5", [item["model_id"] for item in found])
+        self.assertEqual(
+            [(item["model_id"], item["published_at"]) for item in found],
+            [("GLM-5.3-Flash", "2026-08-26"), ("GLM-5.3", "2026-08-18")],
+        )
+        self.assertIn("视觉", found[0]["summary"])
         self.assertEqual(client.calls, [ZHIPU_UPDATES_URL])
 
-    def test_zai_incomplete_cards_fail_instead_of_dropping_one_release(self) -> None:
-        text = (FIXTURES / "zai-updates-rendered.html").read_text()
-        for old, new in (("update-description", "unreadable-description"), ("update-label", "unreadable-label")):
-            with self.subTest(field=old), self.assertRaises(SourceError):
-                _read_zhipu_updates(SavedClient({ZHIPU_UPDATES_URL: text.replace(old, new, 1)}), self.reference)
+    def test_zai_markdown_log_without_dated_entries_is_a_source_error(self) -> None:
+        with self.assertRaises(SourceError):
+            _read_zhipu_updates(
+                SavedClient({ZHIPU_UPDATES_URL: "# no entries"}), self.reference
+            )
 
     def test_minimax_quoted_legacy_tables_and_free_music_notice_keep_their_scope(self) -> None:
         text = (FIXTURES / "minimax-models-quoted.md").read_text()

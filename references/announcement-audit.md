@@ -152,7 +152,7 @@ Google Cloud 的旧 `cloud.google.com/static/feeds/` 地址已返回 404。只�
 
 [GLM-Legal](https://z.ai/blog/glm-legal) 此前遗漏有两层原因：原来只读 BigModel
 能力目录，而该测试模型在独立文章发布；文章的 HTML 又是空壳，正文编译在其链接的
-同域模块里。现在同时读取能力目录、[Z.ai 模型更新](https://docs.z.ai/release-notes/new-released.md)
+同域模块里。现在同时读取能力目录、[BigModel 模型与产品发布记录](https://docs.bigmodel.cn/cn/update/new-releases.md)
 及已核验文章，并从模块读取字面的 MDX 段落和文章自身的日期 `2026-10-12`。
 “Apply for API access”保留为受限申请证据，不生成 BigModel API ID、免费报价或普遍开放。
 名称规则也支持 GLM-Legal、GLM-Image、GLM-OCR 这类没有版本数字的字面名称。
@@ -169,7 +169,7 @@ Z.ai 的 `/blog`、博客 sitemap 和 feed 均未提供可读总索引。因此�
 | 百度千帆 | [ERNIE 博客](https://ernie.baidu.com/blog/) | 可读，首页卡片提供标题、文章链接与日期；旧 RSS 入口已 404。索引未列出的历史文章仍按覆盖缺口对待。 |
 | DeepSeek | [官方更新日志](https://api-docs.deepseek.com/zh-cn/updates/) | 可读，继续与日期、介绍和退役消费者复用同一次文档读取。 |
 | Kimi | 用户指定的[官方博客](https://www.kimi.ai/blog/) | 可读，现已作为登记入口。Next.js `articleList.items` 提供标题、地址和日期，先排除旧文章及外部论文；本次确认 Kimi K3。 |
-| 智谱 BigModel | [能力目录](https://docs.bigmodel.cn/cn/guide/start/model-overview.md)、[Z.ai 更新](https://docs.z.ai/release-notes/new-released.md)、[GLM-Legal](https://z.ai/blog/glm-legal) | 三处均可读。测试申请模型与当前价格目录分别保留；总博客索引的缺口见上文。 |
+| 智谱 BigModel | [能力目录](https://docs.bigmodel.cn/cn/guide/start/model-overview.md)、[模型与产品发布记录](https://docs.bigmodel.cn/cn/update/new-releases.md)、[GLM-Legal](https://z.ai/blog/glm-legal) | 三处均可读。发布记录按 Markdown 的粗体日期分块，块内标题与链接标签提供字面模型名；无模型名的产品/方案更新不生成发布。测试申请模型与当前价格目录分别保留；总博客索引的缺口见上文。 |
 | MiniMax | 用户指定的[官方新闻](https://www.minimax.io/news) | 已是登记入口，本次可读。当前服务端响应主要提供模型导航并带新闻页跳转标记；沿已公布的第一方链接确认 M3、M2.7、M2.5、H3、Music 3.0。未标日期的页面只证明首次发现。 |
 | 小米 MiMo | [研究博客](https://mimo.xiaomi.com/)、[能力目录](https://mimo.mi.com/docs/zh-CN/quick-start/summary/model)、[模型更新](https://mimo.mi.com/docs/en-US/updates/model) | 用户修复访问后，三处均可读。新增博客读取，目录包含 More 中折叠卡片；博客同域请求 12 次，CDN 数据 3 次，低于默认单域名额度。 |
 | 快手可灵 | [视频、图片能力图](https://klingai.com/document-api/guides/capability-map/video.md) | 两张能力图可读。博客索引虽然服务端渲染，但 `/blog/<slug>` 正文页一律是客户端渲染外壳：无标题、可见文本为零，索引到的模型名在 HTML 中根本不存在，正文佐证因此永远无法成立，该入口自登记起每次都报读取失败。已移除该发布入口，可灵改为只读两张能力图。 |
