@@ -14,6 +14,8 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from performance.config import load_targets, token_count
+from performance.domestic import (PROFILES, build_target, fuzzy_models, list_models,
+                                  parse_route)
 from performance.runner import display, execute, plan
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,9 +23,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="Opt-in paid TTFT/TPS comparison; plan is offline.")
-    result.add_argument("command", choices=("env", "plan", "check", "run", "report"))
+    result.add_argument("command", choices=("env", "plan", "check", "run", "report", "models"))
     result.add_argument("--config", type=Path, default=ROOT / "performance/targets.example.json")
     result.add_argument("--target", action="append", help="literal target id; repeat to select several")
+    result.add_argument("--route", action="append",
+                        help="PROVIDER=MODEL, e.g. moonshot=kimi-k3; repeat for several")
+    result.add_argument("--base-url", help="override the profile endpoint for every --route")
+    result.add_argument("--provider", help="models command: which provider to list")
+    result.add_argument("--query", help="models command: fuzzy filter over returned IDs")
     result.add_argument("--input-tokens", default="10K", help="approximate sizes, e.g. 10K,50K,500K,800K; K=1000")
     result.add_argument("--repeats", type=int, default=3, help="1 for smoke tests; normally 3–5")
     result.add_argument("--modes", default="cold,warm")
@@ -42,6 +49,15 @@ def main(argv=None) -> int:
     cli = parser()
     args = cli.parse_args(argv)
     try:
+        if args.command == "models":
+            if not args.provider:
+                cli.error("models requires --provider")
+            payload = list_models(args.provider, timeout=args.timeout)
+            if payload["status"] == "ok" and args.query:
+                payload["query"] = args.query
+                payload["matches"] = fuzzy_models(payload["models"], args.query)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0 if payload["status"] == "ok" else 1
         if args.command == "report":
             if not args.input:
                 cli.error("report requires --input")
@@ -55,13 +71,29 @@ def main(argv=None) -> int:
         modes = list(dict.fromkeys(args.modes.split(",")))
         if not modes or set(modes) - {"cold", "warm"}:
             cli.error("--modes must contain cold and/or warm")
-        targets = load_targets(args.config, args.target)
+        if args.route:
+            if args.target:
+                cli.error("--target selects ids from --config; do not combine it with --route")
+            targets, seen = [], set()
+            for specification in args.route:
+                provider, model = parse_route(specification)
+                route = build_target(provider, model, base_url=args.base_url)
+                if route.id in seen:
+                    raise ValueError("重复的路由：" + route.id)
+                seen.add(route.id)
+                targets.append(route)
+        else:
+            if args.base_url:
+                cli.error("--base-url requires --route")
+            targets = load_targets(args.config, args.target)
         if args.command == "env":
             for target in targets:
                 missing = target.missing_environment()
                 print(f"{target.id}: " + ("缺少环境变量 " + ", ".join(missing) + "；不会发送请求。"
                                         if missing else "环境变量已就绪（未验证授权）。"))
             print("仅检查当前进程环境，不联网。变量写在 ~/.zshrc 时，请先加载配置，或用 zsh -ic 启动本命令。")
+            if args.route:
+                print("内置厂家：" + ", ".join(sorted(PROFILES)))
             return 0 if all(target.ready() for target in targets) else 1
         if args.thinking:
             targets = [replace(target, thinking_mode=args.thinking) for target in targets]
@@ -83,8 +115,20 @@ def main(argv=None) -> int:
         print(display(payload))
         print(f"JSON: {output}")
         return 0 if payload["state"] == "completed" else 1
-    except (OSError, ValueError, TypeError):
-        # Configs, exception strings and URLs can carry private values. Never echo them.
+    except ValueError as exc:
+        # Echo only this tool's own fixed diagnostics; never a config value, URL, or response body.
+        message = str(exc)
+        safe = ("unknown provider", "route must", "重复的路由", "thinking mapping is not verified",
+                "unknown target selection", "invalid target", "target is missing required fields",
+                "no targets selected", "endpoint must be", "model must be",
+                "invalid api_key_env", "invalid thinking_mode", "invalid protocol")
+        if message.startswith(safe):
+            print("参数错误：" + message, file=sys.stderr)
+        else:
+            print("配置或文件操作失败。检查 JSON 字段、HTTPS 端点、目标名称及输出文件是否已存在。",
+                  file=sys.stderr)
+        return 2
+    except (OSError, TypeError):
         print("配置或文件操作失败。检查 JSON 字段、HTTPS 端点、目标名称及输出文件是否已存在。", file=sys.stderr)
         return 2
 

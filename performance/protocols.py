@@ -6,6 +6,7 @@ import hashlib
 import http.client
 import json
 import socket
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -18,6 +19,60 @@ from .providers import non_thinking_requested
 
 class StreamError(Exception):
     """A deliberately value-free public failure code."""
+
+
+# Fixed, credential-free guidance so a failed route can be corrected without reading a body.
+ERROR_HINTS = {
+    "auth_failed": "授权失败：检查 API Key 是否有效、未过期，且已开通该模型",
+    "insufficient_balance": "余额不足或未开通付费：检查账户余额与模型权限",
+    "rate_limited": "触发限流或配额上限：加大 --pause 或稍后重试",
+    "model_not_found": "模型不存在或不可用：核对 model 字面 ID、地域与控制台开通状态",
+    "endpoint_not_found": "地址不存在：核对 base URL、地域与工作空间",
+    "invalid_request": "请求被拒绝：核对模型支持的参数与输出上限字段名",
+    "provider_error": "服务端错误：稍后重试并查看平台状态",
+    "network_error": "网络不可达：检查代理、出网策略与端点主机",
+    "dns_error": "域名解析失败：检查 DNS 与端点主机名",
+    "tls_error": "TLS 握手失败：检查证书、代理与系统时间",
+    "connection_refused": "连接被拒绝：检查主机端口与本地网络策略",
+    "timeout": "超时：检查网络与 --timeout，或该模型当前排队过长",
+    "missing_key": "缺少 API Key 环境变量：在 ~/.zshrc 中导出后重试",
+    "missing_environment": "缺少必需环境变量：按提示补齐后重试",
+    "stream_error": "流式响应异常：检查协议兼容性、输出上限字段与网络稳定性",
+}
+
+# Phrases vendors use for "this literal model ID is not served on this route".
+MODEL_PHRASES = ("model_not_found", "model not found", "model does not exist", "model not exist",
+                 "unknown model", "invalid model", "no such model", "model is not supported",
+                 "unsupported model", "model_not_exist", "does not have access to model")
+
+
+def classify_http(code: int, body: bytes = b"") -> tuple[str, str]:
+    """Map a status and a bounded body to a stable kind; never return the body itself."""
+    text = body[:8192].decode("utf-8", "replace").lower()
+    mentions_model = ("model" in text and any(phrase in text for phrase in MODEL_PHRASES))
+    if code in (401, 403):
+        return "http_%d" % code, "auth_failed"
+    if code == 402:
+        return "http_402", "insufficient_balance"
+    if code == 429:
+        return "http_429", "rate_limited"
+    if code == 404:
+        return "http_404", "model_not_found" if mentions_model else "endpoint_not_found"
+    if code == 400:
+        return "http_400", "model_not_found" if mentions_model else "invalid_request"
+    if code >= 500:
+        return "http_%d" % code, "provider_error"
+    return "http_%d" % code, "invalid_request"
+
+
+def classify_network(reason: object) -> str:
+    if isinstance(reason, socket.gaierror):
+        return "dns_error"
+    if isinstance(reason, ssl.SSLError):
+        return "tls_error"
+    if isinstance(reason, ConnectionRefusedError):
+        return "connection_refused"
+    return "network_error"
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -279,9 +334,16 @@ def measure(target: Target, text: str, limit: int, warm: bool, timeout: float = 
     """Make exactly one paid attempt; all failures have fixed, credential-free diagnostics."""
     start = clock()
     observation = Observation(start)
-    result = {"status": "error", "error": None, "headers_seconds": None,
+    result = {"status": "error", "error": None, "error_kind": None, "error_hint": None,
+              "http_status": None, "headers_seconds": None,
               "prompt_sha256": hashlib.sha256(text.encode()).hexdigest(),
               "prompt_characters": len(text)}
+
+    def fail(error: str, kind: str, status: int | None = None) -> None:
+        result["error"], result["error_kind"] = error, kind
+        result["error_hint"] = ERROR_HINTS.get(kind)
+        result["http_status"] = status
+
     try:
         url, headers, body = request_parts(target, text, limit, warm)
         request = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
@@ -310,19 +372,26 @@ def measure(target: Target, text: str, limit: int, warm: bool, timeout: float = 
                 raise StreamError("provider_content_blocked")
             result["status"] = "ok"
     except urllib.error.HTTPError as exc:
-        result["error"] = f"http_{exc.code}"
+        body = b""
+        try:
+            body = exc.read(8192) or b""
+        except (OSError, ValueError, AttributeError):
+            body = b""
+        error, kind = classify_http(exc.code, body)
+        fail(error, kind, exc.code)
         exc.close()
     except (socket.timeout, TimeoutError):
-        result["error"] = "timeout"
-    except urllib.error.URLError:
-        result["error"] = "network_error"
+        fail("timeout", "timeout")
+    except urllib.error.URLError as exc:
+        fail("network_error", classify_network(exc.reason))
     except StreamError as exc:
-        result["error"] = str(exc)
+        code = str(exc)
+        fail(code, code if code in ERROR_HINTS else "stream_error")
     except (ValueError, TypeError, KeyError, AttributeError):
-        result["error"] = "invalid_stream_shape"
-    except OSError:
-        result["error"] = "network_error"
+        fail("invalid_stream_shape", "stream_error")
+    except OSError as exc:
+        fail("network_error", classify_network(exc))
     except http.client.HTTPException:
-        result["error"] = "stream_interrupted"
+        fail("stream_interrupted", "stream_error")
     result.update(observation.result(clock(), non_thinking_requested(target.generation_params())))
     return result

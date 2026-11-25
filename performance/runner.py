@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .config import Target
 from .prompts import CALIBRATION_TOKENS, DEFAULT_CHARS_PER_TOKEN, corpus, prompt
-from .protocols import measure
+from .protocols import ERROR_HINTS, measure
 
 METRICS = ("ttft_seconds", "headers_seconds", "first_content_seconds", "output_tps",
            "visible_output_tps", "end_to_end_tps", "input_tokens", "output_tokens",
@@ -85,6 +85,12 @@ def aggregate(rows: list[dict]) -> list[dict]:
                                            if sample.get("system_fingerprint")}),
             "attempts": len(samples), "successes": len(success),
             "failures": len(samples) - len(success), "metrics": metrics,
+            # Keep why a paid sample failed attached to its own route and mode.
+            "errors": [dict(zip(("error", "error_kind", "error_hint"), values))
+                       for values in sorted({(sample.get("error") or "error",
+                                              sample.get("error_kind") or "",
+                                              sample.get("error_hint") or "")
+                                             for sample in samples if sample["status"] != "ok"})],
         })
     return result
 
@@ -140,11 +146,16 @@ def execute(targets: list[Target], experiment: dict, path: Path, *, check_only=F
     try:
         checkpoint()
         for target in targets:
-            record = {"target": target.id, "status": "running", "error": None}
+            record = {"target": target.id, "status": "running", "error": None,
+                      "error_kind": None, "error_hint": None, "http_status": None}
             payload["preflight"].append(record)
             checkpoint()
             if not target.ready():
-                result = {"status": "error", "error": "missing_environment" if target.missing_env else "missing_key",
+                result = {"status": "error",
+                          "error": "missing_environment" if target.missing_env else "missing_key",
+                          "error_kind": "missing_environment" if target.missing_env else "missing_key",
+                          "error_hint": ERROR_HINTS["missing_environment" if target.missing_env else "missing_key"],
+                          "http_status": None,
                           "missing_environment": list(target.missing_environment())}
                 progress(f"{target.id}: 缺少环境变量 {', '.join(result['missing_environment'])}；跳过请求")
             else:
@@ -287,18 +298,35 @@ def _timing(group: dict) -> str:
     return "  ".join(parts)
 
 
+def _failure(row: dict) -> str:
+    """Name the failure kind and the corrective step; never a raw vendor body."""
+    detail = row.get("error") or "error"
+    kind = row.get("error_kind")
+    if kind and kind != detail:
+        detail += f" / {kind}"
+    return detail
+
+
 def display(payload: dict) -> str:
     lines = [f"性能测试：{payload['state']}"]
+    blocked = []
     for item in payload["preflight"]:
-        lines.append(f"{item['target']} Hello: {item['status']}" + (f" ({item['error']})" if item.get("error") else ""))
+        lines.append(f"{item['target']} Hello: {item['status']}"
+                     + (f" ({_failure(item)})" if item.get("error") else ""))
         if item.get("missing_environment"):
             lines.append("  缺少环境变量：" + ", ".join(item["missing_environment"]) + "；export 后重试。")
+        if item["status"] != "ok":
+            hint = item.get("error_hint") or ERROR_HINTS.get(item.get("error_kind") or "")
+            blocked.append((item["target"], _failure(item), hint))
     for name, entry in payload.get("calibration", {}).items():
-        failure = f" ({entry['error']})" if entry.get("error") else ""
         if entry["status"] == "ok" and entry.get("chars_per_token"):
             lines.append(f"{name} 输入密度: {entry['chars_per_token']:.2f} 字符/token")
         else:
-            lines.append(f"{name} 输入密度校准: {entry['status']}{failure}")
+            lines.append(f"{name} 输入密度校准: {entry['status']}"
+                         + (f" ({_failure(entry)})" if entry.get("error") else ""))
+            hint = entry.get("error_hint") or ERROR_HINTS.get(entry.get("error_kind") or "")
+            if hint:
+                blocked.append((name, _failure(entry), hint))
     for group in payload["summary"]:
         actual = _stat(group, "input_tokens")
         size = group["input_target"]
@@ -312,4 +340,15 @@ def display(payload: dict) -> str:
         lines.append(f"  input≈{size} {length} {group['mode']} "
                      f"cache={group['cache_observed']} n={group['successes']}/{group['attempts']}")
         lines.append("  " + _timing(group))
+        for failure in group.get("errors") or []:
+            detail = failure["error"] + (f" / {failure['error_kind']}"
+                                         if failure["error_kind"] and failure["error_kind"] != failure["error"]
+                                         else "")
+            lines.append(f"  ! {detail}" + (f" — {failure['error_hint']}" if failure["error_hint"] else ""))
+            blocked.append((group["target"], detail, failure["error_hint"]))
+    if blocked:
+        lines.append("")
+        lines.append("未能完成测试的路由：")
+        for target_id, detail, hint in dict.fromkeys(blocked):
+            lines.append(f"- {target_id}: {detail}" + (f" — {hint}" if hint else ""))
     return "\n".join(lines)

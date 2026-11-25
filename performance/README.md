@@ -63,10 +63,63 @@ python3 performance/benchmark.py report --input cache/performance/RUN.json
 
 | 目标 | 必需环境变量 | 默认 Chat 协议思考参数 | 当前验证范围 |
 | --- | --- | --- | --- |
-| DeepSeek | `DEEPSEEK_API_KEY` | `thinking.type=enabled/disabled` | 官方文档、离线流式测试；待实网验证 |
+| 深度求索 | `DEEPSEEK_API_KEY` | `thinking.type=enabled/disabled` | 官方文档、离线流式测试；待实网验证 |
 | 阿里百炼 | `DASHSCOPE_WORKSPACE_ID`、`DASHSCOPE_API_KEY` | `enable_thinking=true/false` | 官方文档、工作空间与离线测试；待实网验证 |
 | 腾讯 TokenHub | `TENCENT_API_KEY` | `thinking.type=enabled/disabled` | 官方文档、离线测试；待实网验证 |
 | 火山方舟 | `ARK_API_KEY`；可选 `ARK_BASE_URL` | `thinking.type=enabled/disabled` | 官方文档、离线测试；待实网验证 |
+| 月之暗面 Kimi | `MOONSHOT_API_KEY` | 不传；K3 系列始终思考，只认 `reasoning_effort` | 官方文档；待实网验证 |
+| 智谱 BigModel | `ZHIPU_API_KEY` | `thinking.type=enabled/disabled` | 官方文档；待实网验证 |
+| 稀宇 MiniMax | `MINIMAX_API_KEY` | 不传；M3.1-Flash 只接受 `thinking.type=adaptive` | 官方文档；待实网验证 |
+| 百度千帆 | `BAIDU_LLM_API_KEY` | 不传；思考参数未核实 | 官方文档；待实网验证 |
+
+### 用内置厂家路由直接指定模型
+
+不必先写 JSON：`--route PROVIDER=MODEL` 可重复，按内置画像构造一条路由，
+密钥仍只从环境变量读取。厂家别名包括 `moonshot`/`kimi`、`aliyun`/`bailian`、
+`volcengine`/`ark`、`zhipu`/`glm`、`baidu`/`qianfan` 等。`--base-url` 可整体
+替换端点（自定义网关或另一地域）；不传时用下表的官方地址。
+
+```bash
+# 只看环境变量，不联网
+python3 performance/benchmark.py env --route moonshot=kimi-k3 --route aliyun=kimi-k3
+
+# 先查这家公开列表，再模糊匹配字面 ID（只读，不收费）
+python3 performance/benchmark.py models --provider moonshot --query k3
+
+# 直接用字面模型 ID 建路由
+python3 performance/benchmark.py plan \
+  --route moonshot=kimi-k3 --route moonshot=kimi-k3.1-pro-highspeed \
+  --route aliyun=kimi-k3.1-pro-prime --input-tokens 10K
+```
+
+`models` 用各家的公开列表接口，返回 `status`、`count`、`models` 和 `matches`。
+`status=no_list_endpoint` 表示该平台没有已核实的列表接口（目前是 MiniMax、千帆），
+此时用精确模型 ID，或用价格目录兜底：`python3 scripts/query_model_prices.py list <provider>`。
+列表接口需要鉴权；401/403 同样会被分类，不会退化成空列表。
+
+内置端点为：DeepSeek `api.deepseek.com`、百炼工作空间 `compatible-mode/v1`、
+方舟 `ark.cn-beijing.volces.com/api/v3`、TokenHub `tokenhub.tencentmaas.com/v1`、
+Kimi `api.moonshot.cn/v1`、智谱 `open.bigmodel.cn/api/paas/v4`、
+MiniMax `api.minimax.cn/v1`、千帆 `qianfan.baidubce.com/v2`。
+同名不保证同版本，跨平台比较前仍应核对控制台里的服务版本与额度档位。
+
+### 失败会被分类，而不是只给一个状态码
+
+`error` 保留原始稳定码（如 `http_404`），`error_kind` 给出可行动的分类，
+`error_hint` 给出下一步；原始响应体、URL 与密钥都不写入结果。
+
+| `error_kind` | 含义 | 先检查 |
+| --- | --- | --- |
+| `auth_failed` | 401/403 | Key 是否有效、未过期、已开通该模型 |
+| `insufficient_balance` | 402 | 余额与付费状态 |
+| `rate_limited` | 429 | 加大 `--pause`、降低并发或稍后重试 |
+| `model_not_found` | 400/404 且响应提到 model | model 字面 ID、地域、控制台开通状态 |
+| `endpoint_not_found` | 404 且未提到 model | base URL、地域、工作空间 |
+| `invalid_request` | 其他 400 | 参数名（尤其输出上限字段）是否被该模型接受 |
+| `provider_error` | 5xx | 平台状态页，稍后重试 |
+| `timeout` / `network_error` / `dns_error` / `tls_error` / `connection_refused` | 传输层 | 网络、代理、DNS、证书 |
+| `missing_key` / `missing_environment` | 本地未导出 | `~/.zshrc` 中的变量名与值 |
+
 
 百炼请求地址是
 `https://${DASHSCOPE_WORKSPACE_ID}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions`。
@@ -111,8 +164,9 @@ DeepSeek Responses 已有 `thinking_mode` 映射；其他非 Chat 组合使用 `
 Anthropic 原始思考参数放在 `params.thinking`，effort 放在模型支持的 `params.output_config`。
 密钥不能出现在配置、请求 URL、参数或额外 headers 中；HTTPS 重定向被拒绝。
 
-现有价格系统的 20 个渠道不是已验证的推理渠道清单。本轮仅提供上述四家的文档适配配置；
-其余渠道等核对模型、端点、鉴权、思考、流式 usage 和缓存后再加目标。
+现有价格系统的 20 个渠道不是已验证的推理渠道清单。本轮提供上述八家国内厂家的
+文档适配画像（`domestic.py`）；其余渠道等核对模型、端点、鉴权、思考、流式 usage
+和缓存后再加目标。画像只保存端点形状与变量名，不保存任何密钥。
 OpenAI、Anthropic、Gemini 等直接 key 协议有解析基础，但尚无真实请求报告；
 AWS Bedrock SigV4、Vertex OAuth/ADC、Azure 的特定鉴权与 API version 尚未实现，
 不可套用一个 Bearer 模板声称支持。音视频生成的完成时延也不等同于文本 token TPS。

@@ -6,6 +6,7 @@ import io
 import http.client
 import json
 import os
+import socket
 import sys
 import tempfile
 import unittest
@@ -20,8 +21,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from performance.config import Target, load_targets, token_count
+from performance.domestic import PROFILES, build_target, fuzzy_models, parse_route
 from performance.prompts import CALIBRATION_TOKENS, DEFAULT_CHARS_PER_TOKEN, corpus, prompt
-from performance.protocols import NoRedirect, Observation, measure, request_parts
+from performance.protocols import (NoRedirect, Observation, classify_http, classify_network,
+                                   measure, request_parts)
 from performance.providers import generation_parameters
 from performance.runner import aggregate, display, execute, plan
 
@@ -483,6 +486,102 @@ class PerformanceTests(unittest.TestCase):
         self.assertIn("偏离 -31%", text)
         self.assertIn("±", text)
         self.assertIn("headers=0.200s", text)
+
+    def test_domestic_profiles_use_the_agreed_environment_names(self):
+        expected = {
+            "deepseek": "DEEPSEEK_API_KEY", "volcengine": "ARK_API_KEY",
+            "aliyun": "DASHSCOPE_API_KEY", "tencent": "TENCENT_API_KEY",
+            "moonshot": "MOONSHOT_API_KEY", "zhipu": "ZHIPU_API_KEY",
+            "minimax": "MINIMAX_API_KEY", "baidu": "BAIDU_LLM_API_KEY",
+        }
+        for provider, variable in expected.items():
+            self.assertEqual(PROFILES[provider].api_key_env, variable)
+            self.assertNotIn("api_key", json.dumps(PROFILES[provider].url).lower())
+
+    def test_route_builds_a_literal_vendor_model_and_keeps_the_endpoint_shape(self):
+        with mock.patch.dict(os.environ, {"MOONSHOT_API_KEY": "fixture"}), \
+                mock.patch.dict(os.environ, {"DASHSCOPE_API_KEY": "fixture",
+                                             "DASHSCOPE_WORKSPACE_ID": "fixture-ws"}):
+            moonshot = build_target("moonshot", "kimi-k3.1-pro-highspeed")
+            self.assertEqual(moonshot.id, "moonshot-kimi-k3.1-pro-highspeed")
+            self.assertEqual(moonshot.model, "kimi-k3.1-pro-highspeed")
+            self.assertEqual(moonshot.url, "https://api.moonshot.cn/v1/chat/completions")
+            self.assertEqual(moonshot.output_limit_field, "max_completion_tokens")
+            self.assertTrue(moonshot.ready())
+            bailian = build_target("bailian", "kimi-k3.1-pro-prime")
+            self.assertEqual(bailian.id, "aliyun-kimi-k3.1-pro-prime")
+            self.assertIn("fixture-ws.cn-beijing.maas.aliyuncs.com", bailian.url)
+            self.assertNotIn("fixture-ws", json.dumps(bailian.public()))
+
+    def test_route_parsing_and_unknown_provider_are_reported(self):
+        self.assertEqual(parse_route("moonshot=kimi-k3"), ("moonshot", "kimi-k3"))
+        self.assertEqual(parse_route("kimi=kimi-k3.1-pro"), ("kimi", "kimi-k3.1-pro"))
+        with self.assertRaises(ValueError):
+            parse_route("moonshot")
+        with self.assertRaises(ValueError):
+            build_target("nonexistent", "model")
+
+    def test_base_url_override_replaces_the_profile_endpoint(self):
+        with mock.patch.dict(os.environ, {"MOONSHOT_API_KEY": "fixture"}):
+            route = build_target("moonshot", "kimi-k3", base_url="https://gateway.test/v1/chat/completions")
+            self.assertEqual(route.url, "https://gateway.test/v1/chat/completions")
+            with self.assertRaises(ValueError):
+                build_target("moonshot", "kimi-k3", base_url="http://insecure.test/v1/chat/completions")
+
+    def test_a_base_url_export_is_completed_once_and_a_full_endpoint_is_not_doubled(self):
+        with mock.patch.dict(os.environ, {"ARK_API_KEY": "fixture",
+                                          "ARK_BASE_URL": "https://ark.fixture.test/api/v3"}):
+            self.assertEqual(build_target("volcengine", "model-x").url,
+                             "https://ark.fixture.test/api/v3/chat/completions")
+        with mock.patch.dict(os.environ, {"ARK_API_KEY": "fixture",
+                                          "ARK_BASE_URL": "https://ark.fixture.test/api/v3/chat/completions"}):
+            self.assertEqual(build_target("volcengine", "model-x").url,
+                             "https://ark.fixture.test/api/v3/chat/completions")
+
+    def test_fuzzy_matching_ranks_literal_ids_without_inventing_one(self):
+        candidates = ["kimi-k2.7-code", "kimi-k3", "kimi-k3.1-pro", "glm-5.3"]
+        self.assertEqual(fuzzy_models(candidates, "kimi-k3")[0], "kimi-k3")
+        matches = fuzzy_models(candidates, "k3.1")
+        self.assertIn("kimi-k3.1-pro", matches)
+        self.assertNotIn("glm-5.3", matches)
+        self.assertEqual(fuzzy_models(candidates, "zzzz"), [])
+
+    def test_http_failures_are_classified_without_a_vendor_body(self):
+        self.assertEqual(classify_http(401)[1], "auth_failed")
+        self.assertEqual(classify_http(403)[1], "auth_failed")
+        self.assertEqual(classify_http(429)[1], "rate_limited")
+        self.assertEqual(classify_http(402)[1], "insufficient_balance")
+        self.assertEqual(classify_http(404, b'{"error":{"message":"model not found"}}')[1],
+                         "model_not_found")
+        self.assertEqual(classify_http(404, b"no route here")[1], "endpoint_not_found")
+        self.assertEqual(classify_http(400, b'{"code":"InvalidParameter","message":"model not exist"}')[1],
+                         "model_not_found")
+        self.assertEqual(classify_http(400, b'{"message":"bad temperature"}')[1], "invalid_request")
+        self.assertEqual(classify_http(503)[1], "provider_error")
+        self.assertEqual(classify_network(socket.gaierror()), "dns_error")
+        self.assertEqual(classify_network(ConnectionRefusedError()), "connection_refused")
+
+    def test_http_error_adds_a_kind_and_hint_without_echoing_the_body(self):
+        def opener(*args, **kwargs):
+            raise urllib.error.HTTPError("https://test-only-not-a-key.test", 404,
+                                         "test-only-not-a-key", {},
+                                         io.BytesIO(b'{"message":"model not found test-only-not-a-key"}'))
+        result = measure(target(), "Hello", 16, False, opener=opener)
+        self.assertEqual(result["error"], "http_404")
+        self.assertEqual(result["error_kind"], "model_not_found")
+        self.assertIn("model", result["error_hint"])
+        self.assertNotIn("test-only-not-a-key", json.dumps(result, ensure_ascii=False))
+
+    def test_missing_key_is_classified_for_the_report(self):
+        with mock.patch.dict(os.environ, {}, clear=True), tempfile.TemporaryDirectory() as folder:
+            route = target()
+            result = execute([route], plan([route], [100], ["cold"], 1, 16, 500000),
+                             Path(folder) / "result.json",
+                             probe=mock.Mock(side_effect=AssertionError("no request")))
+        row = result["preflight"][0]
+        self.assertEqual(row["error_kind"], "missing_key")
+        self.assertIn("API Key", row["error_hint"])
+        self.assertIn("未能完成测试的路由", display(result))
 
 
 if __name__ == "__main__":

@@ -32,7 +32,8 @@ The independent `performance/` directory is an opt-in paid inference benchmark,
 not a price adapter. Read `performance/README.md` when changing it. Its CLI is
 `performance/benchmark.py`; provider-specific thinking mappings live in
 `performance/providers.py`, environment-only target configuration in `config.py`,
-SSE/usage/timing in `protocols.py`, synthetic input in `prompts.py`, and paid-call
+domestic vendor profiles and model discovery in `domestic.py`, SSE/usage/timing in
+`protocols.py`, synthetic input in `prompts.py`, and paid-call
 budgets/checkpoints/statistics in `runner.py`. Offline fixtures live in
 `tests/test_performance.py`. It must never be invoked by public catalogue commands.
 Before changing the repository, inspect local changes and try a safe upstream
